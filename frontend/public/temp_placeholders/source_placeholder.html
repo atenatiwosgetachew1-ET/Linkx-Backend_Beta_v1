@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Network Metrics Slideshow (Fixed Icons)</title>
+<style>
+:root {
+  --accent-gradient: linear-gradient(45deg, #00bcd4, #8e44ad, #e91e63);
+  --text-muted: #555;
+}
+
+@keyframes hueshift {
+  from { filter: hue-rotate(0deg); }
+  to { filter: hue-rotate(360deg); }
+}
+
+body {
+  margin: 0;
+  height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: radial-gradient(circle at center, #FFF, #fcfefd);
+  font-family: "Segoe UI", Roboto, Arial, sans-serif;
+  overflow: hidden;
+  opacity: 0.5;
+  width: 100vw;
+  user-select: none;
+}
+
+.slideshow {
+  position: relative;
+  width: 100vw;
+  max-width: 900px;
+  height: 100vh;
+  border-radius: 1vw;
+  overflow: hidden;
+}
+
+/* Each slide */
+.slide {
+  position: absolute;
+  top: 0%;
+  left: 100%;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  opacity: 0;
+  transition: all 1s ease;
+}
+.slide.active {
+  left: 0;
+  opacity: 1;
+}
+
+/* Icon (SVG) styling */
+.slide .icon {
+  margin-bottom: 4vh;
+  width: 80px;
+  height: 80px;
+  display: inline-block;
+  animation: hueshift 3s linear infinite;
+}
+.slide .icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* Title */
+.slide .title {
+  font-size: 29px;
+  margin-bottom: 3vh;
+  background: var(--accent-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: hueshift 3s linear infinite;
+}
+
+/* Description */
+.slide .text {
+  font-size: 13px;
+  max-width: 70%;
+  color: var(--text-muted);
+  line-height: 1.7;
+}
+
+/* Dots */
+.dots {
+  position: absolute;
+  bottom: 2vh;
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  gap: 1vw;
+  opacity: 0.4;
+}
+.dot {
+  width: 1vw;
+  height: 1vw;
+  border-radius: 50%;
+  background: #666;
+  cursor: pointer;
+  transition: background 0.3s;
+  opacity: 0.3;
+}
+.dot.active {
+  background: #333;
+  opacity: 0.9;
+}
+
+@media (max-width: 900px) {
+  .slide .icon { width: calc(8vh + 5vw); height: calc(8vh + 5vw); }
+  .slide .title { font-size: calc(2vh + 2vw); }
+  .slide .text { font-size: calc(1vh + 1vw); max-width: 90%; }
+}
+</style>
+</head>
+<body>
+
+<!-- Gradient definition -->
+<svg width="0" height="0">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop stop-color="#00bcd4" offset="0%"/>
+      <stop stop-color="#8e44ad" offset="50%"/>
+      <stop stop-color="#e91e63" offset="100%"/>
+    </linearGradient>
+  </defs>
+</svg>
+
+<div class="slideshow">
+
+  <!-- Direct-source -->
+  <div class="slide active">
+    <div class="icon">
+      <svg viewBox="-7 -4 43 43">
+        <g fill="url(#grad)">
+          <path d="M16 0c-8.837 0-16 7.163-16 16s7.163 16 16 16 16-7.163 16-16-7.163-16-16-16zM16 28c-6.627 0-12-5.373-12-12s5.373-12 12-12c6.627 0 12 5.373 12 12s-5.373 12-12 12zM10 16c0-3.314 2.686-6 6-6s6 2.686 6 6c0 3.314-2.686 6-6 6s-6-2.686-6-6z"></path>
+        </g>
+      </svg>
+    </div>
+    <div class="title">Direct-source</div>
+    <div class="text">
+      Fetch real-time data directly from APIs or brokers. This ensures your analysis uses the most up-to-date data.  
+      Use this when you need live feeds or financial data streams.  
+      Ensure API keys and error handling are configured properly.
+    </div>
+  </div>
+
+  <!-- File uploads -->
+  <div class="slide">
+    <div class="icon">
+      <svg viewBox="-2 0 22 22">
+        <g fill="url(#grad)">
+          <path d="M8 12h4v-6h3l-5-5-5 5h3v6zM19.338 13.532c-0.21-0.224-1.611-1.723-2.011-2.114-0.265-0.259-0.644-0.418-1.042-0.418h-1.757l3.064 2.994h-3.544c-0.102 0-0.194 0.052-0.24 0.133l-0.816 1.873h-5.984l-0.816-1.873c-0.046-0.081-0.139-0.133-0.24-0.133h-3.544l3.063-2.994h-1.756c-0.397 0-0.776 0.159-1.042 0.418-0.4 0.392-1.801 1.891-2.011 2.114-0.489 0.521-0.758 0.936-0.63 1.449l0.561 3.074c0.128 0.514 0.691 0.936 1.252 0.936h16.312c0.561 0 1.124-0.422 1.252-0.936l0.561-3.074c0.126-0.513-0.142-0.928-0.632-1.449z"></path>
+        </g>
+      </svg>
+    </div>
+    <div class="title">File Uploads</div>
+    <div class="text">
+      Upload your datasets directly from disk in CSV or JSON format.  
+      This option is ideal for local data or offline exports.  
+      Make sure the file follows proper schema for smooth parsing.
+    </div>
+  </div>
+
+  <!-- Load from Save -->
+  <div class="slide">
+    <div class="icon">
+      <svg viewBox="-4 0 40 40">
+        <g fill="url(#grad)">
+          <path d="M6 28h20c3.314 0 6-2.686 6-6h-32c0 3.314 2.686 6 6 6zM26 24h2v2h-2v-2zM30 4h-28l-2 16h32z"></path>
+        </g>
+      </svg>
+    </div>
+    <div class="title">Load from Save</div>
+    <div class="text">
+      Continue where you left off by loading a saved session.  
+      Restore previous data, filters, and graph configurations instantly.  
+      Great for comparing past insights or resuming paused analyses.
+    </div>
+  </div>
+  <!-- AI Chat Bot -->
+  <div class="slide">
+    <div class="icon">
+      <svg viewBox="-2 0 36 36">
+        <g fill="url(#grad)">
+          <!-- Robot head -->
+          <path d="M16 2a2 2 0 1 1 0 4c-0.552 0-1 0.448-1 1v1h-6c-1.657 0-3 1.343-3 3v9c0 1.657 1.343 3 3 3h1v4l4-4h7c1.657 0 3-1.343 3-3v-9c0-1.657-1.343-3-3-3h-6v-1c0-0.552 0.448-1 1-1a2 2 0 1 1 0-4zM11 14a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm10 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4z"/>
+          <!-- Speech wave bubble below -->
+          <path d="M8 26c-0.552 0-1 0.448-1 1v2c0 0.552 0.448 1 1 1h16c0.552 0 1-0.448 1-1v-2c0-0.552-0.448-1-1-1H8zm3 2h1v1h-1v-1zm4 0h1v1h-1v-1zm4 0h1v1h-1v-1z"/>
+        </g>
+      </svg>
+    </div>
+    <div class="title">AI Chat Bot</div>
+    <div class="text">
+      Communicate with a built-in AI assistant designed to streamline your workflow. The chat bot can help with data analysis, explain metrics, guide you through tools, and even automate complex tasks — making the entire experience more interactive and intuitive.
+    </div>
+  </div>
+  <div class="dots"></div>
+</div>
+
+<script>
+const slides = document.querySelectorAll('.slide');
+const dotsContainer = document.querySelector('.dots');
+let index = 0;
+
+slides.forEach((_, i) => {
+  const dot = document.createElement('div');
+  dot.classList.add('dot');
+  if (i === 0) dot.classList.add('active');
+  dot.addEventListener('click', () => showSlide(i));
+  dotsContainer.appendChild(dot);
+});
+const dots = document.querySelectorAll('.dot');
+
+function showSlide(i) {
+  slides[index].classList.remove('active');
+  dots[index].classList.remove('active');
+  index = (i + slides.length) % slides.length;
+  slides[index].classList.add('active');
+  dots[index].classList.add('active');
+}
+
+setInterval(() => showSlide(index + 1), 2500);
+</script>
+</body>
+</html>

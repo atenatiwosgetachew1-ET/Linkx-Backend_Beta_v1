@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Graph Informations</title>
+    <style>
+        @keyframes hueshift {
+		  from { filter: hue-rotate(0deg); }
+		  to { filter: hue-rotate(360deg); }
+		}
+
+		/* ===== Base Layout ===== */
+		body {
+		  margin: 0;
+		  height: 100vh;
+		  width: 100vw;
+		  display: flex;
+		  justify-content: center;
+		  align-items: center;
+		  background: radial-gradient(circle at center, #FFF, #fcfefd);
+		  font-family: "Segoe UI", Roboto, Arial, sans-serif;
+		  user-select: none;
+		  overflow: hidden;
+		}
+
+		/* ===== Card ===== */
+		.card {
+		  position: relative;
+		  width: 85vw;
+		  max-width: 900px;
+		  top: 2vh;
+		  height: 75vh;
+		  padding: 5vh 4vw;
+		  border-radius: 1vw;
+		  background: transparent;
+		}
+
+		/* ===== Header ===== */
+		h1 {
+		  display: block;
+		  align-items: center;
+		  gap: 0vw;
+		  margin: 0 0 4vh 0;
+		  padding-bottom: 5px;
+		  font-size: 20px; /* desktop baseline */
+		  font-weight: 400;
+		  color: #111;
+		  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+		}
+		h1 div{
+			position: relative;
+			display: block;
+			margin: 1vh 0;
+		}
+		h1 span{
+			padding: 0;
+			margin: 0;
+		}
+		h1 img {
+		  display: block;
+		  width: 15vw;
+		  max-width: 220px;
+		  min-width: 120px;
+		}
+
+		/* ===== Table Wrapper ===== */
+		table {
+		  position: relative;
+		  margin: auto;
+		  width: 90%;
+		  border-collapse: collapse;
+		}
+
+		/* ===== List Layout ===== */
+		ul {
+		  list-style: none;
+		  padding: 0;
+		  margin: 0;
+		}
+
+		/* Each row */
+		li {
+		  display: grid;
+		  grid-template-columns: minmax(100px, 20%) 1fr;
+		  gap: 1vw;
+		  padding: 0.6vh 0.5vw;
+		  align-items: start;
+		  font-size: 12px; /* desktop baseline */
+		  color: #555;
+		}
+
+		/* Labels */
+		li strong {		
+		  font-weight: 600;
+		  color: #222;
+		  white-space: nowrap;
+		}
+
+		/* Values */
+		li span {
+		  line-height: 1.6;
+		  word-break: break-word;
+		  color: #444;
+		}
+
+		/* Row separator */
+		li:not(:last-child) {
+		  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+		}
+
+		/* ===== Responsive Scaling ===== */
+		@media (max-width: 900px) {
+		  h1 {
+		    font-size: calc(2vh + 2vw);
+		  }
+
+		  li {
+		    font-size: calc(1vh + 1vw);
+		    grid-template-columns: minmax(50px, 32%) 1fr;
+		  }
+		}
+
+		/* ===== Mobile Layout ===== */
+		@media (max-width: 700px) {
+		  .card {
+		    width: 92vw;
+		    height: auto;
+		  }
+
+		  li {
+		    grid-template-columns: 1fr;
+		    gap: 0.4vh;
+		  }
+
+		  li strong {
+		    opacity: 0.8;
+		  }
+		}
+
+    </style>
+</head>
+
+<body>
+
+<div class="card">
+    <h1>
+        <img src="https://dist.neo4j.com/wp-content/uploads/20230926084108/Logo_FullColor_RGB_TransBG.svg">
+        <div>Source [<span id="sourceId"></span>] Graph Informations</div>
+    </h1>
+
+    <table>
+        <tr>
+            <td>
+                <ul>
+                    <li><strong>Database name</strong><span id="dbName"></span></li>
+                    <li><strong>User</strong><span id="dbUser"></span></li>
+                    <li><strong>Available Nodes</strong><span id="nodes"></span></li>
+                    <li><strong>Available Relationships</strong><span id="relationships"></span></li>
+                    <li><strong>All Relationships</strong><span id="allRelationships"></span></li>
+                    <li><strong>Property Keys</strong><span id="propertyKeys"></span></li>
+                    <li><strong>Application Version</strong><span id="appVersion"></span></li>
+                </ul>
+            </td>
+        </tr>
+    </table>
+</div>
+
+<script>
+  console.log("iframe JS loaded"); // 🔥 VERY IMPORTANT
+
+  function extract_informations(graphInfo) {
+    console.log("received graphInfo:", graphInfo);
+
+    document.getElementById("sourceId").textContent = graphInfo.sourceId;
+    document.getElementById("dbName").textContent = graphInfo.database;
+    document.getElementById("dbUser").textContent = graphInfo.total_relationships;
+    document.getElementById("nodes").textContent = graphInfo.total_nodes;
+    document.getElementById("relationships").textContent = graphInfo.relationship_labels?.join(", ") || "";
+    document.getElementById("allRelationships").textContent = graphInfo.total_relationships;
+    document.getElementById("propertyKeys").textContent = graphInfo.property_keys?.join(", ") || "";
+    document.getElementById("appVersion").textContent = graphInfo.neo4j_version;
+  }
+
+  window.addEventListener("message", (event) => {
+    console.log("message event received:", event.data);
+
+    const { action, payload } = event.data || {};
+
+    if (action === "informations") {
+      extract_informations(payload);
+    }
+  });
+</script>
+
+
+</body>
+</html>

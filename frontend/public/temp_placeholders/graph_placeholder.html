@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Network Metrics Slideshow (Fixed Icons)</title>
+<style>
+:root {
+  --accent-gradient: linear-gradient(45deg, #00bcd4, #8e44ad, #e91e63);
+  --text-muted: #555;
+}
+
+@keyframes hueshift {
+  from { filter: hue-rotate(0deg); }
+  to { filter: hue-rotate(360deg); }
+}
+
+body {
+  margin: 0;
+  height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: radial-gradient(circle at center, #FFF, #fcfefd);
+  font-family: "Segoe UI", Roboto, Arial, sans-serif;
+  overflow: hidden;
+  opacity: 0.5;
+  width: 100vw;
+  user-select: none;
+}
+
+.slideshow {
+  position: relative;
+  width: 100vw;
+  max-width: 900px;
+  height: 100vh;
+  border-radius: 1vw;
+  overflow: hidden;
+}
+
+/* Each slide */
+.slide {
+  position: absolute;
+  top: 0%;
+  left: 100%;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  opacity: 0;
+  transition: all 1s ease;
+}
+.slide.active {
+  left: 0;
+  opacity: 1;
+}
+
+/* Icon (SVG) styling */
+.slide .icon {
+  margin-bottom: 4vh;
+  width: 80px;
+  height: 80px;
+  display: inline-block;
+  animation: hueshift 3s linear infinite;
+}
+.slide .icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* Title */
+.slide .title {
+  font-size: 29px;
+  margin-bottom: 3vh;
+  background: var(--accent-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: hueshift 3s linear infinite;
+}
+
+/* Description */
+.slide .text {
+  font-size: 13px;
+  max-width: 70%;
+  color: var(--text-muted);
+  line-height: 1.7;
+}
+
+/* Dots */
+.dots {
+  position: absolute;
+  bottom: 2vh;
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  gap: 1vw;
+  opacity: 0.4;
+}
+.dot {
+  width: 1vw;
+  height: 1vw;
+  border-radius: 50%;
+  background: #666;
+  cursor: pointer;
+  transition: background 0.3s;
+  opacity: 0.3;
+}
+.dot.active {
+  background: #333;
+  opacity: 0.9;
+}
+
+@media (max-width: 900px) {
+  .slide .icon { width: calc(8vh + 5vw); height: calc(8vh + 5vw); }
+  .slide .title { font-size: calc(2vh + 2vw); }
+  .slide .text { font-size: calc(1vh + 1vw); max-width: 90%; }
+}
+</style>
+</head>
+<body>
+
+<!-- Gradient definition -->
+<svg width="0" height="0">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop stop-color="#00bcd4" offset="0%"/>
+      <stop stop-color="#8e44ad" offset="50%"/>
+      <stop stop-color="#e91e63" offset="100%"/>
+    </linearGradient>
+  </defs>
+</svg>
+
+<div class="slideshow">
+    <!-- Easy to Use -->
+  <div class="slide active">
+    <div class="icon">
+      <!-- Mouse pointer + sparkles (intuitive interaction) -->
+      <svg viewBox="0 0 32 32">
+        <g fill="url(#grad)">
+          <path d="M6 2l20 10-9 2 2 9zM26 24a2 2 0 1 0 2 2 2 2 0 0 0-2-2zm0-4a1 1 0 1 1 1-1 1 1 0 0 1-1 1zm3-11a1 1 0 1 1-1-1 1 1 0 0 1 1 1zm-5 5a1 1 0 1 1 1 1 1 1 0 0 1-1-1z"/>
+        </g>
+      </svg>
+    </div>
+    <div class="title">Easy to Use</div>
+    <div class="text">
+      Interact intuitively — click, drag, and zoom across your network. Built with a clean, user-friendly interface so anyone can explore complex relationships without needing technical expertise.
+    </div>
+  </div>
+  <!-- Adjustments -->
+  <div class="slide">
+    <div class="icon">
+      <svg viewBox="0 0 32 32">
+        <g fill="url(#grad)">
+          <!-- Brush element -->
+          <path d="M27.555 8.42c-1.355 1.647-5.07 6.195-8.021 9.81l-3.747-3.804c3.389-3.016 7.584-6.744 9.1-8.079 2.697-2.377 5.062-3.791 5.576-3.213 0.322 0.32-0.533 2.396-2.908 5.286zM18.879 19.03c-1.143 1.399-2.127 2.604-2.729 3.343l-4.436-4.323c0.719-0.64 1.916-1.705 3.304-2.939l3.861 3.919zM15.489 23.183v-0.012c-2.575 9.88-14.018 4.2-14.018 4.2s4.801 0.605 4.801-3.873c0-4.341 4.412-4.733 4.683-4.753l4.543 4.427s-0.009 0.011-0.009 0.011z"/>
+          <!-- Shapes/grid element (scaled & centered) -->
+          <path d="M10 12h3l-1.5-4zM13 14h-3l-0.75 2h-1.5l3.25-9h1.5l3.25 9h-1.5zM19 6h2v-2h-2v2zM21 20v-2h-2v2h2zM17 19v-2h2v-10h-2v-2h-10v2h-2v10h2v2h10zM5 20v-2h-2v2h2zM3 3v2h2v-2h-2zM23 7h-2v10h2v6h-6v-2h-10v2h-6v-6h2v-10h-2v-6h6v2h10v-2h6v6z"/>
+        </g>
+      </svg>
+    </div>
+    <div class="title">Variety of Adjustments</div>
+    <div class="text">
+      Adjust your graph’s appearance and layout in real time with intuitive design controls. Fine-tune node sizes, edge transparency, spacing, and color schemes — all designed to help you uncover deeper patterns with just a few simple tweaks.
+    </div>
+  </div>
+  <!-- Upload and Export -->
+  <div class="slide">
+    <div class="icon">
+      <!-- Folder with up/down arrows (data exchange) -->
+      <svg viewBox="0 0 32 32">
+        <g fill="url(#grad)">
+          <path d="M28 8h-12l-2-2h-8a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h22a2 2 0 0 0 2-2v-14a2 2 0 0 0-2-2zm0 16h-22v-16h7.172l2 2h12.828zM15 24l-4-4h3v-5h2v5h3zM17 12h-2v-5h-3l4-4 4 4h-3z"/>
+        </g>
+      </svg>
+    </div>
+    <div class="title">Upload, Export, and More</div>
+    <div class="text">
+      Bring your datasets to life by importing files or exporting complete sessions. Manage your data conveniently across systems with support for multiple formats like CSV, JSON, and session bundles.
+    </div>
+  </div>
+  <!-- real-time -->
+  <div class="slide">
+    <div class="icon">
+      <!-- Network nodes (real-time data flow) -->
+      <svg viewBox="0 0 32 32">
+        <g fill="url(#grad)">
+          <circle cx="6" cy="16" r="3"/>
+          <circle cx="26" cy="16" r="3"/>
+          <circle cx="16" cy="6" r="3"/>
+          <circle cx="16" cy="26" r="3"/>
+          <path d="M8.2 14.8l5.6-5.6m4.4 0l5.6 5.6m0 2.4l-5.6 5.6m-4.4 0l-5.6-5.6" stroke="url(#grad)" stroke-width="2" fill="none"/>
+        </g>
+      </svg>
+    </div>
+    <div class="title">Real-Time Queries</div>
+    <div class="text">
+      Experience live data flow as queries update instantly. The graph adapts dynamically to new inputs, showing evolving patterns and interactions in real time for powerful, continuous insight discovery.
+    </div>
+  </div>
+  <!-- AI Chat Bot -->
+  <div class="slide">
+    <div class="icon">
+      <svg viewBox="0 0 32 32">
+        <g fill="url(#grad)">
+          <!-- Robot head -->
+          <path d="M16 2a2 2 0 1 1 0 4c-0.552 0-1 0.448-1 1v1h-6c-1.657 0-3 1.343-3 3v9c0 1.657 1.343 3 3 3h1v4l4-4h7c1.657 0 3-1.343 3-3v-9c0-1.657-1.343-3-3-3h-6v-1c0-0.552 0.448-1 1-1a2 2 0 1 1 0-4zM11 14a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm10 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4z"/>
+          <!-- Speech wave bubble below -->
+          <path d="M8 26c-0.552 0-1 0.448-1 1v2c0 0.552 0.448 1 1 1h16c0.552 0 1-0.448 1-1v-2c0-0.552-0.448-1-1-1H8zm3 2h1v1h-1v-1zm4 0h1v1h-1v-1zm4 0h1v1h-1v-1z"/>
+        </g>
+      </svg>
+    </div>
+    <div class="title">AI Chat Bot</div>
+    <div class="text">
+      Communicate with a built-in AI assistant designed to streamline your workflow. The chat bot can help with data analysis, explain metrics, guide you through tools, and even automate complex tasks — making the entire experience more interactive and intuitive.
+    </div>
+  </div>
+  <div class="dots"></div>
+</div>
+
+<script>
+const slides = document.querySelectorAll('.slide');
+const dotsContainer = document.querySelector('.dots');
+let index = 0;
+
+slides.forEach((_, i) => {
+  const dot = document.createElement('div');
+  dot.classList.add('dot');
+  if (i === 0) dot.classList.add('active');
+  dot.addEventListener('click', () => showSlide(i));
+  dotsContainer.appendChild(dot);
+});
+const dots = document.querySelectorAll('.dot');
+
+function showSlide(i) {
+  slides[index].classList.remove('active');
+  dots[index].classList.remove('active');
+  index = (i + slides.length) % slides.length;
+  slides[index].classList.add('active');
+  dots[index].classList.add('active');
+}
+
+setInterval(() => showSlide(index + 1), 2500);
+</script>
+</body>
+</html>

@@ -1,0 +1,1023 @@
+<html lang="en"><head>
+							  <meta charset="UTF-8">
+							  <title>Graph Visualization</title>
+							  <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+							  <!-- Your control script -->
+							  <script src="../temp_placeholders/graphs_adjuster.js"></script>
+							  <style>
+							  	*{
+							  		padding: 0;
+                                  	margin: 0;
+							  	}
+							  	/* Width of the scrollbar track */
+								::-webkit-scrollbar {
+								  width: 0.8vw;
+								  height: 0.8vw;
+								}
+								/* Style of the scrollbar track */
+								::-webkit-scrollbar-track {
+								  background: #f1f1f1;
+								}
+								/* Style of the scrollbar thumb (the draggable part) */
+								::-webkit-scrollbar-thumb {
+								  background-color: #AAA;
+								  border-radius: 6px;
+								  border: 0.2vw solid #f1f1f1;
+								}
+								/* Style of the scrollbar thumb on hover */
+								::-webkit-scrollbar-thumb:hover {
+								  background-color: #555;
+								}
+							    #mynetwork {
+                                  width: 100%;
+                                  height: 100%;
+                                  //border: 1px solid lightgray;
+                                }
+                                .nodeAdjustBox{
+                                    display: none;
+                                    position: absolute; 
+                                    width: 300px; 
+                                    min-height: 15.5vh; 
+                                    border: 0.1vh solid rgb(179, 179, 179); 
+                                    box-shadow: rgba(0, 0, 0, 0.2) 0px 0px 8px; 
+                                    background-color: rgba(255, 255, 255,0.7); 
+                                    padding: 0.5vw; 
+                                    z-index: 9999; 
+                                    top: 150.337px; 
+                                    left: 555.958px; 
+                                    border-radius: 0.5vh;
+                                    backdrop-filter: blur(1px);
+                                }
+                                .nodeAdjustBox:hover{
+                                    background-color: rgba(255, 255, 255,0.9); 
+                                }
+                                .albumBox{
+                                	display: block;
+                                    position: relative; 
+                                    width: 95%; 
+                                    margin: auto;
+                                    left: 0;
+                                    right: 0;
+                                    max-height: 22vh;
+                                    margin-bottom: 1vh;
+                                    border: 0.1vh solid rgba(179, 179, 179,0.7); 
+                                    //box-shadow: rgba(0, 0, 0, 0.2) 0px 0px 8px; 
+                                    background-color: rgba(0, 0, 0, 0); 
+                                    padding: 0.5vw; 
+                                    z-index: 10000;  
+                                    border-radius: 0.5vh;
+                                    backdrop-filter: blur(1px);
+                                	overflow-y: auto;
+                                	overflow-x: hidden;
+                                }
+								.albumBox:hover{
+									background-color: rgba(255, 255, 255,0.1); 
+								}
+                                #iconGrid {
+								    display: flex;
+								    flex-wrap: wrap;
+								    gap: 0.3vw;
+								}
+								.iconThumb {
+									width: 5vh;
+								    height: 5vh;
+								    cursor: pointer;
+								    border: 0.1vh solid #EEE;
+								    padding: 5px;
+								    box-sizing: border-box;
+								}
+								.iconThumb:hover{
+									border: 0.1vh solid #AAA;
+								}
+								.iconThumb:last-child{
+									width: 4vh;
+								    height: 4vh;
+								    cursor: pointer;
+									border: 0.1vh dashed #EEE;
+								    padding: 5px;
+								    box-sizing: border-box;
+									background-color: #EEE;
+									opacity: 0.8;
+								}
+								.iconThumb:last-child:hover{
+									border: 0.1vh dashed #999;
+									opacity: 1;
+								}
+                                .adjustment_options_cotainer{
+                                	display: block; 
+                                	width:100%; 
+                                	min-height: 15vh; 
+                                	align-items:center; 
+                                	justify-content:center;
+                                	overflow:hidden; 
+                                	padding-top: 0.4vh;
+                                }
+                                .nodeAdjustBox .nodeAdjustBox_node_label{
+                                	display: block; 
+                                	height: 3vh; 
+                                	width:100%; 
+                                	align-items:center; 
+                                	justify-content:center;
+                                	overflow:hidden; 
+									margin-bottom: 1vh;
+                                }
+								.nodeAdjustBox .nodeAdjustBox_node_label input{
+									position: absolute;
+									margin: auto;
+									left: 0;
+									right: 0;
+									height: 3vh;
+									border: 0.1vh solid rgba(179, 179, 179,0);
+									background-color: rgba(200, 200, 200, 0.2);
+									width: 95%;
+									padding: 2%;
+									border-radius: 0.1vh;
+                                	font-size: 13px;	
+                                	color: #333;								
+								}
+								.nodeAdjustBox .nodeAdjustBox_node_label input:focus{
+									border: 0.1vh solid rgba(179, 179, 179,0.3);
+									background-color: rgba(255, 255, 255, 0.2);
+									outline: none;
+								}
+                                .nodeAdjustBox .nodeAdjustBox_node_image{
+                                	position: relative;
+                                	display: inline-block;
+                                	background-color: rgba(255, 255, 255, 0);
+                                	border: 0.1vh solid rgb(179, 179, 179);
+                                	height: 4.3vh;
+                                	width: 4.4vh;
+                                	margin-left: 0.5vw;
+                                	padding: 0.2vh;
+                                	opacity: 0.8;
+                                	text-align: center;
+                                	border-radius: 0.3vh;
+                                	overflow: hidden;
+                                }
+								.nodeAdjustBox .nodeAdjustBox_node_image:hover{
+									opacity: 1;
+									cursor: pointer;
+                                	background-color: rgba(200, 200, 200, 0.1);
+								}
+								.nodeAdjustBox .nodeAdjustBox_node_image:empty{
+									border: 0.1vh dashed rgb(179, 179, 179);
+								}
+                                .nodeAdjustBox .nodeAdjustBox_node_image:empty:before{
+                                	content: '+';
+                                	line-height: 4.2vh;
+                                	color: #888;
+                                	text-align: center;
+                                	padding-left: 0vh;
+								}
+								.nodeAdjustBox .nodeAdjustBox_node_image:empty:hover{
+                                	border: 0.1vh dashed rgb(139, 139, 139);
+                                	cursor: pointer;
+                                	background-color: rgba(255, 255, 255, 0.9);                                	
+								}
+								.nodeAdjustBox .nodeAdjustBox_node_image:empty:hover:before{
+									color: #333;
+								}
+								.nodeAdjustBox .nodeAdjustBox_node_note{
+                                	position: relative;
+                                	display: inline-block;
+                                	border: 0.1vh solid rgb(179, 179, 179);
+									background-color: rgba(255, 255, 255, 0);
+                                	height: 4.7vh;
+                                	width: 75%;
+                                	margin-left: 0.5vw;
+                                	overflow: hidden;
+                                }
+                                .nodeAdjustBox .nodeAdjustBox_node_note textarea{
+                                	position: relative;
+                                	display: block;
+                                	width: 96.5%;
+                                	height: 97%;
+                                	padding: 0.5% 1%;
+                                	padding-left: 2%;
+									background-color: rgba(100, 100, 100, 0);
+                                	font-family: "Times new roman";
+                                	resize: none;
+                                	border: none;
+                                	outline: none;
+                                	color: #333;
+                                	font-size: 13px;
+                                }
+                                .colorOption:hover {
+                                  //border-color: #333 !important;
+                                 opacity: 1 !important;
+                                 box-shadow: rgba(0, 0, 0, 0.4) 0px 2px 0.4vh;
+                                  filter: saturate(150%);
+                                }
+                                .sizeCircle:hover {
+                                  transform: scale(1.2);
+                                  transition: all 0.2s;
+                                  opacity: 1 !important;
+                                  box-shadow: rgba(0, 0, 0, 0.4) 0px 2px 0.4vh;
+                                  border: 0.2vh solid #000;
+                                }
+                                .select_options{
+                                    border: 0.1vh solid #CCC;
+                                    height: 3vh;
+                                    width: 100%;
+                                    font-size: 10px;
+                                    margin: 0;
+                                    padding: 0;
+                                    margin-bottom: 1vh;
+                                    background-color: rgba(0, 0, 0, 0);
+                                }
+                                .select_options:focus{
+                                    outline: none;
+                                    border-color: #AAE;
+                                }
+                                .select_options option:disabled{
+                                    color: #999;
+                                }
+								#displayIcon {
+								    margin-top: 20px;
+								}
+								.customContextMenu{
+									display: none;
+                                    position: absolute; 
+                                    width: 120px; 
+                                    min-height: 3vh; 
+                                    border: 0.1vh solid rgb(179, 179, 179); 
+                                    box-shadow: rgba(0, 0, 0, 0.2) 0px 0px 8px; 
+                                    background-color: rgba(255, 255, 255,0.7); 
+                                    padding: 0.5vw; 
+                                    z-index: 10001;
+                                    border-radius: 0.5vh;
+                                    backdrop-filter: blur(1px);
+								}
+								.customContextMenu .menu_item{
+									background-color: rgba(255, 255, 255,0.4); 
+									padding: 0.5vh;
+									height: 15;
+									font-size: 13px;
+									color: #444;
+									cursor: default;
+									line-height: 15px;
+									border: 0.1vh solid rgba(179, 179, 179,0); 
+									border-bottom-color: rgba(179, 179, 179,0.3); 
+									padding-left: 0.7vh;
+								}
+								.customContextMenu .menu_item:last-child{
+									border-bottom-color: rgba(179, 179, 179,0); 
+								}
+								.customContextMenu .menu_item:hover{
+									background-color: rgba(255, 255, 255,1); 
+									color: #000;
+									border: 0.1vh solid rgba(179, 179, 179,1); 
+								}
+								.customContextMenu .menu_item:active{
+									background-color: rgba(200, 200, 200,0.1); 
+									color: #666;
+									border: 0.1vh solid rgba(100, 100, 100,0.1); 
+								}
+								.customContextMenu .menu_item_disabled{
+									background-color: rgba(200, 200, 200,0); 
+									padding: 0.5vh;
+									height: 2vh;
+									font-size: calc(0.4vh + 0.5vw);
+									color: #AAA;
+									cursor: default;
+									line-height: 2.2vh;
+									padding-left: 0.7vh;
+									border: 0.1vh solid rgba(100, 100, 100,0); 
+								}
+								.graph_options{
+									position: absolute;
+									display: none;
+									top: 0;
+									left: 0;
+									z-index: 2000;
+									min-width: 25%;
+									background-color: #FFF;
+									min-height: 90%;
+									border: 0.1vh solid #000;
+									overflow: hidden;
+									margin: 1vh 0;
+								}
+								.graph_options .graph_options_filters{
+									min-height: 30%;
+									width: 100%;
+									margin-bottom: 5px;
+								}
+								.graph_options .graph_options_settings {
+								  position: relative;
+								  top: 20px;
+								  right: 0px;
+								  min-height: 10%;
+								  min-width: 10%;
+								  background: #fff;
+								  border: 1px solid #ccc;
+								  border-radius: 8px;
+								  padding: 12px;
+								  box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+								  font-family: sans-serif;
+								  z-index: 1000;
+								}
+								.graph_options .graph_options_settings label {
+								  margin-right: 8px;
+								  font-size: 14px;
+								}
+								.graph_options .graph_options_settings input[type="number"] {
+								  width: 50px;
+								  margin-bottom: 8px;
+								}
+								.graph_options .graph_options_infos{
+								  position: relative;
+								  top: 20px;
+								  right: 0px;
+								  min-height: 100px;
+								  min-width: 17vw;
+								  margin: 1vh 0;
+								  background: #fff;
+								  border: 1px solid #ccc;
+								  border-radius: 8px;
+								  padding: 12px;
+								  box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+								  font-family: sans-serif;
+								  z-index: 1000;
+								  font-size: calc(0.7vh + 0.8vw);
+								}
+								.graph_options .graph_options_infos div{
+									display: block;
+									margin: auto;
+									left: 0;
+									right: 0;
+									width: 99%;
+									//background-color: #900;
+									border-bottom: 0.1vh solid #EEE;
+									overflow: hidden;
+									height: 3vh;
+									padding: 0.5% 0.5%;
+								}
+								.graph_options .graph_options_infos div span{
+									position: relative;
+									float:left;
+									width: 65%;
+									text-align: left;
+									line-height: 3vh;
+									white-space: nowrap;
+  									overflow: hidden;
+  									text-overflow: ellipsis;
+  									cursor: default;
+  									color: #555;
+								}
+								.graph_options .graph_options_infos div span:first-child{
+									width: 22%;
+									//background-color: #990;
+									text-align: left;
+									//font-weight: bold;
+									padding-right: 1vw;
+									color: #333;
+									padding-left: 1.5vw;
+								    margin-right: 1vw;
+								    border-right: 0.1vh solid #F5F5F5;
+								}
+								.graph_options .graph_options_infos div:first-child{
+									background-color: #EEE;
+								  	font-size: calc(0.7vh + 0.7vw);
+								}						
+								.graph_options .graph_options_infos div:first-child span{
+									padding-left: 0.5vw;
+									line-height: 3.5vh;
+									font-weight: bold;
+									color: #333;
+								}
+								.graph_options .graph_options_infos div:first-child span:first-child{
+									width: 22%;
+									//background-color: #990;
+									text-align: left;
+									padding-right: 1vw;
+									padding-left: 1.5vw;
+								    margin-right: 1vw;
+								    border-right: 0.1vh solid #F5F5F5;
+								}
+								.graph_options .graph_options_infos div:last-child{
+									border-bottom: 0.1vh solid #FFF;
+								}
+								.graph_options .graph_options_infos:empty:before{
+									position: relative;						
+									display: block;
+									content: "No Node Information!";
+									height: 5vh;
+									color: #888;
+								}
+								.graph_options .graph_options_filters {
+								  position: relative;
+								  top: 20px;
+								  right: 0px;
+								  min-height: 10%;
+								  min-width: 10%;
+								  background: #fff;
+								  border: 1px solid #ccc;
+								  border-radius: 8px;
+								  padding: 12px;
+								  box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+								  font-family: sans-serif;
+								  z-index: 1000;
+								}
+							  </style>
+							</head>
+							<body>
+							  <!-- Adjustment box (hidden initially) -->
+							  <div id="nodeAdjustBox" class="nodeAdjustBox">
+								<!-- Album and upload section -->
+							  	<div id="albumBox" class="albumBox" style="">
+							  		<div id="iconGrid"></div>
+							  	</div>
+							   	<div class="adjustment_options_cotainer">
+							   		<div class="nodeAdjustBox_node_label">
+							   			<input id="nodeAdjustBox_node_label_field" type="text" placeholder="No Label" value=""/>
+							   		</div>
+							   		<div style="display: block; height: 5vh; width:100%; align-items:center; justify-content:center;overflow:hidden; background-color: rgba(0, 0, 0, 0);margin-bottom: 1vh;padding-bottom:1vh;border-bottom: 0.1vh solid #EEE;text-align: center;">
+							   			<span id="nodeAdjustBox_node_image" class="nodeAdjustBox_node_image"></span>
+							   			<span class="nodeAdjustBox_node_note">
+							   				<textarea id="nodeAdjustBox_node_note_text" placeholder="Write a Note..."></textarea>
+							   			</span>
+							   		</div>
+								    <!-- Left: color picker -->
+								    <div style="float:left; height: 8vh; width:25%; align-items:center; justify-content:center;overflow:hidden">
+								      <input type="color" id="colorPicker" style="width:100%; height:100%;border:none;">
+								    </div>
+								    <!-- center: controls -->
+								    <div style="float:left; width:38%; height: 8vh; overflow:hidden; padding-left: 1%;border-right: 0.1vh solid #DDD;padding: 0 0.4vw;">
+								      <!-- Top: color options -->
+								      <div style="flex:30%; width:100%; height:35%; display: flex; overflow:hidden;justify-content:space-around; align-items:center;overflow: hidden;float: left; padding-right: 0vw;border-bottom: 0.1vh dashed #EEE;margin: 0.2vh 0;">
+								        <div class="colorOption" data-color="#DC143C" style="position: relative;/* display: inline-block; */float: right;width: 1.5vh; height: 1vh;/* margin: auto; *//* padding-right: 10%; */cursor:pointer;border: 0.1vh solid #CCC;background-color: #DC143C;margin-left: 2%; border-radius: 0.3vh; opacity: 0.8;/* border-radius: 0.5vh; */"></div>
+								        <div class="colorOption" data-color="#00BFFF" style="position: relative;/* display: inline-block; */float: right;width: 1.5vh; height: 1vh;/* margin: auto; *//* padding-right: 10%; */cursor:pointer;border: 0.1vh solid #CCC;background-color: #00BFFF;margin-left: 2%; border-radius: 0.3vh; opacity: 0.8;/* border-radius: 0.5vh; */"></div>
+								        <div class="colorOption" data-color="#32CD32" style="position: relative;/* display: inline-block; */float: right;width: 1.5vh; height: 1vh;/* margin: auto; *//* padding-right: 10%; */cursor:pointer;border: 0.1vh solid #CCC;background-color: #32CD32;margin-left: 2%; border-radius: 0.3vh; opacity: 0.8;/* border-radius: 0.5vh; */"></div>
+								        <div class="colorOption" data-color="#DAA520" style="position: relative;/* display: inline-block; */float: right;width: 1.5vh; height: 1vh;/* margin: auto; *//* padding-right: 10%; */cursor:pointer;border: 0.1vh solid #CCC;background-color: #DAA520;margin-left: 2%; border-radius: 0.3vh; opacity: 0.8;/* border-radius: 0.5vh; */"></div>
+								        <div class="colorOption" data-color="#7851A9" style="position: relative;/* display: inline-block; */float: right;width: 1.5vh; height: 1vh;/* margin: auto; *//* padding-right: 10%; */cursor:pointer;border: 0.1vh solid #CCC;background-color: #7851A9;margin-left: 2%; border-radius: 0.3vh; opacity: 0.8;/* border-radius: 0.5vh; */"></div>
+								        <div class="colorOption" data-color="#FF4500" style="position: relative;/* display: inline-block; */float: right;width: 1.5vh; height: 1vh;/* margin: auto; *//* padding-right: 10%; */cursor:pointer;border: 0.1vh solid #CCC;background-color: #FF4500;margin-left: 2%; border-radius: 0.3vh; opacity: 0.8;/* border-radius: 0.5vh; */"></div>
+								        <div class="colorOption" data-color="#40E0D0" style="position: relative;/* display: inline-block; */float: right;width: 1.5vh; height: 1vh;/* margin: auto; *//* padding-right: 10%; */cursor:pointer;border: 0.1vh solid #CCC;background-color: #40E0D0;margin-left: 2%; border-radius: 0.3vh; opacity: 0.8;/* border-radius: 0.5vh; */"></div>
+								      </div>
+								      <!-- Bottom: size adjustment -->
+								      <div style="flex:30%; width: 100%; height: 55%;display:flex; justify-content:space-around; align-items:center;overflow: hidden;float: left;">
+								        <div class="sizeCircle" data-size="5" style="width: 1vh; height:1vh; background:#EEE; border-radius:50%; cursor:pointer;border: 0.2vh solid #AAA; opacity: 0.7;" title="Size 5"></div>
+								        <div class="sizeCircle" data-size="10" style="width:1.4vh; height:1.4vh; background:#EEE; border-radius:50%; cursor:pointer;border: 0.2vh solid #AAA; opacity: 0.7;" title="Size 10"></div>
+								        <div class="sizeCircle" data-size="15" style="width:1.7vh; height:1.7vh; background:#EEE; border-radius:50%; cursor:pointer;border: 0.2vh solid #AAA; opacity: 0.7;" title="Size 15"></div>
+								        <div class="sizeCircle" data-size="20" style="width:2vh; height:2vh; background:#EEE; border-radius:50%; cursor:pointer;border: 0.2vh solid #AAA; opacity: 0.7;" title="Size 20"></div>
+								        <div class="sizeCircle" data-size="25" style="width:2.25vh; height:2.25vh; background:#EEE; border-radius:50%; cursor:pointer;border: 0.2vh solid #AAA; opacity: 0.7;" title="Size 25"></div>
+								        <div class="sizeCircle" data-size="30" style="width:2.5vh; height:2.5vh; background:#EEE; border-radius:50%; cursor:pointer;border: 0.2vh solid #AAA; opacity: 0.7;" title="Size 30"></div>
+								      </div>
+								    </div>
+								  	<!-- right: controls -->
+								    <div style="float:left; width:28%; height: 8vh; overflow:hidden; padding-left: 2%;margin-left: 0.2vw;font-size: calc(0.4vh + 0.5vw);margin-top: 0.5vh;">
+								    	<select class="select_options" title="Color changing behaviour">
+								    		<option selected="" disabled="">Color Effect</option>
+								    		<option>Individual</option>
+								    		<option>Link</option>
+								    	</select>
+								    	<select class="select_options" title="Change Node shape">
+								    		<option selected="" disabled="">Node Shape</option>
+								    		<option>Circle</option>
+								    		<option>Rectangle</option>
+								    		<option>Diamond</option>
+								    	</select>
+								    </div>
+								</div>
+							  </div>
+							  <div id="customContextMenu" class="customContextMenu"></div>
+							  <div id="graph_options" class="graph_options">
+							  	<div id="graph_filters" class="graph_options_filters">asas</div>
+							  	<div id="graph_info" class="graph_options_info"></div>
+							  	<div id="graph_settings" class="graph_options_settings">							  		
+							  		<label>Limit</label><input id="graph_settings_limit" type="number" min="1" name="" placeholder="Limit" value="25"></br>
+							  		<label>Weight Edges</label><input type="checkbox" name=""></br>
+							  		<label>Show Titles</label><input type="checkbox" name=""></br>
+							  		<label>Show Labels</label><input type="checkbox" name=""></br>
+							  		<label>Edit Informations</label><input id="graph_settings_infos" type="checkbox" name=""></br>
+							  		<button id="graph_reset_btn">Reset Graph</button></br>
+							  		<a href="rr.html">Reload page</a>
+							  	</div>
+							  	<div id="graph_infos" class="graph_options_infos"></div>
+							  </div>
+							  <div id="mynetwork"><div class="vis-network" tabindex="0" style="position: relative; overflow: hidden; touch-action: pan-y; user-select: none; -webkit-user-drag: none; -webkit-tap-highlight-color: rgba(0, 0, 0, 0); width: 100%; height: 100%;"><canvas width="1409" style="position: relative; touch-action: none; user-select: none; -webkit-user-drag: none; -webkit-tap-highlight-color: rgba(0, 0, 0, 0); width: 100%; height: 100%;" height="800"></canvas><div class="vis-tooltip" style="left: 0px; top: 0px; visibility: hidden;"></div></div></div>
+
+							  <script type="text/javascript">
+							  	function sanitizeNode(n) {
+								  // don't mutate original — clone first
+								  const node = { ...n };
+
+								  if (!node.shape) node.shape = "dot";
+								  if (!node.size) node.size = 15;
+								  if (!node.font) node.font = { size: 16 };
+
+								  if (!node.color) {
+								    node.color = {
+								      background: "rgba(255,255,255,1)",
+								      border: "#555",
+								      highlight: {
+								        background: "rgba(255,255,255,1)",
+								        border: "#111"
+								      },
+								      hover: {
+								        background: "rgba(255,255,255,1)",
+								        border: "#333"
+								      }
+								    };
+								  }
+
+								  // If they have a tooltip property, leave it
+								  // If you want to remove only empty titles:
+								  if (node.title === "" || node.title == null) delete node.title;
+
+								  return node;
+								}
+
+
+							    var nodesData = new vis.DataSet([]);
+								var edgesData = new vis.DataSet([]);
+								var data = { nodes: nodesData, edges: edgesData };
+								//var network = new vis.Network(container, data, options);
+							    nodesData.forEach(node => { //Disablint the title tooltip
+								  delete node.title;
+								});
+							    // Make nodesData accessible globally for updates
+							    window.nodesData = nodesData;
+
+							    var container = document.getElementById('mynetwork');
+							    var data = {
+							      nodes: nodesData,
+							      edges: edgesData
+							    };
+							    // Global options that reflect runtime changes (gets updated along side the option, (used for export purpose))
+								window.currentOptions = {
+								  nodes: {
+								    shape: "dot",
+								    size: 15,
+								    font: { size: 16 },
+								    borderWidth: 1.3,
+								    borderWidthSelected: 2,
+								    margin: 5,
+								    color: {
+								      background: "rgba(255,255,255,1)",
+								      border: "#555",
+								      highlight: {
+								        background: "rgba(255,255,255,1)",
+								        border: "#111"
+								      },
+								      hover: {
+								        background: "rgba(255,255,255,1)",
+								        border: "#333"
+								      }
+								    }
+								  },
+								  edges: {
+								    arrows: "to",
+								    width: 0.4,
+								    hoverWidth: 1,
+								    font: { size: 10 },
+								    color: { color: "#555" }  // to ensure visible edges
+								  },
+								  interaction: { hover: true, multiselect: true },
+								  physics: true,
+								  layout: {}
+								};
+								const options = {
+									  nodes: {
+									    shape: "dot",
+									    size: 15,
+									    font: { size: 16 },
+									    borderWidth: 1.3,
+									    borderWidthSelected: 2,
+									    margin: 5,
+									    color: {
+									      background: "rgba(255,255,255,1)",
+									      border: "#555",
+									      highlight: {
+									        background: "rgba(255,255,255,1)",
+									        border: "#111"
+									      },
+									      hover: {
+									        background: "rgba(255,255,255,1)",
+									        border: "#333"
+									      }
+									    }
+									  },
+									  edges: {
+									    arrows: "to",
+									    width: 0.4,
+									    hoverWidth: 1,
+									    font: { size: 10 },
+									    color: { color: "#555" }  // to ensure visible edges
+									  },
+									  interaction: { hover: true, multiselect: true },
+									  physics: true,
+									  layout: {}
+									};
+
+
+							    var network = new vis.Network(container, data, options);
+
+
+// ------------------------------------------------------------------------------------------------------------------------ Adjustments starts
+							    //Store original duplicates
+							    let original_nodes = new vis.DataSet(nodesData.get());
+								let original_edges = new vis.DataSet(edgesData.get());
+								let modified_nodes = null;
+								let modified_edges = null;
+								const parentWindow = window.parent;
+								let parentWindowId = 1;
+								//initiate modified nodes and edges (after checking no modification has happend)
+								if (areDataSetsEqual(original_nodes, nodesData)) {
+								    modified_nodes = new vis.DataSet(nodesData.get());
+								}
+								if (areDataSetsEqual(original_edges, edgesData)) {
+								    modified_edges = new vis.DataSet(edgesData.get());
+								}
+								console.log("modified_nodes:", modified_nodes)
+								// Track current node
+							    let currentNodeId = null;
+							    const selectedNodes = network.getSelectedNodes(); // returns an array of node IDs
+							    const groupMap = {}; // Stores grouped data { groupId: { nodes: [], edges: [] } }
+
+//---------------------------------- Graph Right clicks
+							    network.on("oncontext", function (params) {
+								    params.event.preventDefault(); // Block browser menu
+								    const nodeId = network.getNodeAt(params.pointer.DOM);
+								    let selectedNodes = network.getSelectedNodes();
+								    const contextMenu = document.getElementById('customContextMenu');
+								    const box = document.getElementById('nodeAdjustBox');
+								    let menuHTML = "";
+								    contextMenu.style.left = `${params.event.pageX}px`;
+								    contextMenu.style.top = `${params.event.pageY}px`;
+
+								    // Initialize edges only if nodeId exists
+								    let edges = [];
+								    if (nodeId) {
+								        edges = network.getConnectedEdges(nodeId);
+								    }
+
+								    if (!nodeId) {
+								        // Empty space
+
+								        if(parentWindow.clipboardBuffer.length>0){
+								        	menuHTML += `<div class="menu_item" data-action="paste" data-id="${nodeId}">Paste</div>`;
+								        }
+								        menuHTML += `<div class="menu_item" data-action="add">Add Node</div>`;
+										menuHTML += `<div class="menu_item" data-action="add">Label</div>`;
+										menuHTML += `<div class="menu_item" data-action="add">Comment Box</div>`;
+								        menuHTML += `<div class="menu_item" data-action="add">Text Block</div>`;				       					
+								        menuHTML += `<div class="menu_item" data-action="add">Event Frame</div>`;										
+								        menuHTML += `<div class="menu_item" data-action="add">Theme Line</div>`;
+								        menuHTML += `<div class="menu_item" data-action="add">OLE Object</div>`;								        
+								    } else {
+								        if (!selectedNodes.includes(nodeId)) {
+								            selectedNodes = [nodeId];
+								            network.selectNodes([nodeId]);
+								        }
+								        const isGroupNode = String(nodeId).startsWith("group:");
+								        if (isGroupNode) {
+								            menuHTML += `<div class="menu_item" data-action="ungroup" data-id="${nodeId}">Ungroup</div>`;
+								        } else {
+								            if (selectedNodes.length === 1) {
+								            	// Show Copy Nodes
+												menuHTML += `<div class="menu_item" data-action="copy" data-id="${nodeId}">Copy</div>`;
+								                if (edges.length === 0) {
+								                    menuHTML += `<div class="menu_item" data-action="delete" data-id="${nodeId}">Delete Node</div>`;
+								                }
+								                if (edges.length > 0) {
+								                    menuHTML += `<div class="menu_item" data-action="unlink" data-id="${nodeId}">Unlink Node</div>`;
+								                }								                
+								            } else if (selectedNodes.length > 1) {
+								                // Count how many connections exist among selected nodes
+								                let allEdges = [];
+												selectedNodes.forEach(nodeId => {
+												    allEdges = allEdges.concat(network.getConnectedEdges(nodeId));
+												});
+												// Remove duplicates
+												allEdges = [...new Set(allEdges)];
+												let connectedEdgesCount = 0;
+												allEdges.forEach(edgeId => {
+												    const edge = edgesData.get(edgeId);
+												    if (edge && selectedNodes.includes(edge.from) && selectedNodes.includes(edge.to)) {
+												        connectedEdgesCount++;
+												    }
+												});
+
+												const totalPossibleEdges = (selectedNodes.length * (selectedNodes.length - 1)) / 2;
+												// Show Copy Nodes
+												menuHTML += `<div class="menu_item" data-action="copy" data-id="${nodeId}">Copy</div>`;
+												if (connectedEdgesCount < totalPossibleEdges) {
+												    // Show Link Nodes
+												    menuHTML += `<div class="menu_item" data-id="${selectedNodes}" data-action="link">Link Nodes</div>`;
+												    menuHTML += `<div class="menu_item" data-id="${selectedNodes}" data-action="group">Group Nodes</div>`;
+												} else {
+												    // Show Unlink Nodes
+												    menuHTML += `<div class="menu_item" data-id="${selectedNodes}" data-action="unlinks">Unlink Nodes</div>`;
+												    menuHTML += `<div class="menu_item" data-id="${selectedNodes}" data-action="group">Group Nodes</div>`;
+												}
+
+								            }
+								        }
+								    }
+
+								    if (menuHTML) {
+								        contextMenu.innerHTML = menuHTML;
+								        contextMenu.style.display = 'block';
+								    } else {
+								        contextMenu.style.display = 'none';
+								    }
+								    box.style.display = 'none';
+								});
+	//------------------------------ Context menu options (actions) 
+								document.getElementById('customContextMenu').addEventListener('click', function (e) {
+								if (e.target.classList.contains('menu_item')) {
+								    const action = e.target.dataset.action;
+								    const nodeId = e.target.dataset.id;
+								    const selectedNodes = network.getSelectedNodes();
+								    switch(action) {
+								      case 'add':
+								        handleAddNode(e.pageX, e.pageY);
+								        break;
+								      case 'delete':
+								        handleDeleteNode(nodeId);
+								        break;
+								      case 'unlink':
+								        handleUnlinkNode(nodeId);
+								        break;
+								      case 'link':
+								        handleLinkNodes(selectedNodes);
+								        break;
+								      case 'group':
+								        handleGroupNodes(selectedNodes,e.pageX, e.pageY);
+								        break;
+								      case 'ungroup':
+								        handleUngroupNode(nodeId);
+								        break;
+								      case 'unlinks': // unlink multiple
+								        handleUnlinkNodes(selectedNodes);
+								        break;
+								      case 'copy': // unlink multiple
+										if (selectedNodes.length > 0) {
+    									    copyNodes(selectedNodes);
+    									}
+    									break;
+								      case 'paste':
+    									const rect = network.canvas.body.container.getBoundingClientRect();
+    									const domPosition = { x: e.pageX - rect.left, y: e.pageY - rect.top };
+    									const canvasPosition = network.DOMtoCanvas(domPosition);
+    									pasteNodes(canvasPosition);
+    									break;
+								    }
+								    // Hide menu after action
+								    document.getElementById('customContextMenu').style.display = 'none';
+								  }
+								});		
+
+//---------------------------------- Graph Left clicks
+							    network.on("click", function(params) {
+								    const box = document.getElementById('nodeAdjustBox');
+								    const albumBox = document.getElementById('albumBox');
+								    const contextMenu = document.getElementById('customContextMenu');
+								    const selects = document.querySelectorAll('.select_options');
+								    selects.forEach(select => select.selectedIndex = 0);
+								    if (params.nodes.length > 0 || params.edges.length > 0 ) {
+								        currentNodeId = params.nodes[0];								      
+								        // Check if node exists in nodesData
+								        const node = nodesData.get(currentNodeId);
+								        if (!node) return; // <-- add this
+								        if (!node) {
+										    // It's a cluster, open it for editing
+										    network.openCluster(currentNodeId);
+										    return; // After expanding, user can click again to edit actual node
+										}
+								        if (node) {
+								            // Normal node
+								            document.getElementById('colorPicker').value = node.color?.background || "#000000";
+								        } else {
+								            // Cluster node (or dynamically generated node)
+								            document.getElementById('colorPicker').value = "#97C2FC"; // default for clusters
+								        }
+
+								        // Position adjustment box near the node
+								        const nodePosition = network.getPositions([currentNodeId])[currentNodeId];
+								        const domPosition = network.canvasToDOM(nodePosition);
+
+								        const offsetX = 20, offsetY = 20;
+								        box.style.top = (domPosition.y + offsetY) + "px";
+								        box.style.left = (domPosition.x + offsetX) + "px";
+
+								        // Keep it inside window
+								        const boxRect = box.getBoundingClientRect();
+								        if (boxRect.right > window.innerWidth) box.style.left = (window.innerWidth - boxRect.width - 10) + "px";
+								        if (boxRect.bottom > window.innerHeight) box.style.top = (window.innerHeight - boxRect.height - 10) + "px";
+										
+										const nodelabel = document.getElementById("nodeAdjustBox_node_label_field");
+										nodelabel.value = node?.label || "";
+
+								        // Retrieving node icon
+								        const nodeImage = document.getElementById("nodeAdjustBox_node_image");
+								        nodeImage.innerHTML = node?.image ? `<img src="${node.image}" style="width:100%; height:auto;">` : "";
+
+								        // Retrieving note
+								        const nodeNote = document.getElementById("nodeAdjustBox_node_note_text");
+								        nodeNote.value = node?.note || "";
+
+								        box.style.display = "block"; 
+								        contextMenu.style.display = "none"; 
+								        albumBox.style.display = "none"; 
+								        //Show node infos (property keys)
+								        showNodeInfos(node, "state");
+								        const allSelectedNodes = {};
+										params.nodes.forEach(nodeId => {
+										  const nodeData = nodesData.get(nodeId); // get full node object from DataSet
+										  console.log("hey:",nodeData)
+										  if (nodeData) {
+										    allSelectedNodes[nodeId] = nodeData; // store it keyed by its ID
+										  }
+										});
+								        messageParent({id:"entity_selection",selectedNodes:allSelectedNodes,selectedEdges:params.edges});							       
+								    } else {
+								        // Clicked background
+								        box.style.display = "none"; 
+								        albumBox.style.display = "none"; 
+								        contextMenu.style.display = 'none';
+								        currentNodeId = null;
+								        selects.forEach(select => select.selectedIndex = 0);
+								        window.parent.postMessage(
+										  { type: "nodeProperties", payload: "" },
+										  "*"
+										);
+								    }
+								});
+	//------------------------------ Node label options 
+								// Updating Node
+								const nodeNewNote=document.getElementById("nodeAdjustBox_node_label_field");
+								nodeNewNote.addEventListener('change', (e) => {
+									updateNodeLabel(currentNodeId,nodeNewNote.value)
+								});							   
+	//------------------------------ Node Color options (Singular/multi-selection)
+							    // Color picker
+								document.getElementById("colorPicker").addEventListener("input", function () {
+								  const selectedNodes = network.getSelectedNodes();
+								  if (selectedNodes.length > 0) {
+								    selectedNodes.forEach(nodeId => {
+								      updateNodeColor(nodeId, this.value);
+								    });
+								  }
+								});
+								// Swatches
+								document.querySelectorAll(".colorOption").forEach((swatch) => {
+								  swatch.addEventListener("click", function () {
+								    const color = this.getAttribute("data-color");
+								    const selectedNodes = network.getSelectedNodes();
+								    if (selectedNodes.length > 0) {
+								      selectedNodes.forEach(nodeId => {
+								        updateNodeColor(nodeId, color);
+								      });
+								    }
+								    document.getElementById("colorPicker").value = color;
+								  });
+								});
+							    // Color Changing Behaviour
+							    const colorBehaviorSelect = document.querySelectorAll('.select_options')[0];
+								colorBehaviorSelect.addEventListener('change', (e) => {
+								    const behavior = e.target.value.toLowerCase(); // individual, group, link
+								    if (currentNodeId !== null) {
+								        const currentNode = nodesData.get(currentNodeId);
+								        if (currentNode) {
+								            currentNode.colorBehavior = behavior;
+								            nodesData.update(currentNode);
+								        }
+								    }
+								});
+	//------------------------------ Node size options (multi-selection)
+								document.querySelectorAll('.sizeCircle').forEach(function(elem) {
+								  elem.addEventListener('click', function() {
+								    const size = parseInt(this.getAttribute('data-size'));
+								    const selectedNodes = network.getSelectedNodes();
+								    if (selectedNodes.length > 0) {
+								      selectedNodes.forEach(nodeId => {
+								        nodesData.update({ id: nodeId, size: size });
+								        updateNodeSize(nodeId,size);
+								      });
+								    }
+								  });
+								});
+	//------------------------------ Node shape options (multi-selection)
+								const shapeSelect = document.querySelectorAll('.select_options')[1];
+								shapeSelect.addEventListener('change', (e) => {
+								  const newShape = e.target.value.toLowerCase(); // circle, rectangle, diamond
+								  UpdateNodeShape(newShape);
+								});
+	//------------------------------ Icons options 
+								//Show Icon Album
+								const nodeImage=document.getElementById("nodeAdjustBox_node_image");
+								nodeImage.addEventListener('click', (e) => {
+									const albumBox=document.getElementById("albumBox");
+									prev_style=albumBox.style.display;
+									if(prev_style=="none"){
+										albumBox.style.display="block";
+									}	
+									else{
+										albumBox.style.display="none";
+									}
+								});
+
+								// Show Icon Album selection
+								const svgFiles = ['Agent','Airplane','Alarm','Bank Account', 'Bank','Bell','Bicycle','Bluetooth','Boat','Boat 1','Bulb','Calendar','Camera','Car', 'Car 1', 'Cart', 'Clock', 'Cloud lightning', 'Cloud lightning 1', 'Comment', 'Compass','Computer','Cross', 'Database', 'David star', 'Document', 'Document 1', 'Documents', 'Documents 1', 'Drone', 'Equalizer', 'Flag','Flag 1','Flag 2','Flag 3','Flag 4','Flag 5','Flight', 'Flight 1', 'Follower','Forward','Gas', 'Gear', 'Globe', 'Heart', 'Heart 1', 'Help', 'Help 1', 'Home', 'Hospital', 'Lamp', 'Lamp 1', 'Lightning', 'Lightning 1', 'Location', 'Lock', 'Mail', 'Map', 'Map 1', 'Mask','Message', 'Mic', 'Mobile','Money', 'Moon and Star', 'Motel', 'Motorcycle', 'Music', 'Office', 'Park', 'Person','Person Male','Person Male 1','Person Female','Person Female 1','Phone', 'Position Pin', 'Post', 'Power', 'Printer','Restaurant','Satellite','Server','Share','Shopping', 'Signal', 'Signal 1', 'Star', 'Star 1', 'Star 2', 'Sun', 'Sun 1', 'Support agent', 'Tag', 'Target', 'Target 1', 'Target 2', 'Thumbs up',  'Thumbs down', 'Traffic', 'Volume', 'Warning', 'Warning 1', 'Upload']; // icon filenames
+								const iconFolder = '../graph_icons/'; // folder where SVG files are stored 
+								const iconGrid = document.getElementById('iconGrid');
+								const displayIcon = document.getElementById('nodeAdjustBox_node_image');
+								// Function to load and display SVG thumbnails
+								svgFiles.forEach(filename => {
+								  const img = document.createElement('img');
+								  img.src = `${iconFolder}${filename}.svg`; // path to your SVG folder
+								  img.className = 'iconThumb';
+								  img.title = filename;
+								  img.onclick = () => {
+								  if (filename !== "Upload") {
+								    selectedIconPath = `${iconFolder}${filename}.svg`;
+								    if (currentNodeId) {
+								      applyNodeIcon(currentNodeId, selectedIconPath);
+								      displayIcon.innerHTML = `<img src="${selectedIconPath}" style="width:100%; height:auto;">`;
+								    }
+								  } else {
+								    // Handle Upload
+								    const input = document.createElement('input');
+								    input.type = "file";
+								    input.accept = "image/*"; // accept any image type
+								    input.click();
+
+								    input.onchange = () => {
+								      const file = input.files[0];
+								      if (!file) return;
+
+								      const reader = new FileReader();
+								      reader.onload = function(e) {
+								        const uploaded_icon = e.target.result; // Base64 data URL
+								        if (currentNodeId) {
+								          applyNodeIcon(currentNodeId, uploaded_icon);
+								        }
+								        displayIcon.innerHTML = `<img src="${uploaded_icon}" style="width:100%; height:auto;">`;
+								      };
+								      reader.readAsDataURL(file);
+								    };
+								  }
+								};
+								  iconGrid.appendChild(img);
+								});							
+	//------------------------------ Notes options
+								// Updating Node
+								const nodeNote=document.getElementById("nodeAdjustBox_node_note_text");
+								nodeNote.addEventListener('change', (e) => {
+									updateNodeNote(currentNodeId,nodeNote.value)
+								});
+
+
+//---------------------------------- Graph options adjustments
+								const settingsPanel = document.getElementById("graph_settings");
+								let showLabelsEnabled = false;
+	//------------------------------ Nodes Limits
+								settingsPanel.querySelector('input[placeholder="Limit"]').addEventListener("input", (e) => {
+								  if (parseInt(e.target.value, 10) < 1 || e.target.value === "") {
+									  e.target.value = 1; // reset to 1
+								  }
+								  const limit = parseInt(e.target.value, 10);
+								  //applyLimit("","asc",limit);
+								});
+								// Apply the initial limit once when page loads
+								applyLimit({key: "",sort:"asc",amount:25});
+	//------------------------------ Weight Edges
+								settingsPanel.querySelectorAll('input[type="checkbox"]')[0].addEventListener("change", (e) => {
+								  weightEdges(e.target.checked)
+								});
+	//------------------------------ Show Titles
+								settingsPanel.querySelectorAll('input[type="checkbox"]')[1].addEventListener("change", (e) => {
+								  applyTitleToggle(e.target.checked)
+								});
+	//------------------------------ Show Labels
+								settingsPanel.querySelectorAll('input[type="checkbox"]')[2].addEventListener("change", (e) => {
+								  showLabelsEnabled = e.target.checked; // track state								  
+  								  showNodelabels(showLabelsEnabled);  								  
+								});							
+	//------------------------------ reset graph
+								const graph_reset=document.getElementById("graph_reset_btn");
+								graph_reset.addEventListener("click", (e) => {
+									resetGraph()
+								});
+								// Listen for JSON injection from parent
+								window.addEventListener("message", (event) => {
+								    const data = event.data;
+								    if (data.type === "loadGraph") {
+								      nodesData.clear();
+								      edgesData.clear();
+									  nodesData.add(data.nodes.map(n => sanitizeNode(n)));
+								      edgesData.add(data.edges);
+								      network.setData({ nodes: nodesData, edges: edgesData });
+								      // reapply options after setData
+									  network.setOptions(options);
+								      network.fit();
+								    }
+								});
+								network.fit();
+
+
+							  </script>
+							
+							
+							</body></html>

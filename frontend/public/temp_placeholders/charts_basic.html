@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Network Centrality Metrics Dashboard — Full</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script src="https://cdn.jsdelivr.net/npm/echarts/dist/echarts.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script src="../temp_placeholders/charts_adjuster.js"></script>
+
+  <style>
+    /* ---------------- Base ---------------- */
+    :root{
+      --bg:#fafafa;
+      --card:#fff;
+      --muted:#777;
+      --border:#e6e6e6;
+      --accent:#2196F3;
+      --gap:10px;
+      --radius:6px;
+      --control-h:38px;
+    }
+    html,body{
+      height:100%;
+      margin:0;
+      padding:0;
+      font-family:"Segoe UI",Roboto,Arial,sans-serif;
+      background:var(--bg);
+      color:#222;
+    }
+    a{color:inherit}
+    /* ------------- Top Controls ------------- */
+    #controls_top {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0.5vh 2vw;
+      background: var(--card);
+      border: 1px solid #ddd;
+      position: fixed;
+      top: 0;
+      width: 93vw;
+      left: 1vw;
+      z-index: 1200;
+      box-shadow: 0 0 8px rgba(0,0,0,0.1);
+      border-top: none;
+      cursor: default;
+
+      /* Slide effect */
+      transform: translateY(-100%);
+      opacity: 0;
+      transition: transform 0.4s ease, opacity 0.4s ease;
+    }
+    /* When visible, slide down */
+    #controls_top.visible {
+      transform: translateY(0);
+      opacity: 1;
+    }
+    #controls_top .label {
+      font-size: calc(0.7vh + 0.8vw);
+      font-weight:600; 
+      margin-left:4px; 
+      color: #333; 
+    }
+    #global_schema { 
+      height: 30px; 
+      padding:5px 5px; 
+      border-radius:4px; 
+      border:1px solid var(--border); 
+      font-size: 11px;  
+    }
+    .small_muted{
+      color: #AAA;
+      font-size: calc(0.6vh + 0.7vw);
+    }
+    /* ------------- Layout ------------- */
+    #main_container{
+      display:grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap:5px;
+      align-items:stretch;
+      padding: 1vh 1vw;
+      padding-left: 2vw;
+      padding-top: 10vh;
+      box-sizing:border-box;
+    }
+    @media (max-width:900px){
+      #main_container{ 
+        grid-template-columns: 1fr;        
+        padding: 1vh 1vw;
+        padding-left: 3vw;
+        padding-top: 10vh;
+        align-items:center;
+      }
+    }
+    #main_container:empty::before{
+      content: "Click the + to create one...";
+      display: block;
+      height: 80vh;
+      width:95vw;
+      line-height: 80vh;
+      text-align: center;
+      color: #CCC;
+      font-size: calc(0.8vh + 0.9vw);
+    }
+    /* ------------- Chart Card ------------- */
+    .chart_containers{
+      background:var(--card);
+      border: 0.1vh solid var(--border);
+      border-radius:var(--radius);
+      display:flex;
+      flex-direction:column;
+      flex:1;
+      position:relative;
+      transition:box-shadow .18s,transform .12s,opacity .12s;
+      padding:0;
+      overflow:hidden;
+      opacity: 0.9;
+      user-select: none;
+    }
+    .chart_containers:hover{ 
+      border: 0.1vh solid #333;
+      opacity: 1;
+    }
+    .chart_header{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:8px;
+      padding:8px 12px;
+      //border-bottom:1px solid #f1f1f1;
+      //background:linear-gradient(180deg,#fff,#fafafa);
+    }
+    .chart_header h3{
+      margin:0;
+      font-size: calc(0.7vh + 0.8vw);
+      font-weight:500;
+      color:#222;
+      border-bottom: 0.1vh solid #EEE;
+      padding-bottom: 8px;
+      padding-right: 60px;
+      padding-left: 5px;
+    }
+    .chart_controls{
+      display:flex;
+      align-items:center;
+      gap:8px;
+    }
+    .chart_content{
+      flex:1;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:10px;
+    }
+    .chart_box{
+      width:100%;
+      height:40vh;
+      min-height:160px;
+    }
+    /* ------------- Buttons & selects ------------- */
+    button{
+      background:transparent;
+      border:none;
+      cursor:pointer;
+      padding:6px 8px;
+      border-radius:5px;
+      font-size:14px;
+    }
+    button:hover{
+      background:#f2f2f2;
+    }
+    select{
+      padding:6px 8px;
+      border-radius:2px;
+      border:1px solid var(--border);
+      height:32px;
+    }
+    select:focus{
+      outline: 0.1vh solid #AAA;
+    }
+    /* ------------- Toggle Switch ------------- */
+    .switch{
+      position:relative;
+      display:inline-block;
+      width:30px;
+      height:10px;
+    }
+    .switch input{
+      opacity:0;
+      width:0;
+      height:0;
+    }
+    .slider{
+      position:absolute;
+      cursor:pointer;
+      top:0;
+      left:0;
+      right:0;
+      bottom:0;
+      background:#ccc;
+      border-radius:2px;
+      transition:.24s;
+      overflow: visible;
+    }
+    .slider:before{
+      position:absolute;
+      content:"";
+      height:15px;
+      width:15px;
+      left:0px;
+      bottom:-3px;
+      background:#fff;
+      border-radius: 3px;
+      transition:.24s;
+      border: 0.1vh solid #DDD;
+    }
+    input:checked + .slider{
+      background:var(--accent)
+    }
+    input:checked + .slider:before{
+      transform:translateX(16px)
+    }
+    /* ------------- Full screen ------------- */
+    .full_screen{ 
+      position:fixed; inset:0; 
+      width:99.9vw;
+      height:100vh; 
+      z-index:2000; 
+      display:flex; 
+      flex-direction:column; 
+      background:var(--card); 
+      box-shadow:0 12px 40px rgba(0,0,0,0.18); 
+      border:none;
+      border-radius: 0;
+      opacity: 1;
+    }
+    .full_screen:hover{
+      border:none;
+    }
+    .full_screen .maximize_btn,.full_screen .close_btn{ 
+      display:none; 
+    }
+    .return_btn{ 
+      display:none;
+    }
+    .full_screen .return_btn{ 
+      display:inline-block;
+    }
+
+    /* ------------- Helpers ------------- */
+    .muted{
+      color:var(--muted);
+      font-size:13px;
+    }
+    .small{
+      font-size:12px;
+      color:var(--muted);
+    }
+    .chart_controls .schema_select{
+      height:28px;
+      padding:4px 8px;
+    }
+    .chart_controls .color_toggle{
+      display:inline-block;
+      vertical-align:middle;
+    }
+    .legend-placeholder{
+      font-size:12px;
+      color:var(--muted);
+      padding-left:6px;
+    }
+  </style>
+</head>
+<body>
+  <div id="controls_top">
+    <label class="switch" title="Global color toggle">
+      <input type="checkbox" id="global_toggle"/>
+      <span class="slider"></span>
+    </label>
+    <select id="global_schema" title="Global color schema">
+      <option value="Viridis">Viridis</option>
+      <option value="Inferno">Inferno</option>
+      <option value="Magma">Magma</option>
+      <option value="Coolwarm">Coolwarm</option>
+      <option value="Sunset">Sunset</option>
+      <option value="Emerald">Emerald</option>
+      <option value="Ocean">Ocean</option>
+      <option value="Pastel">Pastel</option>
+      <option value="Cubehelix">Cubehelix</option>
+      <option value="Grayscale">Grayscale</option>
+    </select>
+    <span class="label">Global Control</span>
+    <div style="flex:1"></div>
+    <div class="small_muted">Tip: use the card controls to toggle per-chart colors, maximize or close a chart.</div>
+  </div>
+  <div id="main_container"></div>
+  <script>
+
+    // Global variables
+    let nodes = [];
+    let edges = [];
+    let selectedNodes = {};
+    let selectedEdges = [];
+    let chartsList = [];
+
+    // Function to ensure controls exist
+    const mainContainer = document.getElementById("main_container");
+    const controlsTop = document.getElementById("controls_top");
+
+    function updateControlsVisibility() {
+      if (mainContainer.children.length > 0) {
+        controlsTop.classList.add("visible");
+      } else {
+        controlsTop.classList.remove("visible");
+      }
+    }
+    const observer = new MutationObserver(updateControlsVisibility);
+    observer.observe(mainContainer, { childList: true, subtree: false });
+    // Run once at start
+    updateControlsVisibility();
+
+  </script>
+
+</body>
+</html>

@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Network Metrics Slideshow (Fixed Icons)</title>
+<style>
+:root {
+  --accent-gradient: linear-gradient(45deg, #00bcd4, #8e44ad, #e91e63);
+  --text-muted: #555;
+}
+
+@keyframes hueshift {
+  from { filter: hue-rotate(0deg); }
+  to { filter: hue-rotate(360deg); }
+}
+
+body {
+  margin: 0;
+  height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: radial-gradient(circle at center, #FFF, #fcfefd);
+  font-family: "Segoe UI", Roboto, Arial, sans-serif;
+  overflow: hidden;
+  width: 100vw;
+  opacity: 0.5;
+  user-select: none;
+}
+
+.slideshow {
+  position: relative;
+  width: 100vw;
+  max-width: 900px;
+  height: 100vh;
+  border-radius: 1vw;
+  overflow: hidden;
+}
+
+/* Each slide */
+.slide {
+  position: absolute;
+  top: 0%;
+  left: 100%;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  opacity: 0;
+  transition: all 1s ease;
+}
+.slide.active {
+  left: 0;
+  opacity: 1;
+}
+
+/* Icon (SVG) styling */
+.slide .icon {
+  margin-bottom: 4vh;
+  width: 80px;
+  height: 80px;
+  display: inline-block;
+  animation: hueshift 3s linear infinite;
+}
+.slide .icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* Title */
+.slide .title {
+  font-size: 29px;
+  margin-bottom: 3vh;
+  background: var(--accent-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: hueshift 3s linear infinite;
+}
+
+/* Description */
+.slide .text {
+  font-size: 13px;
+  max-width: 70%;
+  color: var(--text-muted);
+  line-height: 1.7;
+}
+
+/* Dots */
+.dots {
+  position: absolute;
+  bottom: 2vh;
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  gap: 1vw;
+  opacity: 0.4;
+}
+.dot {
+  width: 1vw;
+  height: 1vw;
+  border-radius: 50%;
+  background: #666;
+  cursor: pointer;
+  transition: background 0.3s;
+  opacity: 0.3;
+}
+.dot.active {
+  background: #333;
+  opacity: 0.9;
+}
+
+@media (max-width: 900px) {
+  .slide .icon { width: calc(8vh + 5vw); height: calc(8vh + 5vw); }
+  .slide .title { font-size: calc(2vh + 2vw); }
+  .slide .text { font-size: calc(1vh + 1vw); max-width: 90%; }
+}
+</style>
+</head>
+<body>
+
+<!-- Gradient definition -->
+<svg width="0" height="0">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop stop-color="#00bcd4" offset="0%"/>
+      <stop stop-color="#8e44ad" offset="50%"/>
+      <stop stop-color="#e91e63" offset="100%"/>
+    </linearGradient>
+  </defs>
+</svg>
+
+<div class="slideshow">
+
+  <!-- Degree Centrality -->
+  <div class="slide active">
+    <div class="icon">
+      <svg viewBox="0 0 32 32">
+        <g fill="url(#grad)">
+          <path d="M9 23.771l-1 1v3.229h-1v-2.229l-1.293 1.293-0.707-0.707 1.357-1.357h-2.357v-1h3.357l1-1h-2.357v-1h3.357l5.322-5.322-0.678-0.678 3-1-1 3-0.614-0.614-5.386 5.386v3.229h-1v-2.229zM7.779 21c-1.125-1.726-1.779-3.786-1.779-6 0-6.075 4.925-11 11-11s11 4.925 11 11c0 6.075-4.925 11-11 11-2.214 0-4.274-0.654-6-1.779v-1.072l2.242-2.242c1.086 0.692 2.375 1.093 3.758 1.093 3.866 0 7-3.134 7-7s-3.134-7-7-7c-3.866 0-7 3.134-7 7 0 1.397 0.409 2.699 1.115 3.792l-2.208 2.208h-1.128z"/>
+        </g>
+      </svg>
+    </div>
+    <div class="title">Degree Centrality</div>
+    <div class="text">
+      Measures how many direct connections a node has.  
+      Nodes with high degree serve as hubs that connect multiple regions.  
+      It reflects raw connectivity — the foundation of network structure.
+    </div>
+  </div>
+
+  <!-- Betweenness Centrality (Outline Icon) -->
+  <div class="slide">
+    <div class="icon">
+      <svg version="1.1" xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" fill="url(#grad)">
+      <path d="M30 0h-28c-1.104 0-2 0.896-2 2v20c0 1.104 0.896 2 2 2h8l-4 8h1l7.2-8h3.6l7.2 8h1l-4-8h8c1.104 0 2-0.896 2-2v-20c0-1.104-0.896-2-2-2zM30 21c0 0.553-0.447 1-1 1h-26c-0.553 0-1-0.447-1-1v-18c0-0.553 0.447-1 1-1h26c0.553 0 1 0.447 1 1v18zM20.878 15.631l-4.521-11.629-4.938 9.29-2.756-2.835-4.663 2.906 1.316 0.758 2.988-1.862 3.605 3.712 4.175-7.853 4.616 11.879 3.937-8.288 1.604 3.414 1.759-0.295-3.354-7.132-3.768 7.935z"></path>
+      </svg>
+    </div>
+    <div class="title">Betweenness Centrality</div>
+    <div class="text">
+      Identifies nodes that act as bridges between parts of the network.  
+      High-betweenness nodes influence communication flow and control paths.  
+      They’re key intermediaries, brokers, and strategic connectors.
+    </div>
+  </div>
+
+  <!-- Closeness Centrality -->
+  <div class="slide">
+    <div class="icon">
+      <svg viewBox="0 0 32 32"><g fill="url(#grad)"><path d="M13.545 17h-2.545l3-8h6l-1.5 4h3.5l-11 11 2.545-7z"/></g></svg>
+    </div>
+    <div class="title">Closeness Centrality</div>
+    <div class="text">
+      Reflects how near a node is to all others.  
+      High closeness means a node can spread information quickly.  
+      It’s ideal for detecting efficient communicators and influencers.
+    </div>
+  </div>
+
+  <!-- Eigenvector Centrality -->
+  <div class="slide">
+    <div class="icon">
+      <svg viewBox="0 0 32 32"><g fill="url(#grad)"><path d="M12.76 15.64l-1.26 3.36-1.26-3.36-2.24-0.64 2.24-0.64 1.26-3.36 1.26 3.36 2.24 0.64-2.24 0.64zM22.714 9.238l-1.214-3.238-1.214 3.238-2.286 0.762 2.286 0.762 1.214 3.238 1.214-3.238 2.286-0.762-2.286-0.762zM20.714 21.238l-1.214-3.238-1.214 3.238-2.286 0.762 2.286 0.762 1.214 3.238 1.214-3.238 2.286-0.762-2.286-0.762zM13.459 13.486l-1.959-5.487-1.959 5.487-4.541 1.514 4.541 1.514 1.959 5.486 1.959-5.486 4.541-1.514-4.541-1.514z"/></g></svg>
+    </div>
+    <div class="title">Eigenvector Centrality</div>
+    <div class="text">
+      Measures not just how many connections a node has,  
+      but how influential its neighbors are.  
+      Nodes linked to other powerful nodes score highly here.
+    </div>
+  </div>
+
+  <!-- PageRank (Outline + Fill Mix) -->
+  <div class="slide">
+    <div class="icon">
+      <svg version="1.1" xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" fill="url(#grad)">
+      <path d="M29 18.5c0 7.18-5.82 13-13 13s-13-5.82-13-13c0-6.33 4.525-11.597 10.515-12.757-0.325-0.479-0.515-1.057-0.515-1.681 0-1.657 1.343-3 3-3 1.656 0 3 1.343 3 3 0 0.623-0.19 1.201-0.516 1.681 5.991 1.16 10.516 6.427 10.516 12.757zM16 2.5c-0.829 0-1.5 0.672-1.5 1.5s0.671 1.5 1.5 1.5c0.828 0 1.5-0.672 1.5-1.5s-0.672-1.5-1.5-1.5zM17 7.55v2.45h-2v-2.45c-5.421 0.489-9.695 5.034-9.974 10.513h2.974v1.937h-2.896c0.663 5.067 4.767 8.986 9.896 9.449v-2.449h2v2.449c5.107-0.461 9.197-4.412 9.886-9.449h-2.886v-2h2.976c-0.248-5.508-4.536-9.959-9.976-10.45zM9.513 25.162l3.918-8.868 8.81-3.859-3.845 8.794-8.883 3.933zM17.32 17.354c-0.781-0.781-2.048-0.781-2.829 0s-0.781 2.047 0 2.828 2.048 0.781 2.829 0c0.781-0.781 0.781-2.046 0-2.828z"></path>
+      </svg>
+    </div>
+    <div class="title">PageRank</div>
+    <div class="text">
+      Calculates importance based on inbound links from other nodes.  
+      A node gains weight when important nodes connect to it.  
+      The same principle powers modern web search algorithms.
+    </div>
+  </div>
+  <!-- AI Chat Bot -->
+  <div class="slide">
+    <div class="icon">
+      <svg viewBox="0 0 32 32">
+        <g fill="url(#grad)">
+          <!-- Robot head -->
+          <path d="M16 2a2 2 0 1 1 0 4c-0.552 0-1 0.448-1 1v1h-6c-1.657 0-3 1.343-3 3v9c0 1.657 1.343 3 3 3h1v4l4-4h7c1.657 0 3-1.343 3-3v-9c0-1.657-1.343-3-3-3h-6v-1c0-0.552 0.448-1 1-1a2 2 0 1 1 0-4zM11 14a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm10 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4z"/>
+          <!-- Speech wave bubble below -->
+          <path d="M8 26c-0.552 0-1 0.448-1 1v2c0 0.552 0.448 1 1 1h16c0.552 0 1-0.448 1-1v-2c0-0.552-0.448-1-1-1H8zm3 2h1v1h-1v-1zm4 0h1v1h-1v-1zm4 0h1v1h-1v-1z"/>
+        </g>
+      </svg>
+    </div>
+    <div class="title">AI Chat Bot</div>
+    <div class="text">
+      Communicate with a built-in AI assistant designed to streamline your workflow. The chat bot can help with data analysis, explain metrics, guide you through tools, and even automate complex tasks — making the entire experience more interactive and intuitive.
+    </div>
+  </div>
+  <div class="dots"></div>
+</div>
+
+<script>
+const slides = document.querySelectorAll('.slide');
+const dotsContainer = document.querySelector('.dots');
+let index = 0;
+
+slides.forEach((_, i) => {
+  const dot = document.createElement('div');
+  dot.classList.add('dot');
+  if (i === 0) dot.classList.add('active');
+  dot.addEventListener('click', () => showSlide(i));
+  dotsContainer.appendChild(dot);
+});
+const dots = document.querySelectorAll('.dot');
+
+function showSlide(i) {
+  slides[index].classList.remove('active');
+  dots[index].classList.remove('active');
+  index = (i + slides.length) % slides.length;
+  slides[index].classList.add('active');
+  dots[index].classList.add('active');
+}
+
+setInterval(() => showSlide(index + 1), 2500);
+</script>
+</body>
+</html>
