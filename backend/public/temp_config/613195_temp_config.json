@@ -1,0 +1,83 @@
+{
+    "data": {
+        "session_id": 613195,
+        "user_id": "Unknown",
+        "kafka_addresses": [],
+        "REST APIs": [],
+        "active_kafka_adress": "",
+        "active_REST_API": "",
+        "storage_addresses": [
+            "172.20.137.129"
+        ],
+        "storage_path": "user/bank/cleaned_partitioned",
+        "storage_databases": [
+            "bankdb",
+            "bank_db"
+        ],
+        "storage_tables": [
+            "individual_transactions",
+            "entity_transactions"
+        ],
+        "active_storage_address": "172.20.137.129",
+        "active_storage_database": "bankdb",
+        "active_storage_tables": [
+            "individual_transactions",
+            "entity_transactions"
+        ],
+        "hadoop_rcp_port": "9870",
+        "hadoop_web_port": "",
+        "spark_port": "4040",
+        "thrift_port": "9083",
+        "hive_port": "10000",
+        "api_port": "5000",
+        "search_api_endpoint": "api/search",
+        "search_columns": [
+            "transactionid",
+            "businessmobileno",
+            "accountno",
+            "benaccountno",
+            "bentelno"
+        ],
+        "fetch_columns": [
+            "TRANSACTIONID",
+            "BRANCHNAME",
+            "TRANSACTIONDATE",
+            "TRANSACTIONTIME",
+            "TRANSACTIONTYPE",
+            "AMOUNTINBIRR",
+            "ACCOWNERNAME",
+            "BUSINESSMOBILENO",
+            "ACCOUNTNO",
+            "BALANCEHELD",
+            "BENFULLNAME",
+            "BENACCOUNTNO",
+            "BENTELNO"
+        ],
+        "dataframes_limit": 1000000,
+        "tools": [
+            "neo4j"
+        ],
+        "active_tool": "neo4j",
+        "active_tool_protocol": "neo4j://172.21.22.88",
+        "active_tool_username": "neo4j",
+        "active_tool_password": "1430fmgat762190",
+        "active_tool_database": "",
+        "active_tool_tables": [],
+        "tool_protocol_port": "7687",
+        "tool_web_port": "7473",
+        "rule_names": [
+            "bank transactions",
+            "social media (tweeter)"
+        ],
+        "rule_file_names": [
+            "bank_transactions_rules",
+            "social_media_(tweeter)_rules"
+        ],
+        "active_rule": [
+            "bank transactions"
+        ],
+        "automation": "true",
+        "remote": "false"
+    },
+    "Last modified": "2026-01-21 12:15:09"
+}

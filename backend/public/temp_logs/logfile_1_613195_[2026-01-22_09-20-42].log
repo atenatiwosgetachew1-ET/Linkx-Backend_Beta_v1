@@ -1,0 +1,33 @@
+New session started at 2026-01-22_09-20-42
+[2026-01-22 09:20:48.429886] [Info] - Injection started for action 'Link Analysis'
+[2026-01-22 09:20:48.435379] [Info] - Preparing Link Analysis data
+[2026-01-22 09:20:49.597950] [Info] - 10000 rows collected for Link Analysis
+[2026-01-22 09:20:49.637344] [Info] - Existing Link Analysis nodes for session '1_613195' deleted
+[2026-01-22 09:20:49.856423] [Info] Running Quick analysis ...
+[2026-01-22 09:20:49.858312] [Info] Starting Transactions analysis
+[2026-01-22 09:20:50.516140] [Success] Transactions analysis completed
+[2026-01-22 09:20:50.517289] [Info] Inserted batch 1 (500 rows)
+[2026-01-22 09:20:51.009590] [Info] Inserted batch 2 (500 rows)
+[2026-01-22 09:20:51.969500] [Info] Inserted batch 3 (500 rows)
+[2026-01-22 09:20:53.330387] [Info] Inserted batch 4 (500 rows)
+[2026-01-22 09:20:55.087311] [Info] Inserted batch 5 (500 rows)
+[2026-01-22 09:20:57.167426] [Info] Inserted batch 6 (500 rows)
+[2026-01-22 09:21:00.706602] [Info] Inserted batch 7 (500 rows)
+[2026-01-22 09:21:03.682187] [Info] Inserted batch 8 (500 rows)
+[2026-01-22 09:21:06.848410] [Info] Inserted batch 9 (500 rows)
+[2026-01-22 09:21:10.430122] [Info] Inserted batch 10 (500 rows)
+[2026-01-22 09:21:14.448504] [Info] Inserted batch 11 (500 rows)
+[2026-01-22 09:21:18.651265] [Info] Inserted batch 12 (500 rows)
+[2026-01-22 09:21:23.277491] [Info] Inserted batch 13 (500 rows)
+[2026-01-22 09:21:28.381496] [Info] Inserted batch 14 (500 rows)
+[2026-01-22 09:21:33.863926] [Info] Inserted batch 15 (500 rows)
+[2026-01-22 09:21:39.623436] [Info] Inserted batch 16 (500 rows)
+[2026-01-22 09:21:45.975736] [Info] Inserted batch 17 (500 rows)
+[2026-01-22 09:21:52.814998] [Info] Inserted batch 18 (500 rows)
+[2026-01-22 09:21:59.619749] [Info] Inserted batch 19 (500 rows)
+[2026-01-22 09:22:07.479229] [Info] Inserted batch 20 (500 rows)
+[2026-01-22 09:22:07.657161] [Info] - Starting full-graph recomputation for rule 'bank transactions'
+[2026-01-22 09:22:07.695058] [Info] Starting Transactions analysis
+[2026-01-22 09:22:10.849244] [Success] Transactions analysis completed
+[2026-01-22 09:22:10.869531] [Info] - Full-graph recomputation finished for rule 'bank transactions'
+[2026-01-22 09:22:10.870922] [Info] - Injection finished for action 'Link Analysis'

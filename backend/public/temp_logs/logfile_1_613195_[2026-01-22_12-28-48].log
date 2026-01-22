@@ -1,0 +1,21 @@
+New session started at 2026-01-22_12-28-48
+[2026-01-22 12:28:52.943800] [Info] - Injection started for action 'Link Analysis'
+[2026-01-22 12:28:52.944784] [Info] - Preparing Link Analysis data
+[2026-01-22 12:28:54.206511] [Info] - 10000 rows collected for Link Analysis
+[2026-01-22 12:28:54.336083] [Info] - Existing Link Analysis nodes for session '1_613195' deleted
+[2026-01-22 12:29:06.049895] [Info] Running Quick analysis ...
+[2026-01-22 12:29:06.051550] [Info] Starting Transactions analysis
+[2026-01-22 12:29:06.457069] [Success] Transactions analysis completed
+[2026-01-22 12:29:06.457819] [Info] Inserted batch 1 (500 rows)
+[2026-01-22 12:29:14.391805] [Info] Inserted batch 2 (500 rows)
+[2026-01-22 12:29:22.854461] [Info] Inserted batch 3 (500 rows)
+[2026-01-22 12:29:31.582584] [Info] Inserted batch 4 (500 rows)
+[2026-01-22 12:29:40.851822] [Info] Inserted batch 5 (500 rows)
+[2026-01-22 12:29:50.654190] [Info] Inserted batch 6 (500 rows)
+[2026-01-22 12:30:00.508757] [Info] Inserted batch 7 (500 rows)
+[2026-01-22 12:30:00.509907] [STOP] Insertion stopped at batch 8
+[2026-01-22 12:30:01.200573] [Info] - Starting full-graph recomputation for rule 'bank transactions'
+[2026-01-22 12:30:01.298572] [Info] Starting Transactions analysis
+[2026-01-22 12:30:03.038780] [Success] Transactions analysis completed
+[2026-01-22 12:30:03.416540] [Info] - Full-graph recomputation finished for rule 'bank transactions'
+[2026-01-22 12:30:03.418384] [Info] - Injection finished for action 'Link Analysis'

@@ -1,0 +1,25 @@
+New session started at 2026-01-21_14-23-17
+[2026-01-21 14:23:22.922963] [Info] - Injection started for action 'Source / Target Relationship'
+[2026-01-21 14:23:22.924133] [Info] - Creating relationships
+[2026-01-21 14:23:25.248801] [Info] - 9576 relationships collected
+[2026-01-21 14:23:42.807258] [Info] - Inserted relationship batch 1 (500 rels)
+[2026-01-21 14:23:43.866318] [Info] - Inserted relationship batch 2 (500 rels)
+[2026-01-21 14:23:45.200404] [Info] - Inserted relationship batch 3 (500 rels)
+[2026-01-21 14:23:46.608060] [Info] - Inserted relationship batch 4 (500 rels)
+[2026-01-21 14:23:48.811896] [Info] - Inserted relationship batch 5 (500 rels)
+[2026-01-21 14:23:51.195189] [Info] - Inserted relationship batch 6 (500 rels)
+[2026-01-21 14:23:54.047661] [Info] - Inserted relationship batch 7 (500 rels)
+[2026-01-21 14:23:57.030801] [Info] - Inserted relationship batch 8 (500 rels)
+[2026-01-21 14:24:00.153989] [Info] - Inserted relationship batch 9 (500 rels)
+[2026-01-21 14:24:02.916532] [Info] - Inserted relationship batch 10 (500 rels)
+[2026-01-21 14:24:06.554696] [Info] - Inserted relationship batch 11 (500 rels)
+[2026-01-21 14:24:09.797599] [Info] - Inserted relationship batch 12 (500 rels)
+[2026-01-21 14:24:13.814886] [Info] - Inserted relationship batch 13 (500 rels)
+[2026-01-21 14:24:17.193729] [Info] - Inserted relationship batch 14 (500 rels)
+[2026-01-21 14:24:20.503883] [Info] - Inserted relationship batch 15 (500 rels)
+[2026-01-21 14:24:24.998280] [Info] - Inserted relationship batch 16 (500 rels)
+[2026-01-21 14:24:31.209668] [Info] - Inserted relationship batch 17 (500 rels)
+[2026-01-21 14:24:37.389594] [Info] - Inserted relationship batch 18 (500 rels)
+[2026-01-21 14:24:49.454817] [Info] - Inserted relationship batch 19 (500 rels)
+[2026-01-21 14:25:03.323869] [Info] - Inserted relationship batch 20 (76 rels)
+[2026-01-21 14:25:08.112369] [Info] - Injection finished for action 'Source / Target Relationship'

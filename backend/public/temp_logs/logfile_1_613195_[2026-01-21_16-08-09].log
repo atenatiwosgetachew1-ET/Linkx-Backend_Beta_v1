@@ -1,0 +1,6 @@
+New session started at 2026-01-21_16-08-09
+[2026-01-21 16:08:10.363855] [Info] - Injection started for action 'Source / Target Relationship'
+[2026-01-21 16:08:10.366460] [Info] - Creating relationships
+[2026-01-21 16:08:10.864163] [Info] - 6544 relationships collected
+[2026-01-21 16:09:06.917029] [Info] - Injection finished for action 'Source / Target Relationship'
+[Error] Analyzing session 1_613195 failed {neo4j_code: Neo.TransientError.General.MemoryPoolOutOfMemoryError} {message: The allocation of an extra 192.0 MiB would use more than the limit 5.0 GiB. Currently using 4.9 GiB. dbms.memory.transaction.total.max threshold reached} {gql_status: 50N42} {gql_status_description: error: general processing exception - unexpected error. Unexpected error has occurred. See debug log for details.}

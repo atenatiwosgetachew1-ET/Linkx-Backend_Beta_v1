@@ -1,0 +1,18 @@
+New session started at 2026-01-21_12-25-01
+[Recovery] Analyzing session 1_613195
+[2026-01-21 12:25:01.688690] [Info] - Injection started for action 'Link Analysis'
+[2026-01-21 12:25:01.690161] [Info] - Preparing Link Analysis data
+[2026-01-21 12:25:02.046139] [Info] - 10000 rows collected for Link Analysis
+[2026-01-21 12:25:02.103305] [Info] - Existing Link Analysis nodes for session '3_613195' deleted
+[2026-01-21 12:25:17.664509] [Info] Running Quick analysis ...
+[2026-01-21 12:25:17.666679] [Info] Starting Transactions analysis
+[2026-01-21 12:25:18.489585] [Success] Transactions analysis completed
+[2026-01-21 12:25:18.490276] [Info] Inserted batch 1 (500 rows)
+[2026-01-21 12:25:34.589341] [Info] Inserted batch 2 (500 rows)
+[2026-01-21 12:25:50.706635] [Info] Inserted batch 3 (500 rows)
+[2026-01-21 12:26:07.355393] [Info] Inserted batch 4 (500 rows)
+[2026-01-21 12:26:25.780628] [Info] Inserted batch 5 (500 rows)
+[2026-01-21 12:27:06.111800] [Info] Inserted batch 6 (500 rows)
+[2026-01-21 12:27:25.156463] [Info] Inserted batch 7 (500 rows)
+[2026-01-21 12:27:44.809624] [Info] Inserted batch 8 (500 rows)
+[2026-01-21 12:28:04.619464] [Info] Inserted batch 9 (500 rows)
