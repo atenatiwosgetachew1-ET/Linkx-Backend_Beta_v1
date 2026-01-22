@@ -4466,6 +4466,7 @@ function Root() {
                     // relationship that corelates with the linked source (cause this linking could be the first)
                     // graphStatus containes all the session status and relationships
                     const relationships = graphStatus[sourceId]?.relationships || [];
+                    console.log("relationships_global:",graphStatus[sourceId],relationships)
                     existingRelationships = relationships;
                   }
 
