@@ -16,14 +16,19 @@ def get_graph_metadata(driver, session_id, tool_credentials=None):
         ).single()
         total_nodes = total_nodes_record["total_nodes"] if total_nodes_record else 0
 
-        total_relationships = session.run(
-            "MATCH ()-[r]->() WHERE r.session_id = $session_id RETURN count(r) AS total_relationships"
-        ).single()["total_relationships"]
+        # Relationships tied to session
+        total_relationships_record = session.run(
+            "MATCH ()-[r]->() WHERE r.session_id = $session_id RETURN count(r) AS total_relationships",
+            session_id=session_id
+        ).single()
+        total_relationships = total_relationships_record["total_relationships"] if total_relationships_record else 0
 
         # Relationship labels
-        relationship_labels = session.run(
-            "MATCH ()-[r]->() WHERE r.session_id = $session_id RETURN COLLECT(DISTINCT type(r)) AS labels"
-        ).single()["labels"]
+        relationship_labels_record = session.run(
+            "MATCH ()-[r]->() WHERE r.session_id = $session_id RETURN COLLECT(DISTINCT type(r)) AS labels",
+            session_id=session_id
+        ).single()
+        relationship_labels = relationship_labels_record["labels"] if relationship_labels_record else []
 
         # Property keys tied to session
         property_keys = [
@@ -43,11 +48,10 @@ def get_graph_metadata(driver, session_id, tool_credentials=None):
             RETURN versions
             """
         ).single()
-
         version = version_record["versions"][0] if version_record else None
 
     return {
-        "sourceId" : session_id,
+        "sourceId": session_id,
         "database": database_name,
         "user": username,
         "total_nodes": total_nodes,
@@ -56,6 +60,7 @@ def get_graph_metadata(driver, session_id, tool_credentials=None):
         "property_keys": property_keys,
         "neo4j_version": version,
     }
+
 
 def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=None, primary_rel_type=None):
     """
