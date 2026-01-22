@@ -17,9 +17,21 @@ def log_writer(filename, message):
 
 def log_stream_background(socketio, session_id, sid, filename, stop_event):
     """Background log tailing thread for a client."""
+    if not filename:
+        socketio.emit(
+            'stream_logs', 
+            {'error': "No filename provided.", 'session_id': session_id, 'socket_id': sid}, 
+            to=sid
+        )
+        return
+
     file_path = os.path.join(LOG_DIR, filename)
     if not os.path.exists(file_path):
-        socketio.emit('stream_logs', {'error': f"File {file_path} not found.",'session_id': session_id, 'socket_id':sid}, to=sid)
+        socketio.emit(
+            'stream_logs', 
+            {'error': f"File {file_path} not found.", 'session_id': session_id, 'socket_id': sid}, 
+            to=sid
+        )
         return
 
     try:
@@ -28,9 +40,17 @@ def log_stream_background(socketio, session_id, sid, filename, stop_event):
             while not stop_event.is_set():
                 line = log_file.readline()
                 if line:
-                    socketio.emit('stream_logs', {'data': line,'session_id': session_id, 'socket_id':sid}, to=sid)
+                    socketio.emit(
+                        'stream_logs', 
+                        {'data': line, 'session_id': session_id, 'socket_id': sid}, 
+                        to=sid
+                    )
                 else:
                     socketio.sleep(0.1)
 
     except Exception as e:
-        socketio.emit('stream_logs', {'error': str(e),'session_id': session_id, 'socket_id':sid}, to=sid)
+        socketio.emit(
+            'stream_logs', 
+            {'error': str(e), 'session_id': session_id, 'socket_id': sid}, 
+            to=sid
+        )
