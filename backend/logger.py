@@ -4,7 +4,7 @@ import threading
 from flask_socketio import SocketIO
 
 LOG_DIR = 'public/temp_logs/'
-#os.makedirs(LOG_DIR, exist_ok=True)
+os.makedirs(LOG_DIR, exist_ok=True)
 
 
 def log_writer(filename, message):

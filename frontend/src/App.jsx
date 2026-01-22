@@ -2918,8 +2918,10 @@ function Root() {
     };
 
     socket.on("stream_logs", handleLogs);
-    socket.emit("log_stream_plug", {filename: sourceSessionLogFile.logFile,session_id: sourceSessionLogFile.session_id});
-
+    if (filename: sourceSessionLogFile.logFile){
+      socket.emit("log_stream_plug", {filename: sourceSessionLogFile.logFile,session_id: sourceSessionLogFile.session_id});  
+    }
+    
     return () => {
       socket.emit("log_stream_unplug", {filename: sourceSessionLogFile.logFile,session_id: sourceSessionLogFile.session_id});
       socket.off("stream_logs", handleLogs);
