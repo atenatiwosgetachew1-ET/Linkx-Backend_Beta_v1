@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual env
+venv/
+
+# Runtime / temp data
+public/temp_*
+public/temp_logs/
+public/temp_dfParts/
+public/temp_uploads/
+
+# Editors
+*.swp
+*.swo
+
+# OS
+.DS_Store
+1~# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual env
+venv/
+
+# Runtime / temp data
+public/temp_*
+public/temp_logs/
+public/temp_dfParts/
+public/temp_uploads/
+
+# Editors
+*.swp
+*.swo
+
+# OS
+.DS_Store
