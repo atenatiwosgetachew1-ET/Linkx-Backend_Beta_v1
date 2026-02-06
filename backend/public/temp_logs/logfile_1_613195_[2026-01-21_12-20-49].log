@@ -1,8 +1,0 @@
-New session started at 2026-01-21_12-20-49
-[Recovery] Analyzing session 1_253051
-[2026-01-21 12:20:55.087982] [Info] - Injection started for action 'Source / Target Relationship'
-[2026-01-21 12:20:55.089039] [Info] - Creating relationships
-[2026-01-21 12:20:57.547134] [Info] - 10000 relationships collected
-[2026-01-21 12:21:20.611234] [Info] - Inserted relationship batch 1 (500 rels)
-[2026-01-21 12:22:54.391494] [Info] - Inserted relationship batch 2 (500 rels)
-[2026-01-21 12:26:09.815219] [Info] - Inserted relationship batch 3 (500 rels)

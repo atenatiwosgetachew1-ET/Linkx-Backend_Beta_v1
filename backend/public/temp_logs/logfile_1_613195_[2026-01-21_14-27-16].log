@@ -1,9 +1,0 @@
-New session started at 2026-01-21_14-27-16
-[2026-01-21 14:27:17.138375] [Info] - Injection started for action 'Source / Target Relationship'
-[2026-01-21 14:27:17.141847] [Info] - Creating relationships
-[2026-01-21 14:27:18.180367] [Info] - 6544 relationships collected
-[2026-01-21 14:28:16.966712] [Info] - Inserted relationship batch 1 (500 rels)
-[2026-01-21 14:29:15.799983] [Info] - Inserted relationship batch 2 (500 rels)
-[2026-01-21 14:31:07.675824] [Info] - Inserted relationship batch 3 (500 rels)
-[2026-01-21 14:31:07.679142] [STOP] Relationship creation cancelled
-[2026-01-21 14:31:31.863125] [Info] - Injection finished for action 'Source / Target Relationship'
