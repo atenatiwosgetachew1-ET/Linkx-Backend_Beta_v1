@@ -15,7 +15,6 @@ from batch_manager.analyzing.LA_rules_script import batch_graph_analysis_posts,b
 from batch_manager.processing.file_source_loader import load_file
 from globals import load_temp_config,_session_store
 
-#Commit Check
 
 global_iteration_thread = None
 iteration_thread_registry = {}
