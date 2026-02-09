@@ -139,7 +139,7 @@ def neo4j_row_data_injector(payload, batch_size=500):
 
                     session.run("""
                         UNWIND $rows AS row
-                        MERGE (n:Entity { NodeId: row.NodeId })
+                        MERGE (n:Entity { NodeId: row.NodeId, node_identity: 'Entity Node' })
                         SET n += row
                     """, rows=batch)
 
@@ -157,47 +157,69 @@ def neo4j_row_data_injector(payload, batch_size=500):
             # Sanitize the relationship label
             relationship_type = re.sub(r'[^a-zA-Z0-9_]', '_', relationship_type.strip())
 
-            log_writer(log_file, f"[{datetime.now()}] [Info] - Creating relationships")
+            log_writer(log_file, f"[{datetime.now()}] [Info] - Creating weighted relationships")
 
             def sanitize_props(d):
                 return {k.replace(" ", "_").replace(".", "_"): v for k, v in d.items() if v is not None}
 
+            # Collect rows (NO dropDuplicates -> we need frequency)
             rows = (
                 df.where(f"{source_col} IS NOT NULL AND {target_col} IS NOT NULL")
-                .dropDuplicates([source_col, target_col])
                 .toLocalIterator()
             )
 
-            rels = []
+            # -------- WEIGHT AGGREGATION --------
+            from collections import defaultdict
+
+            rel_counter = defaultdict(lambda: {
+                "source": None,
+                "target": None,
+                "props": None,
+                "weight": 0
+            })
+
             for r in rows:
                 if r[source_col] == r[target_col]:
                     continue
+
                 row_dict = sanitize_props(r.asDict(recursive=True))
+                key = (r[source_col], r[target_col])
+
+                if rel_counter[key]["weight"] == 0:
+                    rel_counter[key]["source"] = r[source_col]
+                    rel_counter[key]["target"] = r[target_col]
+                    rel_counter[key]["props"] = row_dict
+
+                rel_counter[key]["weight"] += 1
+
+            rels = []
+            for v in rel_counter.values():
                 rels.append({
-                    "source": r[source_col],
-                    "target": r[target_col],
-                    "props": row_dict
+                    "source": v["source"],
+                    "target": v["target"],
+                    "props": v["props"],
+                    "weight": v["weight"]
                 })
 
             total_rels = len(rels)
-            log_writer(log_file, f"[{datetime.now()}] [Info] - {total_rels} relationships collected")
+            log_writer(log_file, f"[{datetime.now()}] [Info] - {total_rels} weighted relationships collected")
 
             if session_id in _session_store:
                 _session_store[session_id]["primary_rel_type"] = relationship_type
 
             with driver.session() as session:
-                # Create indexes
+                # Indexes
                 session.run(f"CREATE INDEX IF NOT EXISTS FOR (n:Entity) ON (n.{source_col})")
                 session.run(f"CREATE INDEX IF NOT EXISTS FOR (n:Entity) ON (n.{target_col})")
 
-                # Delete relationships first
+                # Delete old relationships
                 session.run("""
                     MATCH ()-[r]->()
                     WHERE r.session_id = $session_id AND type(r) = $relationship_type
                     DELETE r
                 """, session_id=session_id, relationship_type=relationship_type)
 
-                # Delete orphaned nodes next
+                # Delete orphan nodes
                 session.run("""
                     MATCH (n:Entity)
                     WHERE n.session_id = $session_id AND n.rel_type = $relationship_type
@@ -205,7 +227,7 @@ def neo4j_row_data_injector(payload, batch_size=500):
                     DELETE n
                 """, session_id=session_id, relationship_type=relationship_type)
 
-
+                # -------- BATCH INSERT --------
                 for i in range(0, total_rels, batch_size):
                     if stop_event and stop_event.is_set():
                         log_writer(log_file, f"[{datetime.now()}] [STOP] Relationship creation cancelled")
@@ -213,39 +235,46 @@ def neo4j_row_data_injector(payload, batch_size=500):
 
                     batch = rels[i:i + batch_size]
 
-                    # Add session_id to each row
+                    # Add session_id
                     for r in batch:
                         r["session_id"] = session_id
 
-                    # Extract the first row source for the batch (single source node)
+                    # Single source per batch logic (as in your design)
                     batch_source = batch[0]["source"]
                     batch_source_props = batch[0]["props"]
 
-                    # Only merge one source node, targets are separate
-                    # Assume 'batch_source' is the source value for this batch
-                    # and 'batch_source_props' is sanitized props for the source node
-
                     session.run(f"""
                         MERGE (a:Entity {{ 
-                            {source_col}: $source, 
+                            {source_col}: $source,
+                            node_identity: 'Source Node',
                             session_id: $session_id, 
-                            rel_type: $relationship_type 
+                            rel_type: $relationship_type
                         }})
                         ON CREATE SET a += $source_props
                         WITH a
                         UNWIND $rows AS row
-                            CREATE (b:Entity {{ {target_col}: row.target, session_id: row.session_id, rel_type: $relationship_type }})
+                            CREATE (b:Entity {{
+                                {target_col}: row.target,
+                                node_identity: 'Target Node',
+                                session_id: row.session_id,
+                                rel_type: $relationship_type
+                            }})
                             SET b += row.props
-                            CREATE (a)-[rel:{relationship_type} {{ session_id: row.session_id }}]->(b)
+                            CREATE (a)-[rel:{relationship_type} {{
+                                session_id: row.session_id,
+                                weight: row.weight
+                            }}]->(b)
                             SET rel.bgcolor = '#750b8c',
                                 rel.textcolor = '#ffffff'
-                    """, source=batch_source, source_props=batch_source_props, session_id=session_id, relationship_type=relationship_type, rows=batch)
-
-
+                    """, source=batch_source,
+                        source_props=batch_source_props,
+                        session_id=session_id,
+                        relationship_type=relationship_type,
+                        rows=batch)
 
                     log_writer(
                         log_file,
-                        f"[{datetime.now()}] [Info] - Inserted relationship batch {i//batch_size + 1} ({len(batch)} rels)"
+                        f"[{datetime.now()}] [Info] - Inserted weighted relationship batch {i//batch_size + 1} ({len(batch)} rels)"
                     )
 
 
@@ -317,7 +346,7 @@ def neo4j_row_data_injector(payload, batch_size=500):
 
                     session.run("""
                         UNWIND $rows AS row
-                        MERGE (n:Transactions { NodeId: row.NodeId })
+                        MERGE (n:Transactions { NodeId: row.NodeId, node_identity: 'Entity Node' })
                         SET n += row
                     """, rows=batch)
                     
