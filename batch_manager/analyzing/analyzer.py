@@ -328,7 +328,7 @@ def neo4j_row_data_injector(payload, batch_size=500):
             rule_path = os.path.join(rules_dir, rule_filename)
             module, rule_status = check_rule_status(rule_key, rule_path) #Check the rule
             print(f"Loading rule from {rule_path}")  # debug
-            # Insert nodes in batches; stop if stop_event is set
+            # Insert nodes in batches; stop if stop_event is set 
             early_analysis_ran = False
 
             with driver.session() as session:
