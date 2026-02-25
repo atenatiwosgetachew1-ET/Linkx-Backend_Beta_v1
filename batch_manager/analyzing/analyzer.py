@@ -164,7 +164,7 @@ def neo4j_row_data_injector(payload, batch_size=500):
 
             # Collect rows (NO dropDuplicates -> we need frequency)
             rows = (
-                df.where(f"{source_col} IS NOT NULL AND {target_col} IS NOT NULL")
+                df.where(f"`{source_col}` IS NOT NULL AND `{target_col}` IS NOT NULL")
                 .toLocalIterator()
             )
 
@@ -209,8 +209,8 @@ def neo4j_row_data_injector(payload, batch_size=500):
 
             with driver.session() as session:
                 # Indexes
-                session.run(f"CREATE INDEX IF NOT EXISTS FOR (n:Entity) ON (n.{source_col})")
-                session.run(f"CREATE INDEX IF NOT EXISTS FOR (n:Entity) ON (n.{target_col})")
+                session.run(f"CREATE INDEX IF NOT EXISTS FOR (n:Entity) ON (n.`{source_col}`)")
+                session.run(f"CREATE INDEX IF NOT EXISTS FOR (n:Entity) ON (n.`{target_col}`)")
 
                 # Delete old relationships
                 session.run("""
@@ -228,55 +228,65 @@ def neo4j_row_data_injector(payload, batch_size=500):
                 """, session_id=session_id, relationship_type=relationship_type)
 
                 # -------- BATCH INSERT --------
-                for i in range(0, total_rels, batch_size):
-                    if stop_event and stop_event.is_set():
-                        log_writer(log_file, f"[{datetime.now()}] [STOP] Relationship creation cancelled")
-                        break
+                from collections import defaultdict
 
-                    batch = rels[i:i + batch_size]
+                # ---- GROUP BY SOURCE FIRST ----
+                grouped_by_source = defaultdict(list)
 
-                    # Add session_id
-                    for r in batch:
-                        r["session_id"] = session_id
+                for r in rels:
+                    grouped_by_source[r["source"]].append(r)
 
-                    # Single source per batch logic (as in your design)
-                    batch_source = batch[0]["source"]
-                    batch_source_props = batch[0]["props"]
+                # ---- PROCESS EACH SOURCE SEPARATELY ----
+                for source_value, source_rows in grouped_by_source.items():
 
-                    session.run(f"""
-                        MERGE (a:Entity {{ 
-                            {source_col}: $source,
-                            node_identity: 'Source Node',
-                            session_id: $session_id, 
-                            rel_type: $relationship_type
-                        }})
-                        ON CREATE SET a += $source_props
-                        WITH a
-                        UNWIND $rows AS row
-                            CREATE (b:Entity {{
-                                {target_col}: row.target,
-                                node_identity: 'Target Node',
-                                session_id: row.session_id,
+                    for i in range(0, len(source_rows), batch_size):
+
+                        if stop_event and stop_event.is_set():
+                            log_writer(log_file, f"[{datetime.now()}] [STOP] Relationship creation cancelled")
+                            break
+
+                        batch = source_rows[i:i + batch_size]
+
+                        for r in batch:
+                            r["session_id"] = session_id
+
+                        batch_source_props = batch[0]["props"]
+
+                        session.run(f"""
+                            MERGE (a:Entity {{ 
+                                `{source_col}`: $source,
+                                node_identity: 'Source Node',
+                                session_id: $session_id, 
                                 rel_type: $relationship_type
                             }})
-                            SET b += row.props
-                            CREATE (a)-[rel:{relationship_type} {{
-                                session_id: row.session_id,
-                                weight: row.weight
-                            }}]->(b)
-                            SET rel.bgcolor = '#750b8c',
-                                rel.textcolor = '#ffffff'
-                    """, source=batch_source,
+                            ON CREATE SET a += $source_props
+                            WITH a
+                            UNWIND $rows AS row
+                                CREATE (b:Entity {{
+                                    `{target_col}`: row.target,
+                                    node_identity: 'Target Node',
+                                    session_id: row.session_id,
+                                    rel_type: $relationship_type
+                                }})
+                                SET b += row.props
+                                CREATE (a)-[rel:{relationship_type} {{
+                                    session_id: row.session_id,
+                                    weight: row.weight
+                                }}]->(b)
+                                SET rel.bgcolor = '#750b8c',
+                                    rel.textcolor = '#ffffff'
+                        """,
+                        source=source_value,
                         source_props=batch_source_props,
                         session_id=session_id,
                         relationship_type=relationship_type,
                         rows=batch)
 
-                    log_writer(
-                        log_file,
-                        f"[{datetime.now()}] [Info] - Inserted weighted relationship batch {i//batch_size + 1} ({len(batch)} rels)"
-                    )
-
+                        log_writer(
+                            log_file,
+                            f"[{datetime.now()}] [Info] - Inserted weighted relationship batch "
+                            f"{i//batch_size + 1} for source '{source_value}' ({len(batch)} rels)"
+                        )
 
 
 
