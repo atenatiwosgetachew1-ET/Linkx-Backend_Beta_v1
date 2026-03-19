@@ -1,17 +1,41 @@
 # connection_utils.py
 from flask import Flask, session
-
+import requests
 from kafka import KafkaConsumer
 from hdfs import InsecureClient
 from neo4j import GraphDatabase
-
+import json
 from globals import create_file,save_temp_config,load_temp_config,sockets_registry
 
 
 
-global_broker=None
+#global_broker=None
 tool_driver_registry = {}
 
+def rest_api(id, api_url, session_id):
+    if id == "check":
+        try:
+            headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+            response = requests.get(api_url, headers=headers, timeout=5)
+
+            if response.ok:
+                data = response.json()  # could still raise exception if not JSON
+                save_temp_config("active_REST_API", api_url, session_id)
+                return True
+            else:
+                print(f"API not reachable! Status code: {response.status_code}")
+                return False
+        except Exception as e:
+            print(f"[REST API Error] {e}")
+            return False
+
+    elif id == "disconnect":
+        # Clear the stored API instead of saving it again
+        save_temp_config("active_REST_API", "", session_id)
+        return True
+
+    else:
+        raise ValueError(f"Unknown id value: {id}")
 
 def kafka_broker(id,broker_url,session_id):
     global global_broker

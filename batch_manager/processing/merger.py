@@ -7,6 +7,7 @@ from functools import reduce
 # SPARK MERGE + SAVE WITH EXCEPTION HANDLING
 # ---------------------------------------------
 def merge_spark_and_save(dfs: list[SparkDF], base_path: str, session_id: str):
+    print("merge_spark_and_save:", session_id)
     try:
         # Empty list check
         if not dfs:
@@ -34,7 +35,7 @@ def merge_spark_and_save(dfs: list[SparkDF], base_path: str, session_id: str):
 
         # Convert to Spark-friendly file:/// URI
         spark_path = "file:///" + local_dir.replace("\\", "/")
-
+        print("local_dir11:",local_dir)
         # Write to parquet
         try:
             merged.coalesce(1).write.mode("overwrite").parquet(spark_path)
@@ -84,7 +85,7 @@ def merge_pandas_and_save(dfs: list[pd.DataFrame], base_path: str, session_id: s
 
         try:
             output_dir = os.path.join(base_path, folder_name)
-            print("base_path:",base_path,",output_dir:",output_dir)
+            print("base_path1:",base_path,",output_dir:",output_dir)
             os.makedirs(output_dir, exist_ok=True)
         except Exception as e:
             print("[ERROR] Failed creating pandas output directory:", e)

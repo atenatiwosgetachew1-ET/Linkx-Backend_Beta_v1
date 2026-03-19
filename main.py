@@ -17,7 +17,7 @@ import random
 import threading
 
 from globals import create_file,save_uploaded_file,save_temp_config,load_temp_config,_session_store
-from connection_utils import kafka_broker, HDFSstorage, tools
+from connection_utils import kafka_broker, rest_api, HDFSstorage, tools
 
 from batch_manager.batch_data_manager import batch_data_manager
 from batch_manager.utils.schema_utils import align_schemas
@@ -227,33 +227,44 @@ def init_source():
         return jsonify({'results': str(e), 'message': 'failed!'}), 200
 
 @app.route('/connect_to_source', methods=['POST'])
-def connect_to_source():
-    data = request.get_json()
-    broker = data.get('broker')
-    source_url = data.get('hdfs') #passed hdfs_ip:port
+def connect_to_source():     
+    data = request.get_json()    
+    address_type = data.get('addressType')
+    address = data.get('address')
+    storage = data.get('storage') #passed hdfs_ip:port
     session_id = data.get('session_id')
-    if not source_url: #if hdfs url is not passed, get from configuration file
-        hdfs = load_temp_config("active_storage_address",session_id)
-        hdfs_port = load_temp_config("hadoop_rcp_port",session_id)
-        source_url=f"{hdfs}:{hdfs_port}"
-    if broker:
+    #print("connect_to_source:", data)
+    # if not storage: #if hdfs url is not passed, get from configuration file
+    #     hdfs = load_temp_config("active_storage_address",session_id)
+    #     hdfs_port = load_temp_config("hadoop_rcp_port",session_id)
+    #     storage=f"{hdfs}:{hdfs_port}"
+    if address_type == "broker":
         #checking for broker
-        if kafka_broker("check",broker,session_id) is True:
+        if kafka_broker("check",address,session_id) is True:
             #checking HDFS or do something
-            pass
+            print("broker verified")
+            return jsonify({'status': 'success', 'message': 'Connection established!'}), 200
         else:
             return jsonify({'status': 'error', 'message': 'Connection failed!'}), 200
-    if source_url: #if there is hdfs ip from both cases
-        if ":" in source_url: #check the port exists
-            source_port = source_url.split(":", 1)[1]
+    elif address_type == "api":
+        #checking for api
+        if rest_api("check",address,session_id) is True:
+            #checking HDFS or do something
+            print("api verified")
+            return jsonify({'status': 'success', 'message': 'Connection established!'}), 200
+        else:
+            return jsonify({'status': 'error', 'message': 'Connection failed!'}), 200
+    elif storage: #if there is hdfs ip from both cases
+        if ":" in storage: #check the port exists
+            source_port = storage.split(":", 1)[1]
             if source_port != "9870": #if the port is not as expected, return
                 return jsonify({'status': 'Warning', 'message': 'Connection failed! No storage found.'}), 200
         else:#if the port is not stated
             hdfs_port = load_temp_config("hadoop_rcp_port",session_id)
-            source_url= f"{source_url}:{hdfs_port}"  #use the configuration port
+            storage= f"{storage}:{hdfs_port}"  #use the configuration port
 
         #continue to connect
-        if HDFSstorage("check",source_url,session_id) is True:
+        if HDFSstorage("check",storage,session_id) is True:
             return jsonify({'status': 'success', 'message': 'Connection established!'}), 200
         else:
             return jsonify({'status': 'Warning', 'message': 'Connection failed! No storage found.'}), 200
@@ -390,6 +401,7 @@ def live_batch_files():
         files = data.get('value', [])
         date = data.get('date',None)
         kind = data.get("kind", "")
+        print("kindkindkind:",kind)
         df_type = data.get("type")
         use_spark = True if kind.lower() == "spark" else False
 
@@ -428,6 +440,29 @@ def live_batch_files():
                 except Exception as e:
                     print(f"Error loading file {f}: {e}")
                     continue
+        elif kind == "address": # for broker and api
+            api_url = files
+            payload = {
+                "id": "load_sourceData",
+                "session_id": session_id,
+                "files": api_url, #Api address
+                "date": date,
+                "use_spark": use_spark,
+                "type": df_type,
+                "kind": kind
+            }
+            print("create_df_payload:",payload)
+            try:
+                df = batch_data_manager(payload)
+                # Handle all valid cases
+                if df is None:
+                    print("batch_data_manager returned None, skiping address")
+                else:
+                    print("Response from batch_data_manager:", df)
+                    dfs.append(df)
+                    
+            except Exception as e:
+                print(f"Error loading address response: {e}")
         else:  # HDFS / bulk
             print("files:",files)
             payload = {
@@ -490,17 +525,26 @@ def live_batch_files():
             merged_pandas = None
             merged_spark = None
 
-            # First Remove all files and subdirectories inside the directory
-            for filename in os.listdir(path_to_save):
-                file_path = os.path.join(path_to_save, filename)
+            # # First Remove all files and subdirectories inside the directory
+            # for filename in os.listdir(path_to_save):
+            #     file_path = os.path.join(path_to_save, filename)
+            #     try:
+            #         if os.path.isfile(file_path) or os.path.islink(file_path):
+            #             os.unlink(file_path)  # Remove the file or link
+            #         elif os.path.isdir(file_path):
+            #             shutil.rmtree(file_path)  # Remove the directory and its contents
+            #     except Exception as e:
+            #         print(f'Failed to delete {file_path}. Reason: {e}')
+            folder_name = f"merged_dfpart_{session_id}"
+            target_folder = os.path.join(path_to_save, folder_name)
+            # Remove only this session folder
+            if os.path.exists(target_folder):
                 try:
-                    if os.path.isfile(file_path) or os.path.islink(file_path):
-                        os.unlink(file_path)  # Remove the file or link
-                    elif os.path.isdir(file_path):
-                        shutil.rmtree(file_path)  # Remove the directory and its contents
+                    shutil.rmtree(target_folder)
+                    print("Deleted old folder:", target_folder)
                 except Exception as e:
-                    print(f'Failed to delete {file_path}. Reason: {e}')
-
+                    print("Failed deleting session folder:", e)
+                    
             # Merge pandas DataFrames (once)
             if pandas_dfs:
                 merged_pandas = merge_pandas_and_save(pandas_dfs, path_to_save, session_id)

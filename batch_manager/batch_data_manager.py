@@ -1,4 +1,5 @@
 from batch_manager.processing.file_source_loader import load_file
+from batch_manager.processing.api_source_loader import load_api
 from batch_manager.processing.hdfs_source_loader import load_source
 from batch_manager.processing.merger import merge_pandas_and_save, merge_spark_and_save
 from batch_manager.processing.session_manager import create_session,start_session,end_session
@@ -126,7 +127,18 @@ def batch_data_manager(payload):
             except Exception as e:
                 print("Error in load_file handler:", e)
                 return None
-
+        elif payload["type"] == "api" and payload["kind"] == "address": #Only for api and brokers
+            use_spark = payload.get("use_spark", False)
+            session_id = payload["session_id"]
+            url = payload["files"]
+            try:               
+                df = load_api(url, session_id, use_spark)
+                print("df:",df)
+                return df
+            except Exception as e:
+                print("Error in load_file handler:", e)
+                return None
+        
         elif payload["type"] == "array" and payload["kind"] == "hybrid": # Works with along side # CASE 2 (Fresh meat)-- #For files and keyword search
             print("Now loading hdfs files")
             files = payload["files"]
@@ -150,12 +162,15 @@ def batch_data_manager(payload):
             elastic_categories = []
             hive_categories = []
             for file in files:
+                print("trying file type:",file['type'])           
                 if file['type'] == 'raw':
                     hdfs_categories.append(file) 
                 elif file['type'] == 'elastic':
                     elastic_categories.append(file)
                 elif file['type'] == 'hive':
-                    hive_categories.append(file)            
+                    hive_categories.append(file) 
+                else:
+                    print("Error on file type:",file['type'])           
             # ---------------------------------------------------------------- Raw HDFS files
             if len(hdfs_categories) > 0: #Consists an elastic datas
                 spark_port = load_temp_config("spark_port", session_id)

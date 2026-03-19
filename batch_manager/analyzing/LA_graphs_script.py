@@ -69,61 +69,62 @@ def prepare_graph_data_full(records):
 
     return list(nodes_dict.values()), edges
 
-def fetch_graph(id,action,source_id,value,type):		
-	if id == "relationship":
-		try:
-			tool = load_temp_config("tool", source_id)
-			driver = tools(tool.lower(), "check", {"session_id": source_id})
+def fetch_graph(id,action,source_id,value,type):        
+    print(id,source_id,value)
+    if id == "relationship":
+        try:
+            tool = load_temp_config("tool", source_id)
+            driver = tools(tool.lower(), "check", {"session_id": source_id})
 
-			nodes = {}
-			edges = []
-			rel_type = value
+            nodes = {}
+            edges = []
+            rel_type = value
 
-			if not rel_type:
-				print("No relationship type provided")
-				return {"nodes": [], "edges": [], "error": "No relationship type provided"}
+            if not rel_type:
+                print("No relationship type provided")
+                return {"nodes": [], "edges": [], "error": "No relationship type provided"}
 
-			query = f"""
-					MATCH (a)-[r:{rel_type}]->(b)
-					RETURN a, r, b
-					LIMIT 100000
-					"""
+            query = f"""
+                    MATCH (a)-[r:{rel_type}]->(b)
+                    RETURN a, r, b
+                    LIMIT 100000
+                    """
                   
-			with driver.session() as session:
-				for record in session.run(query):
-					a = record["a"]
-					b = record["b"]
-					r = record["r"]
+            with driver.session() as session:
+                for record in session.run(query):
+                    a = record["a"]
+                    b = record["b"]
+                    r = record["r"]
 
-					# include all Neo4j node properties
-					nodes[a.id] = {
-						"id": a.id,
-						"label": a.get("NodeId", str(a.id)),
-						**dict(a)  # flatten all node properties
-					}
-					nodes[b.id] = {
-						"id": b.id,
-						"label": b.get("NodeId", str(b.id)),
-						**dict(b)
-					}
+                    # include all Neo4j node properties
+                    nodes[a.id] = {
+                        "id": a.id,
+                        "label": a.get("NodeId", str(a.id)),
+                        **dict(a)  # flatten all node properties
+                    }
+                    nodes[b.id] = {
+                        "id": b.id,
+                        "label": b.get("NodeId", str(b.id)),
+                        **dict(b)
+                    }
 
-					        # include all relationship properties
-					edges.append({
-						"from": a.id,
-						"to": b.id,
-						"label": r.type,  # or type(r).__name__
-						**dict(r)  # flatten all relationship properties
-					})
+                    # include all relationship properties
+                    edges.append({
+                        "from": a.id,
+                        "to": b.id,
+                        "label": r.type,  # or type(r).__name__
+                        **dict(r)  # flatten all relationship properties
+                    })
 
-			return {
-				"nodes": list(nodes.values()),
-				"edges": edges
-			}
-		except Exception as e:
-			print("Relationship graph error:", e)
-			return {"nodes": [], "edges": [], "error": str(e)}
-		finally:
-			driver.close()
+            return {
+                "nodes": list(nodes.values()),
+                "edges": edges
+            }
+        except Exception as e:
+            print("Relationship graph error:", e)
+            return {"nodes": [], "edges": [], "error": str(e)}
+        finally:
+            driver.close()
 
-	if id == "uploads":
-		pass
+    if id == "uploads":
+        pass
