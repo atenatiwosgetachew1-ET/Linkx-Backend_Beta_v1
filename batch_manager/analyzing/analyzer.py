@@ -287,10 +287,6 @@ def neo4j_row_data_injector(payload, batch_size=500):
                             f"[{datetime.now()}] [Info] - Inserted weighted relationship batch "
                             f"{i//batch_size + 1} for source '{source_value}' ({len(batch)} rels)"
                         )
-
-
-
-
         if action == "Link Analysis":
             rule = payload.get("rule")
             rule_key = str(rule).strip().lower().replace(' ', '_') if rule else ""
@@ -325,8 +321,9 @@ def neo4j_row_data_injector(payload, batch_size=500):
             #Stored/uploaded rules
             rules=load_temp_config("rule_file_names",session_id)        
             # Decide node label
-            rule_name_first_part = rule_key.split('_')[0]
-            node_label = f"{rule_name_first_part}_{session_id}"
+            # rule_name_first_part = rule_key.split('_')[0]
+            # node_label = f"{rule_name_first_part}_{session_id}"
+            node_label = f"{rule_key}_{session_id}"
             #Linking the node_label to the session
             if session_id in _session_store:
                 _session_store[session_id]["node_label"] = node_label
@@ -353,12 +350,17 @@ def neo4j_row_data_injector(payload, batch_size=500):
                     for row in batch:
                         row["batch_id"] = f"{session_id}_{batch_number}"
                         row["nodes_label"] = node_label
-
-                    session.run("""
+                    # session.run("""
+                    #     UNWIND $rows AS row
+                    #     MERGE (n:{node_label} { NodeId: row.NodeId, node_identity: 'Entity Node' })
+                    #     SET n += row
+                    # """, rows=batch)
+                    query = f"""
                         UNWIND $rows AS row
-                        MERGE (n:Transactions { NodeId: row.NodeId, node_identity: 'Entity Node' })
+                        MERGE (n:`{node_label}` {{ NodeId: row.NodeId, node_identity: 'Entity Node' }})
                         SET n += row
-                    """, rows=batch)
+                        """
+                    session.run(query, rows=batch)
                     
                     # EARLY ANALYSIS (ONCE, AFTER FIRST BATCH)
                     if batch_number == 1 and module and not early_analysis_ran:
