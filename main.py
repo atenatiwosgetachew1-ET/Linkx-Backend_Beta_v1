@@ -20,10 +20,12 @@ from globals import create_file,save_uploaded_file,save_temp_config,load_temp_co
 from connection_utils import kafka_broker, rest_api, HDFSstorage, tools
 
 from batch_manager.batch_data_manager import batch_data_manager
+from batch_manager.config_defaults import get_default_session_config
+from batch_manager.services.dataframe_workflow import create_dataframe_response
 from batch_manager.utils.schema_utils import align_schemas
 from batch_manager.processing.merger import merge_pandas_and_save, merge_spark_and_save
 from batch_manager.processing.rules_validator import validate_rules_json
-from batch_manager.processing.rules_compiler import generate_python_rule
+from batch_manager.processing.rules_compiler import generate_python_rule, normalize_rule_key
 from batch_manager.analyzing.LA_graphs_script import fetch_graph
 from batch_manager.analyzing.analyzer import analyzer
 from logger import log_writer,log_stream_background
@@ -34,9 +36,11 @@ import globals #Globally used by multible pages (functions and variables) #Conta
 
 
 app = Flask(__name__)
-CORS(app)  # Allow frontend
-app.secret_key = 'datascience'
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet") #Socket listners are found inside 'logger.py' page
+allowed_origins = os.getenv("LINKX_CORS_ORIGINS", "*")
+cors_origins = "*" if allowed_origins == "*" else [origin.strip() for origin in allowed_origins.split(",") if origin.strip()]
+CORS(app, origins=cors_origins)  # Allow frontend
+app.secret_key = os.getenv("LINKX_FLASK_SECRET_KEY", "dev-only-change-me")
+socketio = SocketIO(app, cors_allowed_origins=cors_origins, async_mode="eventlet") #Socket listners are found inside 'logger.py' page
 # Register socket
 register_socket_handlers(socketio)
 # Register external API blueprint
@@ -61,50 +65,7 @@ def init():
         min_value = 0
         session_id = random.randint(min_value, max_value - 1)
         config_folder = "public/temp_config/"
-        configs={
-            "session_id":session_id,
-            "user_id":"Unknown",
-            "kafka_addresses":[],
-            "REST APIs":[],
-            "active_kafka_adress":"",            
-            "active_REST_API":"",
-            "storage_addresses":["172.20.137.129"],
-            "storage_path":"user/bank/cleaned_partitioned",
-            "storage_databases":["bankdb","bank_db"],
-            "storage_tables":["individual_transactions","entity_transactions"],
-            "active_storage_address":"172.20.137.129",
-            "active_storage_database":"bankdb",
-            "active_storage_tables":["individual_transactions","entity_transactions"],
-            "hadoop_rcp_port":"9870",
-            "hadoop_web_port":"",
-            "spark_port":"4040",
-            "thrift_port":"9083",
-            "hive_port":"10000",
-            "api_port":"5000",
-            "search_api_endpoint_es_fuzzy":"api/search/individual",
-            "search_api_endpoint_es_strict":"api/search/ui",
-            "search_api_endpoint_hive_fuzzy":"api/search/individual",
-            "search_api_endpoint_hive_strict":"api/search/ui",
-            "search_columns_strict":["transactionid","businessmobileno","accountno","benaccountno","bentelno","transactiondate","transactiontime"],
-            "search_columns_fuzzy":["entity_name","involver_name","othername","accownername","benfullname","branchname","benbranchname","city","bencity","country","bencountry","transactiontype","amountinbirr","balanceheld"],
-            "fetch_columns":["TRANSACTIONID","BRANCHNAME","TRANSACTIONDATE","TRANSACTIONTIME","TRANSACTIONTYPE","AMOUNTINBIRR","ACCOWNERNAME","BUSINESSMOBILENO","ACCOUNTNO","BALANCEHELD","BENFULLNAME","BENACCOUNTNO","BENTELNO"],
-            "date_column": "transactiondate",
-            "dataframes_limit":1000000,
-            "tools":["neo4j"],
-            "active_tool":"neo4j",
-            "active_tool_protocol":"neo4j://172.21.22.88",    
-            "active_tool_username":"neo4j",    
-            "active_tool_password":"1430fmgat762190",    
-            "active_tool_database":"",
-            "active_tool_tables":[],    
-            "tool_protocol_port":"7687",
-            "tool_web_port":"7473",
-            "rule_names":["bank transactions","social media (tweeter)","call data records"],
-            "rule_file_names": ["bank_transactions_rules","social_media_(tweeter)_rules","call_data_records_rules"],
-            "active_rule":["bank transactions"],
-            "automation":'true',
-            "remote":'false',
-        }
+        configs = get_default_session_config(session_id)
         # Create info file
         create_file(config_folder, f"{session_id}_temp_config", "json", configs)
         print("config_folder:",config_folder)
@@ -157,13 +118,15 @@ def configuration():
                     rule_json = validate_rules_json(file_path)
                     if rule_json:
                         print("The rule is valid:", filename)
-                        file_name = filename.lower().replace(".json", "")
-                        rule_name = data.get("rule_name", "").strip() or file_name
+                        uploaded_rule_name = rule_json.get("rule_name") or filename.rsplit(".", 1)[0]
+                        rule_name = data.get("rule_name", "").strip() or uploaded_rule_name
+                        rule_key = normalize_rule_key(rule_name)
+                        rule_file_name = f"{rule_key}_rules"
 
                         # Save Python version of rule
                         rules_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "public", "temp_rules")
                         os.makedirs(rules_dir, exist_ok=True)
-                        output_py = os.path.join(rules_dir, f"{rule_name}.py")
+                        output_py = os.path.join(rules_dir, f"{rule_file_name}.py")
                         generate_python_rule(rule_json, output_py)
 
                         # Register rule into configuration
@@ -178,8 +141,8 @@ def configuration():
                         # Avoid duplicates
                         if rule_name not in config_dict["rule_names"]:
                             config_dict["rule_names"].append(rule_name)
-                        if file_name not in config_dict["rule_file_names"]:
-                            config_dict["rule_file_names"].append(file_name)
+                        if rule_file_name not in config_dict["rule_file_names"]:
+                            config_dict["rule_file_names"].append(rule_file_name)
 
                         # Activate the new rule
                         config_dict["active_rule"] = [rule_name]
@@ -221,7 +184,7 @@ def init_source():
             shutil.copyfile(file_path, duplicated_file)
             return jsonify({'message': 'success!'}), 200
         else:
-            return jsonify({'results': str(e), 'message': 'failed!'}), 200
+            return jsonify({'results': "Base session config not found", 'message': 'failed!'}), 404
     except Exception as e:
         print(e)
         return jsonify({'results': str(e), 'message': 'failed!'}), 200
@@ -398,206 +361,8 @@ def live_batch_files():
     # -----------------------------
     if action_id == "create_DF":
         print("data",data)
-        files = data.get('value', [])
-        date = data.get('date',None)
-        kind = data.get("kind", "")
-        print("kindkindkind:",kind)
-        df_type = data.get("type")
-        use_spark = True if kind.lower() == "spark" else False
-
-        # -----------------------------
-        # 1) Load all files
-        # -----------------------------
-        dfs = []
-
-        if kind == "files":  # individual file iteration
-            for f in files:
-                payload = {
-                    "id": "load_sourceData",
-                    "session_id": session_id,
-                    "path": f,
-                    "use_spark": use_spark,
-                    "type": df_type,
-                    "kind": kind
-                }
-                print("create_df_payload",payload)
-                try:
-                    df = batch_data_manager(payload)
-
-                    # Handle all valid cases
-                    if df is None:
-                        print("batch_data_manager returned None, skipping file:", f)
-                        continue
-                    elif isinstance(df, dict) and "df" in df:
-                        dfs.append(df["df"])
-                    elif hasattr(df, "columns"):  # pandas or Spark DF
-                        dfs.append(df)
-                    elif isinstance(df, pd.DataFrame) or 'pyspark.sql.dataframe.DataFrame' in str(type(df)):
-                        dfs.append(df)
-                    else:
-                        print("Skipping invalid object returned by batch_data_manager:", df)
-                        continue
-                except Exception as e:
-                    print(f"Error loading file {f}: {e}")
-                    continue
-        elif kind == "address": # for broker and api
-            api_url = files
-            payload = {
-                "id": "load_sourceData",
-                "session_id": session_id,
-                "files": api_url, #Api address
-                "date": date,
-                "use_spark": use_spark,
-                "type": df_type,
-                "kind": kind
-            }
-            print("create_df_payload:",payload)
-            try:
-                df = batch_data_manager(payload)
-                # Handle all valid cases
-                if df is None:
-                    print("batch_data_manager returned None, skiping address")
-                else:
-                    print("Response from batch_data_manager:", df)
-                    dfs.append(df)
-                    
-            except Exception as e:
-                print(f"Error loading address response: {e}")
-        else:  # HDFS / bulk
-            print("files:",files)
-            payload = {
-                "id": "load_sourceData",
-                "session_id": session_id,
-                "files": files, #files contain identities like [Elastic/hive and strict/fuzzy] 
-                "date": date,
-                "use_spark": use_spark,
-                "type": df_type,
-                "kind": kind
-            }
-            print("create_df_payload:",payload)
-            df = batch_data_manager(payload)
-            print("dfsLen",len(df))
-            if df is None:
-                print(0)
-                return {"results": "", "message": "Failed to load DF"}, 400
-            elif isinstance(df, list):
-                print(1)
-                for d in df:
-                    if hasattr(d, "columns"):
-                        dfs.append(d)
-                    else:
-                        print(10)
-            elif isinstance(df, dict) and "df" in df:
-                print(2)
-                dfs.append(df["df"])
-            elif hasattr(df, "columns"):
-                print(3)
-                dfs.append(df)
-            elif isinstance(df, pd.DataFrame) or 'pyspark.sql.dataframe.DataFrame' in str(type(df)):
-                print(4)
-                dfs.append(df)
-            else:
-                print("here:", df)
-                return {"results": "", "message": "No valid DF returned from batch_data_manager"}, 400
-
-
-        if not dfs:
-            return {"results": "", "message": "No valid dataframes loaded"}, 400
-
-        # -----------------------------
-        # Align & merge DataFrames by type
-        # -----------------------------
-        try:
-            # 1) Collect all columns for alignment
-            all_columns = set()
-            for df in dfs:
-                all_columns.update(df.columns)
-            all_columns = list(all_columns)
-
-            # Align schemas
-            aligned = [align_schemas(df, all_columns) for df in dfs]
-
-            # 2) Separate by type
-            pandas_dfs = [df for df in aligned if isinstance(df, pd.DataFrame)]
-            spark_dfs = [df for df in aligned if 'pyspark.sql.dataframe.DataFrame' in str(type(df))]
-
-            path_to_save = "public/temp_dfParts/"
-            merged_pandas = None
-            merged_spark = None
-
-            # # First Remove all files and subdirectories inside the directory
-            # for filename in os.listdir(path_to_save):
-            #     file_path = os.path.join(path_to_save, filename)
-            #     try:
-            #         if os.path.isfile(file_path) or os.path.islink(file_path):
-            #             os.unlink(file_path)  # Remove the file or link
-            #         elif os.path.isdir(file_path):
-            #             shutil.rmtree(file_path)  # Remove the directory and its contents
-            #     except Exception as e:
-            #         print(f'Failed to delete {file_path}. Reason: {e}')
-            folder_name = f"merged_dfpart_{session_id}"
-            target_folder = os.path.join(path_to_save, folder_name)
-            # Remove only this session folder
-            if os.path.exists(target_folder):
-                try:
-                    shutil.rmtree(target_folder)
-                    print("Deleted old folder:", target_folder)
-                except Exception as e:
-                    print("Failed deleting session folder:", e)
-                    
-            # Merge pandas DataFrames (once)
-            if pandas_dfs:
-                merged_pandas = merge_pandas_and_save(pandas_dfs, path_to_save, session_id)
-                if merged_pandas is None:
-                    return jsonify({"results": "", "message": "Failed to merge pandas DFs!"}), 400
-                num_rows_pandas = len(merged_pandas)
-                columns_pandas = list(merged_pandas.columns)
-            else:
-                num_rows_pandas = 0
-                columns_pandas = []
-
-            # Merge Spark DataFrames (once)
-            if spark_dfs:
-                merged_spark = merge_spark_and_save(spark_dfs, path_to_save, session_id)
-                if merged_spark is None:
-                    return jsonify({"results": "", "message": "Failed to merge Spark DFs!"}), 400
-                num_rows_spark = merged_spark.count()
-                columns_spark = merged_spark.columns
-            else:
-                num_rows_spark = 0
-                columns_spark = []
-
-            # 3) Combine results (optional)
-            final_columns = list(set(columns_pandas + list(columns_spark)))
-            total_rows = num_rows_pandas + num_rows_spark  # approximate total rows
-
-            # 4) Config / metadata
-            storage_url = load_temp_config("active_storage_address", session_id)
-            broker_url = load_temp_config("active_kafka_adress", session_id)
-            actions = ["Store data", "Source / Target Relationship", "Link Analysis"]
-            rules = load_temp_config("rule_names", session_id)
-            tool = load_temp_config("active_tool", session_id)
-
-            return jsonify({
-                "results": {
-                    "columns": final_columns,
-                    "num_columns": len(final_columns),
-                    "num_rows": total_rows,
-                    "storage_url": storage_url,
-                    "broker_url": broker_url,
-                    "tool": tool,
-                    "actions": actions,
-                    "rules": rules
-                },
-                "message": "success!"
-            }), 200
-
-        except Exception as e:
-            app.logger.exception("create_DF failed")
-            return jsonify({
-                "results": None,
-                "message": str(e)
-            }), 500
+        print("kindkindkind:", data.get("kind", ""))
+        return create_dataframe_response(data, session_id)
     # -----------------------------
     # START SESSION
     # -----------------------------

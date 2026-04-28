@@ -1,5 +1,11 @@
 import json
+import re
 from datetime import datetime
+
+def normalize_rule_key(name):
+    key = str(name or "").strip().lower()
+    key = re.sub(r"[^a-z0-9]+", "_", key).strip("_")
+    return key or "analysis_rule"
 
 def generate_python_rule(json_data, output_file):
     rule_name = json_data.get("rule_name", "AnalysisRule")
@@ -13,12 +19,12 @@ def generate_python_rule(json_data, output_file):
         f"    log_writer(log_file, f'[{datetime.now()}] [Info] Starting analysis: {rule_name}')",
         "    if high_risk_accounts is None:",
         "        high_risk_accounts = []",
+        "    label = f'`{nodes_label}`'",
         "    with driver.session() as session:",
     ]
 
     for rule in json_data["rules"]:
         rid = rule["id"]
-        match_label = rule["match"].get("node_label", node_label_default)
         rel_name = rule["relationship"]["name"]
         rel_props = rule["relationship"].get("properties", {})
         bgcolor = rel_props.get("bgcolor", "#CCC")        
@@ -26,15 +32,15 @@ def generate_python_rule(json_data, output_file):
         # Safe Neo4j MERGE command
         code_lines += [
             f"        # Rule: {rid} - {rule.get('description','')}",
-            f"        session.run(\"\"\"",
-            f"            MATCH (t:{match_label})",
+            f"        session.run(f\"\"\"",
+            f"            MATCH (t:{{label}})",
             f"            WITH t",
             f"            ORDER BY t.TRANSACTIONDATE, t.TRANSACTIONTIME",
             f"            UNWIND range(0, size(collect(t))-2) AS i",
             f"            WITH collect(t)[i] AS a, collect(t)[i+1] AS b",
-            f"            MERGE (a)-[r:{rel_name}]->(b)",
-            f"            SET r.bgcolor = '{bgcolor}', r.session_id = '{session_id}'", 
-            f"        \"\"\")",
+            f"            MERGE (a)-[r:{rel_name} {{session_id: $session_id}}]->(b)",
+            f"            SET r.bgcolor = '{bgcolor}'", 
+            f"        \"\"\", session_id=session_id)",
             ""
         ]
 

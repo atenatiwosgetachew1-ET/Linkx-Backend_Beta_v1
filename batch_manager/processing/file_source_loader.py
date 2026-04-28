@@ -7,17 +7,24 @@ def load_file(path, session_id, use_spark=False):
 
     if use_spark:
         spark = get_spark_session()
-
-        # Convert to absolute path
         abs_path = os.path.abspath(path)
-
-        # Spark-compatible local path
         spark_path = "file:///" + abs_path.replace("\\", "/")
-        print("spark_path:",spark_path)
+        ext = os.path.splitext(path)[1].lower()
+        print("spark_path:", spark_path)
+
         try:
-            return spark.read.parquet(spark_path)
+            if os.path.isdir(path) or ext == ".parquet":
+                return spark.read.parquet(spark_path)
+            if ext == ".csv":
+                return spark.read.csv(spark_path, header=True, inferSchema=True)
+            if ext == ".json":
+                return spark.read.json(spark_path)
+            if ext in (".xlsx", ".xls"):
+                print("Spark does not read Excel directly here; falling back to pandas")
+            else:
+                print(f"Unsupported Spark file format '{ext}'; falling back to pandas")
         except Exception as e:
             print(e)
-            #return spark.read.csv(spark_path, header=True, inferSchema=True)
-    print("file path:",path)
-    return load_pandas_file(path)
+
+    print("file path:", path)
+    return load_pandas_file(path, session_id=session_id)

@@ -6,6 +6,7 @@ import globals
 
 from logger import log_stream_background 
 from batch_manager.utils.database_utils import graph_status_stream
+from batch_manager.utils.notification_utils import set_notification_socketio, emit_pending_notifications
 from globals import load_temp_config,get_or_create_socket_entry,sockets_registry,_session_store
 from connection_utils import tools
 
@@ -21,6 +22,33 @@ def register_socket_handlers(socketio: SocketIO):
     """
     Register all Socket.IO event handlers here.
     """
+    set_notification_socketio(socketio)
+
+    # --------------------------
+    # NOTIFICATION SUBSCRIBE
+    # --------------------------
+    @socketio.on('notification_subscribe')
+    def handle_notification_subscribe(data):
+        sid = request.sid
+        session_id = data.get("session_id") if data else None
+        if not session_id:
+            return
+
+        entry = get_or_create_socket_entry(sid)
+        entry.setdefault("notification_sessions", set()).add(str(session_id))
+        emit_pending_notifications(session_id, sid)
+
+    # --------------------------
+    # NOTIFICATION UNSUBSCRIBE
+    # --------------------------
+    @socketio.on('notification_unsubscribe')
+    def handle_notification_unsubscribe(data):
+        sid = request.sid
+        session_id = data.get("session_id") if data else None
+        entry = sockets_registry.get(sid, {})
+        sessions = entry.get("notification_sessions")
+        if sessions and session_id:
+            sessions.discard(str(session_id))
 
     # --------------------------
     # LOG STREAM START
@@ -219,4 +247,3 @@ def register_socket_handlers(socketio: SocketIO):
             stop_event = worker.get("stop_event")
             if stop_event:
                 stop_event.set()
-

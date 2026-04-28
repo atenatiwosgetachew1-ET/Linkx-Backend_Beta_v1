@@ -9,6 +9,7 @@ session_thread_registry = {}
 _session_store = {}
 fetch_thread_registry = {}
 sockets_registry = {}
+notifications_registry = {}
 
 def create_file(path, name, type, instant_text):
     output_file = os.path.join(path, f'{name}.{type}')

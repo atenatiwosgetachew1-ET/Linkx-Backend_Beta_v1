@@ -1,4 +1,5 @@
 import json
+import re
 from jsonschema import validate, ValidationError
 
 RULE_SCHEMA = {
@@ -32,8 +33,13 @@ def validate_rules_json(json_file_path: str):
         data = json.load(f)
     try:
         validate(instance=data, schema=RULE_SCHEMA)
+        for rule in data.get("rules", []):
+            rel_name = rule.get("relationship", {}).get("name")
+            if not rel_name:
+                raise ValueError(f"Rule '{rule.get('id', '')}' is missing relationship.name")
+            if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", rel_name):
+                raise ValueError(f"Invalid relationship name '{rel_name}'")
         print("JSON is valid ")
         return data
     except ValidationError as e:
         raise ValueError(f"Invalid JSON: {e.message}")
-        return False

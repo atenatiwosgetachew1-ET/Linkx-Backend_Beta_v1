@@ -69,7 +69,7 @@ def prepare_graph_data_full(records):
 
     return list(nodes_dict.values()), edges
 
-def fetch_graph(id,action,source_id,value,type):        
+def fetch_graph(id,action,source_id,value,batch):        
     print(id,source_id,value)
     if id == "relationship":
         try:
@@ -79,19 +79,27 @@ def fetch_graph(id,action,source_id,value,type):
             nodes = {}
             edges = []
             rel_type = value
-
+            batch_id = batch
+            
             if not rel_type:
                 print("No relationship type provided")
                 return {"nodes": [], "edges": [], "error": "No relationship type provided"}
-
+            print("dawg:",source_id)
+            # query = f"""
+            #         MATCH (a)-[r:{rel_type}]->(b)
+            #         RETURN a, r, b
+            #         LIMIT 100000
+            #         """
+            # Scope graph fetches to the exact window/source instance stored on the relationship.
             query = f"""
                     MATCH (a)-[r:{rel_type}]->(b)
+                    WHERE r.session_id = $source_id
                     RETURN a, r, b
-                    LIMIT 100000
+                    LIMIT 300000
                     """
                   
             with driver.session() as session:
-                for record in session.run(query):
+                for record in session.run(query, source_id=str(source_id)):
                     a = record["a"]
                     b = record["b"]
                     r = record["r"]

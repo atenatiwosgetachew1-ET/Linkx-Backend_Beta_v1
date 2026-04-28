@@ -1,10 +1,7 @@
 import requests
 import pandas as pd
-from pyspark.sql import SparkSession
 from copy import deepcopy
-
-def get_spark_session():
-    return SparkSession.builder.appName("API Loader").getOrCreate()
+from batch_manager.utils.spark_utils import get_spark_session
 
 
 def clean_record(record, exclude_keys=None):

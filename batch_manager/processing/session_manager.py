@@ -77,7 +77,7 @@ def end_session(payload):
     # --- Stop log file ---
     log_file = session.get("log_file")
     if log_file:
-        PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
         log_dir = os.path.join(PROJECT_ROOT, "public", "temp_logs")
         full_path = os.path.join(log_dir, log_file)
 
