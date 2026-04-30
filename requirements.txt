@@ -32,6 +32,7 @@ polars-runtime-32==1.37.1
 py4j==0.10.9.7
 pyarrow==21.0.0
 PyHive==0.7.0
+psycopg[binary]>=3.2,<4
 pyspark==3.5.5
 python-dateutil==2.9.0.post0
 python-engineio==4.13.0

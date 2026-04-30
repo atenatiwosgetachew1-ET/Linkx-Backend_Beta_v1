@@ -2,7 +2,7 @@ import eventlet
 import eventlet.wsgi
 eventlet.monkey_patch()
 
-from flask import Flask, request, jsonify, session, render_template
+from flask import Flask, request, jsonify, session, render_template, current_app
 from flask_socketio import SocketIO, emit
 
 import os
@@ -15,6 +15,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import random
 import threading
+import py_compile
 
 from globals import create_file,save_uploaded_file,save_temp_config,load_temp_config,_session_store
 from connection_utils import kafka_broker, rest_api, HDFSstorage, tools
@@ -23,6 +24,7 @@ from batch_manager.batch_data_manager import batch_data_manager
 from batch_manager.config_defaults import get_default_session_config
 from batch_manager.services.dataframe_workflow import create_dataframe_response
 from batch_manager.utils.schema_utils import align_schemas
+from batch_manager.utils.postgres_utils import check_postgres_connection
 from batch_manager.processing.merger import merge_pandas_and_save, merge_spark_and_save
 from batch_manager.processing.rules_validator import validate_rules_json
 from batch_manager.processing.rules_compiler import generate_python_rule, normalize_rule_key
@@ -45,6 +47,15 @@ socketio = SocketIO(app, cors_allowed_origins=cors_origins, async_mode="eventlet
 register_socket_handlers(socketio)
 # Register external API blueprint
 app.register_blueprint(ext_api, url_prefix="/api")
+
+@app.route('/db/health', methods=['GET'])
+def db_health():
+    try:
+        check_postgres_connection()
+        return jsonify({'status': 'success'}), 200
+    except Exception as e:
+        current_app.logger.warning("PostgreSQL health check failed: %s", e)
+        return jsonify({'status': 'error'}), 500
 
 @app.route('/init', methods=['POST'])
 def init():
@@ -84,6 +95,7 @@ def configuration():
     else:
         data = request.form.to_dict() #Passed datas
         files = request.files.to_dict()  #Uploaded files -> FileStorage object
+        files = {key: file for key, file in files.items() if file and file.filename}
         # If any fields are JSON-encoded strings, try parsing
         for key, value in data.items():
             try:
@@ -106,12 +118,14 @@ def configuration():
         if files:
             for key, file in files.items():
                 print(f"Uploaded file: {key} -> {file.filename}")
+                if not file.filename or not file.filename.lower().endswith(".json"):
+                    return jsonify({'results': "Rule upload must be a JSON file.", 'message': 'failed!'}), 400
                 #Check uploading folder exists
                 upload_dir = os.path.join("public","temp_uploads")
                 os.makedirs(upload_dir, exist_ok=True)
                 #save upload into Temp folder
                 filename = secure_filename(file.filename)
-                file_path = os.path.join(upload_dir, filename)
+                file_path = os.path.join(upload_dir, f"{session_id}_{filename}")
                 file.save(file_path)
                 #Validate rule (the uploaded rule)
                 try:
@@ -124,10 +138,16 @@ def configuration():
                         rule_file_name = f"{rule_key}_rules"
 
                         # Save Python version of rule
-                        rules_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "public", "temp_rules")
+                        rules_dir = os.path.join(
+                            os.path.dirname(os.path.abspath(__file__)),
+                            "public",
+                            "temp_rules",
+                            str(session_id),
+                        )
                         os.makedirs(rules_dir, exist_ok=True)
                         output_py = os.path.join(rules_dir, f"{rule_file_name}.py")
                         generate_python_rule(rule_json, output_py)
+                        py_compile.compile(output_py, doraise=True)
 
                         # Register rule into configuration
                         print("Rule uploaded", session_id)
@@ -150,13 +170,87 @@ def configuration():
                         # Merge back into configuration
                         save_temp_config("all", config_dict, session_id)
 
-                        return jsonify({'results': "", 'message': 'success!'}), 200
+                        return jsonify({
+                            'results': "",
+                            'configurations': config_dict,
+                            'message': 'success!'
+                        }), 200
                     else:
                         print("The rule is invalid")
                         return jsonify({'results': "Invalid rule file.", 'message': 'failed!'}), 200
                 except Exception as e:
                     print(f"Failed to upload rule: {e}")
                     return jsonify({'results': str(e), 'message': 'failed!'}), 200
+        config = load_temp_config("all", session_id)
+        config_dict = config.get("data", {}) if config else {}
+        if data:
+            for key, value in data.items():
+                if key in {"id", "session_id", "rule_name"}:
+                    continue
+                if key == "active_rule":
+                    config_dict[key] = value if isinstance(value, list) else [value]
+                else:
+                    config_dict[key] = value
+            save_temp_config("all", config_dict, session_id)
+        return jsonify({
+            'results': "",
+            'configurations': config_dict,
+            'message': 'success!'
+        }), 200
+    elif data.get("id") == "remove_rule":
+        rule_name = str(data.get("rule_name") or "").strip()
+        if not rule_name:
+            return jsonify({'results': "No rule selected.", 'message': 'failed!'}), 400
+
+        config = load_temp_config("all", session_id)
+        config_dict = config.get("data", {}) if config else {}
+        rule_names = list(config_dict.get("rule_names") or [])
+        rule_file_names = list(config_dict.get("rule_file_names") or [])
+
+        if rule_name not in rule_names:
+            return jsonify({'results': f"Rule '{rule_name}' not found.", 'message': 'failed!'}), 404
+
+        index = rule_names.index(rule_name)
+        removed_file_name = rule_file_names[index] if index < len(rule_file_names) else f"{normalize_rule_key(rule_name)}_rules"
+        config_dict["rule_names"] = [name for name in rule_names if name != rule_name]
+        config_dict["rule_file_names"] = [
+            name for idx, name in enumerate(rule_file_names)
+            if idx != index and name != removed_file_name
+        ]
+
+        active_rule = config_dict.get("active_rule") or []
+        if isinstance(active_rule, str):
+            active_rule = [active_rule]
+        if rule_name in active_rule:
+            config_dict["active_rule"] = [config_dict["rule_names"][0]] if config_dict["rule_names"] else []
+
+        session_rules_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "public",
+            "temp_rules",
+            str(session_id),
+        )
+        removed_paths = []
+        candidate = os.path.join(session_rules_dir, f"{removed_file_name}.py")
+        if os.path.isfile(candidate):
+            os.remove(candidate)
+            removed_paths.append(candidate)
+
+        pycache_dir = os.path.join(session_rules_dir, "__pycache__")
+        if os.path.isdir(pycache_dir):
+            pyc_prefix = f"{removed_file_name}."
+            for filename in os.listdir(pycache_dir):
+                if filename.startswith(pyc_prefix) and filename.endswith(".pyc"):
+                    pyc_path = os.path.join(pycache_dir, filename)
+                    os.remove(pyc_path)
+                    removed_paths.append(pyc_path)
+
+        save_temp_config("all", config_dict, session_id)
+        return jsonify({
+            'results': {'removed_rule': rule_name, 'removed_files': removed_paths},
+            'configurations': config_dict,
+            'message': 'success!'
+        }), 200
     else:
         print("Unknown action:", data)
         return jsonify({'results': "unknown action", 'message': 'failed!'}), 400

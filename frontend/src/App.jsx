@@ -498,7 +498,7 @@ function Configurations({sessionId,actions,loadscreenState,setloadscreenState,to
                   type="button"
                   className="critical_btns"
                   value="Remove"
-                  onClick={(e) => actions("remove", { name: e.target.name, value: e.target.value })}
+                  onClick={() => actions("remove", { rule_name: parsedConfig?.active_rule?.[0] || "" })}
                 />
 
                 <label>Upload rules (JSON)</label>
@@ -4056,8 +4056,18 @@ function Root() {
             })
             .then((res) => res.json())
             .then((data) => {    
-                var arrayData=Object.values(data.results)
                 if (data.message == "success!"){
+                  const result = data.results || {};
+                  const arrayData = [
+                    result.actions || [],
+                    result.broker_url || "",
+                    result.columns || [],
+                    result.num_columns || 0,
+                    result.num_rows || 0,
+                    result.rules || [],
+                    result.storage_url || "",
+                    result.tool || "",
+                  ];
                   //Changing window content
                   alert("Dataframe created")
                   console.log("arrayData:",arrayData)
@@ -4938,6 +4948,8 @@ function Root() {
         ...prev,
         [name]: name === "storage_tables" || name === "active_tool_tables"
           ? value.split(",").map(s => s.trim())  // convert string to array
+          : name === "active_rule"
+          ? [value]
           : value
       }));
     }
@@ -4946,6 +4958,7 @@ function Root() {
         let formData=payload;
         formData.append("id","save")
         formData.append("session_id",sessionId)
+        setloadscreenState(true)
         fetch(`${API_URL}/configuration`, {
           method: "POST",
           body: formData,
@@ -4953,34 +4966,96 @@ function Root() {
         .then((res) => res.json())
         .then((data) => {
           if (data.message === "success!") {
+            const updatedConfig = data.configurations || data.results?.data || data.results || null;
+            if (updatedConfig) {
+              setConfigurations(updatedConfig);
+              const updatedRules = updatedConfig.rule_names || [];
+              if (updatedRules.length > 0) {
+                setWindows(prev =>
+                  prev.map(w => {
+                    if (!Array.isArray(w.batchFilesDataframeInfoI) || w.batchFilesDataframeInfoI.length === 0) {
+                      return w;
+                    }
+                    const dataframeInfo = [...w.batchFilesDataframeInfoI];
+                    dataframeInfo[5] = updatedRules;
+                    return {
+                      ...w,
+                      batchFilesDataframeInfoI: dataframeInfo,
+                      batchFilesDataframeRuleValue: updatedRules.includes(w.batchFilesDataframeRuleValue)
+                        ? w.batchFilesDataframeRuleValue
+                        : null,
+                    };
+                  })
+                );
+              }
+            }
+            setloadscreenState(false)
             alert("Configuration saved!")
-            //calling the tool integration
-            newContent = "batch_input";
-            newSubContent = "batch_input_form_pageI";
-            newBatchFilesCollection = validFiles.map(file => file.name);
-            setWindows(prev =>
-              prev.map(w =>
-                w.id === id ? { ...w,loadscreenState: false ,loadscreenText:null,selectedContent:newContent,selectedSubContent:newSubContent,windowResponseI:"Dataset uploaded!",batchFilesCollection:newBatchFilesCollection} : w
-              )
-            );
           } 
           else {
             alert(data.message)
-            setWindows(prev =>
-              prev.map(w =>
-                w.id === id ? { ...w,loadscreenState: false ,loadscreenText:null} : w
-              )
-            );
+            setloadscreenState(false)
           }
         })
         .catch((err) => {
           console.error("err",err);
-          setWindows(prev =>
-            prev.map(w =>
-              w.id === id ? { ...w,loadscreenState: false ,loadscreenText:null} : w
-            )
-          );
+          setloadscreenState(false)
         });    
+      }, 300);
+    }
+    else if (id === "remove"){
+      const ruleName = payload?.rule_name;
+      if (!ruleName) {
+        alert("No rule selected!")
+        return;
+      }
+      debounceRef.current = setTimeout(() => {
+        setloadscreenState(true)
+        fetch(`${API_URL}/configuration`, {
+          method: "POST",
+          body: JSON.stringify({
+            id: "remove_rule",
+            session_id: sessionId,
+            rule_name: ruleName,
+          }),
+          headers: {"Content-Type": "application/json"},
+        })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.message === "success!") {
+            const updatedConfig = data.configurations || data.results?.data || data.results || null;
+            if (updatedConfig) {
+              setConfigurations(updatedConfig);
+              const updatedRules = updatedConfig.rule_names || [];
+              setWindows(prev =>
+                prev.map(w => {
+                  if (!Array.isArray(w.batchFilesDataframeInfoI) || w.batchFilesDataframeInfoI.length === 0) {
+                    return w;
+                  }
+                  const dataframeInfo = [...w.batchFilesDataframeInfoI];
+                  dataframeInfo[5] = updatedRules;
+                  return {
+                    ...w,
+                    batchFilesDataframeInfoI: dataframeInfo,
+                    batchFilesDataframeRuleValue: updatedRules.includes(w.batchFilesDataframeRuleValue)
+                      ? w.batchFilesDataframeRuleValue
+                      : null,
+                  };
+                })
+              );
+            }
+            setloadscreenState(false)
+            alert("Rule removed!")
+          }
+          else {
+            alert(data.results || data.message)
+            setloadscreenState(false)
+          }
+        })
+        .catch((err) => {
+          console.error("err", err);
+          setloadscreenState(false)
+        });
       }, 300);
     }
     else if (id === "load_default"){
@@ -5176,4 +5251,3 @@ function Root() {
 }
 
 export default Root;
-

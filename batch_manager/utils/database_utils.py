@@ -1,4 +1,5 @@
 import time
+from globals import _session_store
 
 def get_graph_metadata(driver, session_id, tool_credentials=None):
     with driver.session() as session:
@@ -59,6 +60,7 @@ def get_graph_metadata(driver, session_id, tool_credentials=None):
         "relationship_labels": relationship_labels,
         "property_keys": property_keys,
         "neo4j_version": version,
+        "live_analysis": _session_store.get(session_id, {}).get("live_analysis"),
     }
 
 

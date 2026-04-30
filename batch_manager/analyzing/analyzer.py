@@ -11,7 +11,7 @@ import os
 import importlib.util
 from connection_utils import tools
 from logger import log_writer
-from batch_manager.analyzing.LA_rules_script import batch_graph_analysis_posts,batch_graph_analysis_transactions
+from batch_manager.analyzing.LA_rules_script import batch_graph_analysis_cdr, batch_graph_analysis_posts, batch_graph_analysis_transactions
 from batch_manager.processing.file_source_loader import load_file
 from globals import load_temp_config,_session_store
 
@@ -89,6 +89,21 @@ def check_rule_status(rule_key, rule_path):
         return module, True
     else:
         return None, "No main() function found inside the rule file."
+
+
+def rule_to_node_label(rule, session_id):
+    rule_key = str(rule or "").strip().lower().replace(' ', '_')
+    return f"{rule_key}_{session_id}"
+
+
+def run_incremental_rule(module, driver, session_id, node_label, batch_id, log_file):
+    if not module:
+        return None
+    if hasattr(module, "incremental"):
+        return module.incremental(driver, session_id, node_label, batch_id, log_file)
+    if hasattr(module, "incremental_graph_analysis_transactions"):
+        return module.incremental_graph_analysis_transactions(driver, session_id, node_label, batch_id, log_file)
+    return None
 
 
 def neo4j_row_data_injector(payload, batch_size=500):
@@ -332,11 +347,12 @@ def neo4j_row_data_injector(payload, batch_size=500):
             # Path to the directory containing rule files
             rules_dir = 'public/temp_rules/'
             rule_filename = f"{rule_key}_rules.py"
-            rule_path = os.path.join(rules_dir, rule_filename)
+            session_rule_path = os.path.join(rules_dir, str(session_id), rule_filename)
+            default_rule_path = os.path.join(rules_dir, rule_filename)
+            rule_path = session_rule_path if os.path.exists(session_rule_path) else default_rule_path
             module, rule_status = check_rule_status(rule_key, rule_path) #Check the rule
             print(f"Loading rule from {rule_path}")  # debug
-            # Insert nodes in batches; stop if stop_event is set 
-            early_analysis_ran = False
+            # Insert nodes in batches; run cheap incremental rules after every batch.
 
             with driver.session() as session:
                 for i in range(0, len(clean_rows), batch_size):
@@ -350,6 +366,7 @@ def neo4j_row_data_injector(payload, batch_size=500):
                     for row in batch:
                         row["batch_id"] = f"{session_id}_{batch_number}"
                         row["nodes_label"] = node_label
+                    batch_id = f"{session_id}_{batch_number}"
                     # session.run("""
                     #     UNWIND $rows AS row
                     #     MERGE (n:{node_label} { NodeId: row.NodeId, node_identity: 'Entity Node' })
@@ -361,21 +378,29 @@ def neo4j_row_data_injector(payload, batch_size=500):
                         SET n += row
                         """
                     session.run(query, rows=batch)
-                    
-                    # EARLY ANALYSIS (ONCE, AFTER FIRST BATCH)
-                    if batch_number == 1 and module and not early_analysis_ran:
-                        log_writer(
-                            log_file,
-                            f"[{datetime.now()}] [Info] Running Quick analysis ..."
-                        )
+
+                    if module:
                         try:
-                            module.main(driver, session_id, node_label, log_file)
-                            early_analysis_ran = True
+                            live_counts = run_incremental_rule(module, driver, session_id, node_label, batch_id, log_file)
+                            if live_counts is not None:
+                                if session_id in _session_store:
+                                    _session_store[session_id]["live_analysis"] = {
+                                        "batch_id": batch_id,
+                                        "batch_number": batch_number,
+                                        "total_batches": (total_rows + batch_size - 1) // batch_size,
+                                        "flags": live_counts,
+                                        "provisional": True,
+                                    }
+                                log_writer(
+                                    log_file,
+                                    f"[{datetime.now()}] [Info] Live analysis batch {batch_number} flags: {live_counts}"
+                                )
                         except Exception as e:
                             log_writer(
                                 log_file,
-                                f"[{datetime.now()}] [Warning] Early analysis failed: {e}"
-                            )                                        
+                                f"[{datetime.now()}] [Warning] Incremental analysis failed for batch {batch_number}: {e}"
+                            )
+
                     log_writer(
                         log_file,
                         f"[{datetime.now()}] [Info] Inserted batch {batch_number} ({len(batch)} rows)"
@@ -396,7 +421,15 @@ def neo4j_row_data_injector(payload, batch_size=500):
                     log_writer(log_file, f"[{datetime.now()}] [Info] - Analysis already running, skipping")
                     return
             if module:
-                module.main(driver, session_id, node_label, log_file)
+                final_counts = module.main(driver, session_id, node_label, log_file)
+                if session_id in _session_store and final_counts is not None:
+                    _session_store[session_id]["live_analysis"] = {
+                        "batch_id": None,
+                        "batch_number": None,
+                        "total_batches": (total_rows + batch_size - 1) // batch_size,
+                        "flags": final_counts,
+                        "provisional": False,
+                    }
             else:
                 print(rule_status)
                 log_writer(log_file, f"[{datetime.now()}] [Warning] - {rule_status}")
@@ -460,9 +493,26 @@ def analyzer(payload):
                 set_session_status(driver, sid, "READY_FOR_ANALYSIS")
 
                 if rule in ["bank", "bank transactions", "transactions"]:
-                    batch_graph_analysis_transactions(driver, payload.get("log_file"))
-                elif rule in ["social", "social media", "posts", "tweets"]:
-                    batch_graph_analysis_posts(driver, payload.get("log_file"))
+                    batch_graph_analysis_transactions(
+                        driver,
+                        payload.get("log_file"),
+                        session_id=sid,
+                        nodes_label=rule_to_node_label(rule, sid),
+                    )
+                elif rule in ["social", "social media", "social media (tweeter)", "posts", "tweets"]:
+                    batch_graph_analysis_posts(
+                        driver,
+                        payload.get("log_file"),
+                        session_id=sid,
+                        nodes_label=rule_to_node_label(rule, sid),
+                    )
+                elif rule in ["cdr", "call data records", "call records"]:
+                    batch_graph_analysis_cdr(
+                        driver,
+                        payload.get("log_file"),
+                        session_id=sid,
+                        nodes_label=rule_to_node_label(rule, sid),
+                    )
 
                 set_session_status(driver, sid, "ANALYZED")
 
