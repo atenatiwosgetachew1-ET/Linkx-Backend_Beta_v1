@@ -328,6 +328,10 @@ def _success_response(session_id, entity, frontend_session_id=None):
 
 @STR_link_analysis_api.route("/STR_link_analysis", methods=["POST"])
 def STR_link_analysis():
+    public_api_key = os.getenv("LINKX_PUBLIC_API_KEY")
+    if public_api_key and request.headers.get("X-API-Key") != public_api_key:
+        return jsonify({'message': 'unauthorized'}), 401
+
     data = request.get_json(silent=True)
 
     if not data:
@@ -369,7 +373,7 @@ def STR_link_analysis():
             print("session_id:", session_id)
             print("entity:", entity)
             print("type:", type)
-            print("value:", value)
+            print("value_length:", len(value))
             print("elastic_api_url:", API_URL)
             print("search_column:", search_column)
 

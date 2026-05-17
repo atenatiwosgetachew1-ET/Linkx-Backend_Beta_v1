@@ -11,18 +11,38 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
         print(-2,"search_column1:",search_column)
         return None
 
-    payload = {search_column: keyword}
+    if isinstance(search_column, (list, tuple, set)):
+        search_columns = [col for col in search_column if col]
+    else:
+        search_columns = [search_column]
 
     try:
-        print("DF payload ES:",payload)
-        response = requests.post(API_URL, json=payload, timeout=timeout)
-        response.raise_for_status()
-        result = response.json()
+        result = None
+        results = None
+        used_column = None
+        used_payload = None
+        for column in search_columns:
+            payload = {column: keyword}
+            print("DF payload ES:",payload)
+            response = requests.post(API_URL, json=payload, timeout=timeout)
+            response.raise_for_status()
+            result = response.json()
+            candidate_results = result.get("results")
+            if candidate_results is None:
+                print("result not found")
+                candidate_results = result.get("hits", {}).get("hits", [])
+            if candidate_results:
+                results = candidate_results
+                used_column = column
+                used_payload = payload
+                break
+            if used_column is None:
+                used_column = column
+                used_payload = payload
+                results = candidate_results
 
-        results = result.get("results")
-        if results is None:
-            print("result not found")
-            results = result.get("hits", {}).get("hits", [])
+        search_column = used_column
+        payload = used_payload
 
         # Date filter        
         if date and date_column:
@@ -37,7 +57,22 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
             return None
 
         if len(results) >= 100000:
-            print("Elastic result overflow → require hive fallback")
+            print("Elastic result overflow -> require hive fallback")
+            if id == "search":
+                return {
+                    "results": [{
+                        "name": f"Results found for '{keyword}'",
+                        "keyword": keyword,
+                        "size": len(results),
+                        "strict": strict_mood,
+                        "type": "hive",
+                        "column": search_column,
+                    }],
+                    "has_more": 1,
+                    "offset": 0,
+                    "limit": 0,
+                    "message": f"{len(results)}+ results found; use Hive fetch",
+                }
             return None
 
         if id == "search":

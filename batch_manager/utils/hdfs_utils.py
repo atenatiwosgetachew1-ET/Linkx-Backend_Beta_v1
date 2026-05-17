@@ -28,11 +28,14 @@ def load_hdfs_files(spark, hdfs_files):
     for item in hdfs_files:
         name = item["name"]
         path = item["path"]
+        ext = os.path.splitext(name)[1].lower()
         print("getting raw file:", item)
-        if name.endswith(".csv"):
+        if ext == ".csv":
             df = spark.read.csv(path, header=True, inferSchema=True)
-        elif name.endswith(".parquet"):
+        elif ext == ".parquet":
             df = spark.read.parquet(path)
+        elif ext == ".json":
+            df = spark.read.json(path)
         else:
             print(f"Unsupported HDFS file type: {name}")
             continue
@@ -91,6 +94,7 @@ def stream_hdfs_metadata(storage_ip, base_path, keyword="", date=None, offset=0,
 
     dirs_to_scan = ["individual", "entity"]
     results = []
+    errors = []
     collected = 0
     lookahead = offset + limit + 1
     MAX_SCAN = lookahead + 1000
@@ -105,7 +109,9 @@ def stream_hdfs_metadata(storage_ip, base_path, keyword="", date=None, offset=0,
 
             try:
                 statuses = fs.listStatus(current)
-            except Exception:
+            except Exception as e:
+                if len(errors) < 5:
+                    errors.append(f"{current}: {e}")
                 continue
 
             for st in statuses:
@@ -150,10 +156,20 @@ def stream_hdfs_metadata(storage_ip, base_path, keyword="", date=None, offset=0,
         if len(results) >= lookahead or collected >= MAX_SCAN:
             break
 
+    message = ""
+    if not results and errors:
+        message = "No files returned; HDFS listing failed for scanned paths."
+    elif not results:
+        message = "No files matched the raw search filters."
+
     return {
         "results": results[:limit],
         "has_more": len(results) > limit,
         "offset": offset,
         "limit": limit,
-        "date": requested_date.isoformat() if requested_date else None
+        "date": requested_date.isoformat() if requested_date else None,
+        "base_path": base_path,
+        "storage": storage_ip,
+        "errors": errors,
+        "message": message,
     }

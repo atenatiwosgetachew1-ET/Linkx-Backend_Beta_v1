@@ -202,6 +202,10 @@ def neo4j_row_data_injector(payload, batch_size=500):
             target_col = payload.get("target")
             relationship_type = payload.get("relationship")
 
+            if not source_col or not target_col or not relationship_type:
+                log_writer(log_file, f"[{datetime.now()}] [Error] - Source, target, and relationship are required")
+                return
+
             # Sanitize the relationship label
             relationship_type = re.sub(r'[^a-zA-Z0-9_]', '_', relationship_type.strip())
 
@@ -310,7 +314,7 @@ def neo4j_row_data_injector(payload, batch_size=500):
                             ON CREATE SET a += $source_props
                             WITH a
                             UNWIND $rows AS row
-                                CREATE (b:Entity {{
+                                MERGE (b:Entity {{
                                     `{target_col}`: row.target,
                                     node_identity: 'Target Node',
                                     session_id: row.session_id,
@@ -347,9 +351,9 @@ def neo4j_row_data_injector(payload, batch_size=500):
             with driver.session() as session:
                 session.run("""
                     MATCH (n)
-                    WHERE n.batch_id STARTS WITH $session_id
+                    WHERE n.session_id = $session_id OR n.batch_id STARTS WITH $batch_prefix
                     DETACH DELETE n
-                """, session_id=session_id)
+                """, session_id=session_id, batch_prefix=f"{session_id}_")
                 log_writer(log_file, f"[{datetime.now()}] [Info] - Existing Link Analysis nodes for session '{session_id}' deleted")
 
             # Run rule-specific analysis on whatever was injected
@@ -391,6 +395,7 @@ def neo4j_row_data_injector(payload, batch_size=500):
 
                     batch_id = f"{session_id}_{batch_number}"
                     for row in batch:
+                        row["session_id"] = session_id
                         row["batch_id"] = batch_id
                         row["nodes_label"] = node_label
 
@@ -655,7 +660,7 @@ def analyzer(payload):
     print("analyzer called")
     if payload.get("id") == "realtime_data":
         realtime_analyzer(payload)
-        return
+        return True
     session_id = payload.get("session_id")
     stop_event = payload.get("stop_event")
     dataframe_dir = payload.get("dataframe_dir")

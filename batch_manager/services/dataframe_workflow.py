@@ -31,6 +31,8 @@ def load_dataframes_for_create_df(data, session_id):
     address_value = files if isinstance(files, str) else None
     date = data.get("date", None)
     kind = data.get("kind", "")
+    if kind == "hdfs":
+        kind = "hybrid"
     df_type = data.get("type")
     topic = data.get("topic") or data.get("kafka_topic")
     if kind == "address" and df_type == "api" and topic:

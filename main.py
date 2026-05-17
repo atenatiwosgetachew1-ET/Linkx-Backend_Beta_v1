@@ -43,6 +43,7 @@ allowed_origins = os.getenv("LINKX_CORS_ORIGINS", "*")
 cors_origins = "*" if allowed_origins == "*" else [origin.strip() for origin in allowed_origins.split(",") if origin.strip()]
 CORS(app, origins=cors_origins)  # Allow frontend
 app.secret_key = os.getenv("LINKX_FLASK_SECRET_KEY", "dev-only-change-me")
+app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("LINKX_MAX_UPLOAD_BYTES", "104857600"))
 socketio = SocketIO(app, cors_allowed_origins=cors_origins, async_mode="eventlet") #Socket listners are found inside 'logger.py' page
 # Register socket
 register_socket_handlers(socketio)
@@ -415,6 +416,7 @@ def disconnect_source():
                 return jsonify({'status': 'error', 'message': 'Disconnecting failed!'}), 200
         except Exception as e:
             print(e)
+            return jsonify({'status': 'error', 'message': 'Disconnecting failed!'}), 500
     else:
         return jsonify({'status': 'error', 'message': 'Disconnecting failed!'}), 400
 
@@ -465,6 +467,8 @@ def upload_batch_files():
     for file in files:
         if file.filename == '':
             return jsonify({"message": "No file selected"}), 400
+        if "." not in file.filename:
+            return jsonify({"message": "Unsupported file type: missing extension"}), 400
         ext = file.filename.rsplit('.', 1)[1].lower()
         allowed_ext = {"csv", "json", "parquet", "xlsx"}
         if ext not in allowed_ext:
@@ -493,7 +497,7 @@ def live_batch_files():
         payload = {
             "id": "search",
             "keyword": value.get("keyword", ""),
-            "date": value.get("date", datetime.today().date().isoformat()),
+            "date": value.get("date") or None,
             "offset": value.get("offset", 0),
             "limit": value.get("limit", 50),
             "search_column": value.get("search_column", "transactionid"), #falback to 'transaction id'
@@ -533,7 +537,7 @@ def live_batch_files():
     # START SESSION
     # -----------------------------
     elif action_id == "stream":
-        values=data.get("value")    
+        values=data.get("value") or {}    
         #Create the session instance
         payload = {"id": "create_session", "session_id": session_id}
         session = batch_data_manager(payload)

@@ -8,7 +8,7 @@ from batch_manager.processing.session_manager import create_session,start_sessio
 from batch_manager.utils.spark_utils import get_spark_session
 from batch_manager.utils.hdfs_utils import stream_hdfs_metadata,load_hdfs_files
 
-from batch_manager.utils.hive_utils import run_hive_query, hive_keyword_search
+from batch_manager.utils.hive_utils import run_hive_query, hive_keyword_search, load_hive_rows
 from batch_manager.utils.elastic_utils import es_keyword_search
 from py4j.java_gateway import java_import
 import os, pickle
@@ -36,9 +36,13 @@ def batch_data_manager(payload):
         active_source_type = load_temp_config("active_source_type", session_id)
         active_topic = load_temp_config("active_kafka_topic", session_id)
         active_source_mode = payload.get("source_mode") or load_temp_config("active_source_mode", session_id)
+        dataframe_actions = {"Store data", "Source / Target Relationship", "Link Analysis"}
+        explicit_realtime = payload.get("source_mode") == "realtime" or payload.get("listen_realtime") is True
+        dataframe_analysis = payload.get("action") in dataframe_actions and not explicit_realtime
         should_listen_realtime = (
             active_source_type in {"broker", "kafka", "api"}
             and active_source_mode != "batch"
+            and not dataframe_analysis
             and not _is_kafka_batch_topic(active_topic)
         )
         if should_listen_realtime:
@@ -199,7 +203,7 @@ def batch_data_manager(payload):
         
         elif payload["type"] == "array" and payload["kind"] == "hybrid": # Works with along side # CASE 2 (Fresh meat)-- #For files and keyword search
             print("Now loading hdfs files")
-            files = payload["files"]
+            files = payload.get("files") or payload.get("value") or []
             date = payload.get("date",None)    
             # ---------------------------------------------------------------- Mutual payloads
             storage_address = storage_ip       
@@ -265,31 +269,35 @@ def batch_data_manager(payload):
                     except Exception as e:
                         print(f"Error during es fetch: {e}")
             # ---------------------------------------------------------------- Hive DFs (Results above the limit 100,000)
-            hive_port = load_temp_config("hive_port", session_id)
-            spark_port = load_temp_config("spark_port", session_id)
-            thrift_port = load_temp_config("thrift_port",session_id)
-            spark = get_spark_session(storage_ip, spark_port, thrift_port)            
-            storage_database= load_temp_config("active_storage_database",session_id)
-            storage_tables = load_temp_config("active_storage_tables",session_id)
-            limit = load_temp_config("dataframes_limit",session_id)
-            tables = []
-            for t in storage_tables:
-                tables.append(f"{storage_database}.{t}")       
             if len(hive_categories) > 0: #Consists an hive datas 
+                hive_port = load_temp_config("hive_port", session_id)
+                spark_port = load_temp_config("spark_port", session_id)
+                thrift_port = load_temp_config("thrift_port",session_id)
+                spark = get_spark_session(storage_ip, spark_port, thrift_port)            
+                storage_database= load_temp_config("active_storage_database",session_id)
+                storage_tables = load_temp_config("active_storage_tables",session_id) or []
+                limit = load_temp_config("dataframes_limit",session_id)
+                tables = [f"{storage_database}.{t}" for t in storage_tables]
                 print("Consists Hive values")               
                 for file in hive_categories:     
-                    id = "fetch"
                     search_column = file.get('column')    
                     keyword = file.get('keyword')                         
-                    strict_mood = file.get('strict')              
-                    if file.get('strict', False): #if data is from a stict search
-                        endpoint = hive_search_endpoint_strict
-                    else:
-                        endpoint = hive_search_endpoint_fuzzy
-                    #trigger a fetching logic (call a function that returns the df)         
-                    API_URL = f"http://{storage_address}:{api_port}/{endpoint}"
                     try:
-                        df = hive_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_column, spark, date, fetch_columns)
+                        if search_column:
+                            search_columns = [{"field": search_column}]
+                        else:
+                            configured = load_temp_config("search_columns_strict" if file.get('strict', False) else "search_columns_fuzzy", session_id) or []
+                            search_columns = [{"field": col} for col in configured]
+                        df = load_hive_rows(
+                            storage_address,
+                            hive_port,
+                            spark,
+                            search_columns,
+                            tables,
+                            [keyword],
+                            date=date,
+                            limit=limit,
+                        )
                         if df is not None:
                             dfs.append(df)
                     except Exception as e:
@@ -327,9 +335,11 @@ def batch_data_manager(payload):
         hybrid = payload.get("hybrid")
         strict = payload.get("strict")
         storage_ip = payload.get("storage") 
-        search_columns_elastic = payload.get("search_column") #Single column
+        search_columns_elastic = payload.get("search_column") #Single column, or configured list for fuzzy search
         search_columns_hive = "" #Multi columns
         date_column = load_temp_config("date_column",session_id)  
+        if hybrid and not strict and search_columns_elastic in (None, "", "transactionid"):
+            search_columns_elastic = load_temp_config("search_columns_fuzzy", session_id) or search_columns_elastic
         #-----------------------------------------------------------------------
         if hybrid:#Elastic search -> hive search if it exceeds 100000 results    
             storage_address = storage_ip       
@@ -345,7 +355,7 @@ def batch_data_manager(payload):
                 api_search_endpoint = load_temp_config("search_api_endpoint_es_fuzzy",session_id) 
                 search_columns_hive = load_temp_config("search_columns_fuzzy",session_id) 
             #--------------------------------------------------------------------------            
-            API_URL = f"http://{storage_address}:{api_port}/{api_search_endpoint}"
+            API_URL = f"http://{storage_address}:{api_port}/{str(api_search_endpoint).strip('/')}/"
             #--------------------------------------------------------------------------            
             #Hive payloads
             storage_database= load_temp_config("active_storage_database",session_id)
@@ -360,6 +370,15 @@ def batch_data_manager(payload):
             response = es_keyword_search(action_id, API_URL, keyword, search_columns_elastic, strict, date_column, date) #Overrides to hive (Result out of bound)        
             print("es_response:",response)
         else:#Staric Row files search
+            normalized_keyword = str(keyword or "").strip()
+            if normalized_keyword and not re.search(r"[A-Za-z0-9]", normalized_keyword):
+                return {
+                    "results": [],
+                    "has_more": False,
+                    "offset": offset,
+                    "limit": limit,
+                    "message": "Raw file search keyword is too broad. Use letters, numbers, or leave it empty to list files.",
+                }
             storage_path = load_temp_config("storage_path",session_id)
             base_path = f"/{storage_path}"
             response = stream_hdfs_metadata(storage_ip, base_path, keyword, date, offset, limit)

@@ -15,9 +15,11 @@ from globals import load_temp_config,get_or_create_socket_entry,sockets_registry
 from connection_utils import tools
 
 # check if socket is alive
-def is_socket_alive(sid):
+def is_socket_alive(sid, socketio_instance=None):
     try:
-        return socketio.server.manager.is_connected(sid, '/')
+        if socketio_instance is None:
+            return False
+        return socketio_instance.server.manager.is_connected(sid, '/')
     except Exception:
         return False
 
@@ -112,11 +114,19 @@ def register_socket_handlers(socketio: SocketIO):
             if log_entry:
                 log_entry["stop_event"].set()
                 log_streams.pop(filename, None)
+            log_stream = entry.get("log_stream")
+            if isinstance(log_stream, dict):
+                log_stream["stop_event"].set()
+                entry.pop("log_stream", None)
         else:
             log_streams = entry.get("log_streams", {})
             for le in log_streams.values():
                 le["stop_event"].set()
             entry.pop("log_streams", None)
+            log_stream = entry.get("log_stream")
+            if isinstance(log_stream, dict):
+                log_stream["stop_event"].set()
+                entry.pop("log_stream", None)
     
         print("sockets_registry_from_logs:", sockets_registry)
 
@@ -196,7 +206,7 @@ def register_socket_handlers(socketio: SocketIO):
         if session_id in entry.get("graph_statuses", {}):
             g_entry = entry["graph_statuses"][session_id]
 
-            if is_socket_alive(sid):
+            if is_socket_alive(sid, socketio):
                 print(f"Graph status already running for session {session_id}, sid {sid}")
                 return
             else:
