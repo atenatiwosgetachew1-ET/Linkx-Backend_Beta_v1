@@ -99,7 +99,8 @@ def batch_graph_analysis_transactions(
           AND amount IS NOT NULL
           AND amount > 0
           AND amount < $single_tx_threshold
-        ORDER BY t.TRANSACTIONDATE, t.TRANSACTIONTIME
+        WITH acc, beneficiary, tx_day, t, amount
+        ORDER BY t.TRANSACTIONDATE, t.TRANSACTIONTIME 
         WITH acc, beneficiary, tx_day, collect(t) AS txns, sum(amount) AS total_amount, count(t) AS tx_count
         WHERE tx_count >= $min_tx_count
           AND total_amount >= $total_threshold
@@ -133,7 +134,7 @@ def batch_graph_analysis_transactions(
           AND a.ACCOUNTNO <> ''
           AND a.BENACCOUNTNO IS NOT NULL
           AND a.BENACCOUNTNO <> ''
-          AND id(a) < id(b)
+          AND elementId(a) < elementId(b)
           AND coalesce(a.TRANSACTIONDATE, '') = coalesce(b.TRANSACTIONDATE, '')
         MERGE (a)-[r1:CIRCULAR_FLOW {{session_id:$session_id}}]->(b)
         SET r1.bgcolor = '#e6e6e6', r1.provisional = false, r1.reason = 'same-day reverse transfer pair'
@@ -150,7 +151,7 @@ def batch_graph_analysis_transactions(
           AND a.BENACCOUNTNO = b.ACCOUNTNO
           AND a.BENACCOUNTNO IS NOT NULL
           AND a.BENACCOUNTNO <> ''
-          AND id(a) <> id(b)
+          AND elementId(a) <> elementId(b)
           AND (
             coalesce(a.TRANSACTIONDATE, '') < coalesce(b.TRANSACTIONDATE, '')
             OR (
@@ -287,6 +288,7 @@ def incremental_graph_analysis_transactions(
         WHERE amount IS NOT NULL
           AND amount > 0
           AND amount < $single_tx_threshold
+        WITH acc, beneficiary, tx_day, t, amount
         ORDER BY t.TRANSACTIONDATE, t.TRANSACTIONTIME
         WITH acc, beneficiary, tx_day, collect(t) AS txns, sum(amount) AS total_amount, count(t) AS tx_count
         WHERE tx_count >= $min_tx_count
@@ -322,7 +324,7 @@ def incremental_graph_analysis_transactions(
           AND seed.ACCOUNTNO <> ''
           AND seed.BENACCOUNTNO IS NOT NULL
           AND seed.BENACCOUNTNO <> ''
-          AND id(seed) <> id(other)
+          AND elementId(seed) <> elementId(other)
           AND coalesce(seed.TRANSACTIONDATE, '') = coalesce(other.TRANSACTIONDATE, '')
         MERGE (seed)-[r1:CIRCULAR_FLOW {{session_id:$session_id}}]->(other)
         SET r1.bgcolor = '#e6e6e6', r1.provisional = true, r1.reason = 'same-day reverse transfer pair'
@@ -339,7 +341,7 @@ def incremental_graph_analysis_transactions(
           AND a.BENACCOUNTNO = b.ACCOUNTNO
           AND a.BENACCOUNTNO IS NOT NULL
           AND a.BENACCOUNTNO <> ''
-          AND id(a) <> id(b)
+          AND elementId(a) <> elementId(b)
           AND (
             coalesce(a.TRANSACTIONDATE, '') < coalesce(b.TRANSACTIONDATE, '')
             OR (
@@ -389,6 +391,7 @@ def incremental_graph_analysis_transactions(
         WITH t.ACCOUNTNO AS acc, t,
              coalesce(toFloat(t.BALANCEHELD), toFloat(t.BALANCE), toFloat(t.balance)) AS balance
         WHERE acc IS NOT NULL AND acc <> '' AND balance IS NOT NULL
+        WITH acc, t
         ORDER BY t.TRANSACTIONDATE, t.TRANSACTIONTIME
         WITH acc, collect(t) AS txns
         UNWIND range(1, size(txns)-1) AS i
@@ -720,7 +723,7 @@ def _run_cdr_rules(session, label, session_id, high_risk_numbers, provisional, b
       AND a.CALLING_NO = b.CALLED_NO
       AND a.CALLED_NO = b.CALLING_NO
       AND coalesce(a.CALLING_NO, '') <> ''
-      AND id(a) <> id(b)
+      AND elementId(a) <> elementId(b)
       AND coalesce(toString(b.START_TIME), '') > coalesce(toString(a.START_TIME), '')
     MERGE (a)-[r:CALLBACK_PATTERN {{session_id:$session_id}}]->(b)
     SET r.bgcolor = '#ffb347',
@@ -793,7 +796,7 @@ def _run_cdr_rules(session, label, session_id, high_risk_numbers, provisional, b
       AND {pair_scope}
       AND a.CALLED_NO = b.CALLING_NO
       AND coalesce(a.CALLED_NO, '') <> ''
-      AND id(a) <> id(b)
+      AND elementId(a) <> elementId(b)
       AND coalesce(toString(b.START_TIME), '') > coalesce(toString(a.START_TIME), '')
     MERGE (a)-[r:CALL_RELAY {{session_id:$session_id}}]->(b)
     SET r.bgcolor = '#4caf50',
@@ -901,7 +904,7 @@ def _run_cdr_rules(session, label, session_id, high_risk_numbers, provisional, b
       AND {pair_scope}
       AND a.CALLING_NO = b.CALLING_NO
       AND coalesce(a.CALLING_NO, '') <> ''
-      AND id(a) < id(b)
+      AND elementId(a) < elementId(b)
       AND abs(coalesce(toInteger(a.START_EPOCH), 0) - coalesce(toInteger(b.START_EPOCH), 0)) < 10
       AND coalesce(toInteger(a.START_EPOCH), 0) > 0
     MERGE (a)-[r:SIMULTANEOUS_CALL {{session_id:$session_id}}]->(b)

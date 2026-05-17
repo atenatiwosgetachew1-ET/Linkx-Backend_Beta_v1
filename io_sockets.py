@@ -6,7 +6,11 @@ import globals
 
 from logger import log_stream_background 
 from batch_manager.utils.database_utils import graph_status_stream
-from batch_manager.utils.notification_utils import set_notification_socketio, emit_pending_notifications
+from batch_manager.utils.notification_utils import (
+    set_notification_socketio,
+    subscribe_str_report_session,
+    flush_status_pending,
+)
 from globals import load_temp_config,get_or_create_socket_entry,sockets_registry,_session_store
 from connection_utils import tools
 
@@ -23,20 +27,37 @@ def register_socket_handlers(socketio: SocketIO):
     Register all Socket.IO event handlers here.
     """
     set_notification_socketio(socketio)
+    print("[str_report_socket] socket handlers registered (socketio ready)")
+
+    @socketio.on("connect")
+    def handle_connect():
+        sid = request.sid
+        print(f"[str_report_socket] client connected sid={sid}")
 
     # --------------------------
     # NOTIFICATION SUBSCRIBE
     # --------------------------
-    @socketio.on('notification_subscribe')
-    def handle_notification_subscribe(data):
+    def _handle_str_report_subscription(data, source_event):
         sid = request.sid
         session_id = data.get("session_id") if data else None
         if not session_id:
+            print(f"[str_report_socket] {source_event} sid={sid} ignored: missing session_id")
             return
 
         entry = get_or_create_socket_entry(sid)
-        entry.setdefault("notification_sessions", set()).add(str(session_id))
-        emit_pending_notifications(session_id, sid)
+        subscribe_str_report_session(session_id, sid)
+        print(
+            f"[str_report_socket] {source_event} sid={sid} session_id={session_id} "
+            f"(subscribed_sessions={sorted(entry.get('notification_sessions', set()))})"
+        )
+
+    @socketio.on("notification_subscribe")
+    def handle_notification_subscribe(data):
+        _handle_str_report_subscription(data, "notification_subscribe")
+
+    @socketio.on("str_report_register_receiver")
+    def handle_str_report_register_receiver(data):
+        _handle_str_report_subscription(data, "str_report_register_receiver")
 
     # --------------------------
     # NOTIFICATION UNSUBSCRIBE
@@ -58,6 +79,10 @@ def register_socket_handlers(socketio: SocketIO):
         filename = data.get('filename')
         session_id = data.get('session_id')
         sid = request.sid
+        print(
+            f"[str_report_socket] log_stream_plug sid={sid} "
+            f"session_id={session_id} filename={filename}"
+        )
 
         stop_event = threading.Event()
         task = socketio.start_background_task(
@@ -159,7 +184,10 @@ def register_socket_handlers(socketio: SocketIO):
         if not session_id:
             return
 
+        print(f"[str_report_socket] graph_status_subscribe sid={sid} session_id={session_id}")
+
         entry = get_or_create_socket_entry(sid)
+        replayed_status_count = flush_status_pending(session_id, sid)
 
         # ensure multiple session support
         if "graph_statuses" not in entry:
@@ -194,7 +222,8 @@ def register_socket_handlers(socketio: SocketIO):
         driver = tools(tool.lower(), "check", {"session_id": session_id})
         session_info = _session_store.get(session_id)
         if not session_info:
-            socketio.emit("status", {"type": "waiting", "session_id": session_id}, to=sid)
+            if replayed_status_count == 0:
+                socketio.emit("status", {"type": "waiting", "session_id": session_id}, to=sid)
             return
 
         stop_event = threading.Event()
@@ -239,11 +268,19 @@ def register_socket_handlers(socketio: SocketIO):
     # Socket DISCONNECT
     # --------------------------
     @socketio.on("disconnect")
-    def handle_disconnect():
+    def handle_disconnect(*_args):
         sid = request.sid
+        print(f"[str_report_socket] client disconnected sid={sid}")
         entry = sockets_registry.pop(sid, {})
 
-        for worker in entry.values():
-            stop_event = worker.get("stop_event")
+        log_stream = entry.get("log_stream")
+        if isinstance(log_stream, dict):
+            stop_event = log_stream.get("stop_event")
             if stop_event:
                 stop_event.set()
+
+        for graph_entry in entry.get("graph_statuses", {}).values():
+            if isinstance(graph_entry, dict):
+                stop_event = graph_entry.get("stop_event")
+                if stop_event:
+                    stop_event.set()

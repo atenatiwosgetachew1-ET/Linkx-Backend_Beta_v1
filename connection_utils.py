@@ -37,16 +37,22 @@ def rest_api(id, api_url, session_id):
     else:
         raise ValueError(f"Unknown id value: {id}")
 
-def kafka_broker(id,broker_url,session_id):
+def kafka_broker(id,broker_url,session_id, topic=None):
     global global_broker
     if id == "check":
         try:
             consumer = KafkaConsumer(bootstrap_servers=[broker_url], request_timeout_ms=3000)
-            consumer.topics()
+            topics = consumer.topics()
+            if topic and topic not in topics:
+                consumer.close()
+                return False
             consumer.close()
             #print("kafka found")
             global_broker=broker_url
             save_temp_config("global_broker/API",broker_url,session_id)
+            save_temp_config("active_kafka_adress",broker_url,session_id)
+            if topic:
+                save_temp_config("active_kafka_topic",topic,session_id)
             return True
         except Exception as e:
             #print(f"[Broker Error] {e}")

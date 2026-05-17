@@ -23,6 +23,7 @@ from connection_utils import kafka_broker, rest_api, HDFSstorage, tools
 from batch_manager.batch_data_manager import batch_data_manager
 from batch_manager.config_defaults import get_default_session_config
 from batch_manager.services.dataframe_workflow import create_dataframe_response
+from batch_manager.processing.realtime_source_loader import load_latest_kafka_message, load_realtime_api, load_kafka_batch_messages
 from batch_manager.utils.schema_utils import align_schemas
 from batch_manager.utils.postgres_utils import check_postgres_connection
 from batch_manager.processing.merger import merge_pandas_and_save, merge_spark_and_save
@@ -32,7 +33,7 @@ from batch_manager.analyzing.LA_graphs_script import fetch_graph
 from batch_manager.analyzing.analyzer import analyzer
 from logger import log_writer,log_stream_background
 from io_sockets import register_socket_handlers
-from api.Ext_APIs import ext_api
+from api.STR_link_analysis import STR_link_analysis_api
 import globals #Globally used by multible pages (functions and variables) #Contains the front end url
 
 
@@ -46,7 +47,53 @@ socketio = SocketIO(app, cors_allowed_origins=cors_origins, async_mode="eventlet
 # Register socket
 register_socket_handlers(socketio)
 # Register external API blueprint
-app.register_blueprint(ext_api, url_prefix="/api")
+app.register_blueprint(STR_link_analysis_api, url_prefix="/api")
+
+
+def _is_spark_df(df):
+    return "pyspark.sql.dataframe.DataFrame" in str(type(df))
+
+
+def _dataframe_info_from_df(df, session_id):
+    if df is None:
+        return None
+
+    path_to_save = "public/temp_dfParts/"
+    if isinstance(df, pd.DataFrame):
+        num_rows = len(df)
+        columns = list(df.columns)
+        merge_pandas_and_save([df], path_to_save, session_id)
+    elif _is_spark_df(df):
+        num_rows = df.count()
+        columns = df.columns
+        merge_spark_and_save([df], path_to_save, session_id)
+    else:
+        return None
+
+    return {
+        "columns": columns,
+        "num_columns": len(columns),
+        "num_rows": num_rows,
+        "storage_url": load_temp_config("active_storage_address", session_id),
+        "broker_url": load_temp_config("active_kafka_adress", session_id),
+        "api_url": load_temp_config("active_REST_API", session_id),
+        "topic": load_temp_config("active_kafka_topic", session_id),
+        "tool": load_temp_config("active_tool", session_id),
+        "actions": ["Store data", "Source / Target Relationship", "Link Analysis"],
+        "rules": load_temp_config("rule_names", session_id),
+    }
+
+
+def _source_connected_response(df, session_id, message="Connection established!"):
+    info = _dataframe_info_from_df(df, session_id)
+    if info is None:
+        return jsonify({'status': 'warning', 'message': 'Connection established, but no latest message was found.'}), 200
+    return jsonify({'status': 'success', 'message': message, 'results': info}), 200
+
+
+def _is_kafka_batch_topic(topic):
+    topic_name = str(topic or "")
+    return topic_name.endswith(".batches") or topic_name.endswith("batches")
 
 @app.route('/db/health', methods=['GET'])
 def db_health():
@@ -284,47 +331,72 @@ def init_source():
         return jsonify({'results': str(e), 'message': 'failed!'}), 200
 
 @app.route('/connect_to_source', methods=['POST'])
-def connect_to_source():     
-    data = request.get_json()    
-    address_type = data.get('addressType')
-    address = data.get('address')
-    storage = data.get('storage') #passed hdfs_ip:port
-    session_id = data.get('session_id')
-    #print("connect_to_source:", data)
-    # if not storage: #if hdfs url is not passed, get from configuration file
-    #     hdfs = load_temp_config("active_storage_address",session_id)
-    #     hdfs_port = load_temp_config("hadoop_rcp_port",session_id)
-    #     storage=f"{hdfs}:{hdfs_port}"
-    if address_type == "broker":
-        #checking for broker
-        if kafka_broker("check",address,session_id) is True:
-            #checking HDFS or do something
-            print("broker verified")
-            return jsonify({'status': 'success', 'message': 'Connection established!'}), 200
-        else:
-            return jsonify({'status': 'error', 'message': 'Connection failed!'}), 200
-    elif address_type == "api":
-        #checking for api
-        if rest_api("check",address,session_id) is True:
-            #checking HDFS or do something
-            print("api verified")
-            return jsonify({'status': 'success', 'message': 'Connection established!'}), 200
-        else:
-            return jsonify({'status': 'error', 'message': 'Connection failed!'}), 200
-    elif storage: #if there is hdfs ip from both cases
-        if ":" in storage: #check the port exists
-            source_port = storage.split(":", 1)[1]
-            if source_port != "9870": #if the port is not as expected, return
-                return jsonify({'status': 'Warning', 'message': 'Connection failed! No storage found.'}), 200
-        else:#if the port is not stated
-            hdfs_port = load_temp_config("hadoop_rcp_port",session_id)
-            storage= f"{storage}:{hdfs_port}"  #use the configuration port
+def connect_to_source():
+    data = request.get_json() or {}
+    address_type = data.get('addressType') or data.get('type')
+    address = data.get('address') or data.get('broker') or data.get('broker_url') or data.get('api') or data.get('url')
+    storage = data.get('storage') or data.get('hdfs') #passed hdfs_ip:port
+    topic = data.get('topic') or data.get('kafka_topic')
+    session_id = data.get('session_id') or data.get('source_id')
 
-        #continue to connect
-        if HDFSstorage("check",storage,session_id) is True:
+    if topic and address_type == "api" and not str(address or "").startswith(("http://", "https://")):
+        address_type = "broker"
+
+    if not address_type:
+        if topic:
+            address_type = 'broker'
+        elif data.get('api') or str(address or '').startswith(('http://', 'https://')):
+            address_type = 'api'
+        elif data.get('broker') or address:
+            address_type = 'broker'
+
+    if address_type == "broker":
+        if not address:
+            return jsonify({'status': 'error', 'message': 'Connection failed! Missing broker address.'}), 400
+        if kafka_broker("check", address, session_id, topic=topic) is True:
+            print("broker verified")
+            save_temp_config("active_source_type", "broker", session_id)
+            save_temp_config("active_source_mode", "batch" if _is_kafka_batch_topic(topic) else "realtime", session_id)
+            if topic:
+                try:
+                    if _is_kafka_batch_topic(topic):
+                        df = load_kafka_batch_messages(address, topic, session_id, max_messages=200, max_rows=1000)
+                    else:
+                        df = load_latest_kafka_message(address, topic, session_id)
+                    return _source_connected_response(df, session_id)
+                except Exception as e:
+                    print(f"[Kafka latest message error] {e}")
+                    return jsonify({'status': 'warning', 'message': 'Broker connected, but latest message could not be loaded.'}), 200
             return jsonify({'status': 'success', 'message': 'Connection established!'}), 200
+        return jsonify({'status': 'error', 'message': 'Connection failed!'}), 200
+
+    elif address_type == "api":
+        if not address:
+            return jsonify({'status': 'error', 'message': 'Connection failed! Missing API address.'}), 400
+        if rest_api("check", address, session_id) is True:
+            print("api verified")
+            save_temp_config("active_source_type", "api", session_id)
+            save_temp_config("active_source_mode", "realtime", session_id)
+            try:
+                df = load_realtime_api(address, session_id)
+                return _source_connected_response(df, session_id)
+            except Exception as e:
+                print(f"[API latest message error] {e}")
+                return jsonify({'status': 'warning', 'message': 'API connected, but latest message could not be loaded.'}), 200
+        return jsonify({'status': 'error', 'message': 'Connection failed!'}), 200
+
+    elif storage:
+        if ":" in storage:
+            source_port = storage.split(":", 1)[1]
+            if source_port != "9870":
+                return jsonify({'status': 'Warning', 'message': 'Connection failed! No storage found.'}), 200
         else:
-            return jsonify({'status': 'Warning', 'message': 'Connection failed! No storage found.'}), 200
+            hdfs_port = load_temp_config("hadoop_rcp_port", session_id)
+            storage = f"{storage}:{hdfs_port}"
+
+        if HDFSstorage("check", storage, session_id) is True:
+            return jsonify({'status': 'success', 'message': 'Connection established!'}), 200
+        return jsonify({'status': 'Warning', 'message': 'Connection failed! No storage found.'}), 200
 
     else:
         return jsonify({'status': 'error', 'message': 'Connection failed!'}), 400
@@ -501,9 +573,10 @@ def graph_link():
         print(2)
         session_id = data.get('source_id')
         session_info = _session_store.get(session_id)  # returns None if not found
-        if session_info:
+        str_report_status = globals.str_report_status_registry.get(str(session_id), {})
+        if session_info or str_report_status:
             print(3)
-            return jsonify({'message': 'success!'}), 200  # Background fetch is running
+            return jsonify({'message': 'success!'}), 200  # Background fetch or STR status is ready
         else:
             print(4)
             return jsonify({'message': 'failed!'}), 200  # No background fetch

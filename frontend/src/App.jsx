@@ -1317,11 +1317,17 @@ function Windows({ id, type, isMaximized, isDragging, sessionId, loadscreenText,
                             }
                             else {
                               // Connect logic
-                              const brokerAddress = document.getElementById("source_input_address_text").value;
+                              const sourceAddress = document.getElementById("source_input_address_text").value;
+                              const topic = document.getElementById("source_input_topic_text")?.value || "";
                               const hdfsAddress = document.getElementById("source_storage_address_text").value;
+                              const addressType = document.getElementById("api_address_radio").checked ? "api" : "broker";
                               console.log("session id2",sessionId)
                               windowAction(id, "batch_input_form", "connect", {
-                                broker: brokerAddress,
+                                addressType,
+                                address: sourceAddress,
+                                topic,
+                                broker: addressType === "broker" ? sourceAddress : "",
+                                api: addressType === "api" ? sourceAddress : "",
                                 hdfs: hdfsAddress,
                                 session_id:id                                
                               });
@@ -1336,10 +1342,20 @@ function Windows({ id, type, isMaximized, isDragging, sessionId, loadscreenText,
                               <div className="box_inputs_container">
                                 <input id="broker_address_radio" className="radioinput" type="radio" name="source_input_address_type" defaultChecked />
                                 <label htmlFor="broker_address_radio">Kafka Broker</label>
-                                <input id="api_address_radio" className="radioinput" type="radio" name="source_input_address_type" disabled/>
+                                <input id="api_address_radio" className="radioinput" type="radio" name="source_input_address_type" />
                                 <label htmlFor="api_address_radio">REST API</label>
                               </div>
                               <input id="source_input_address_text" placeholder="Enter Broker/API Address" className="textinput" type="text"
+                              disabled={
+                                windowResponseI === "Connecting..." ? 'True' : 
+                                windowResponseI === "Connection established!" ? 'True': ''
+                              }
+                              style={{
+                                color: windowResponseI === "Connection established!" ? '#AAA' : '',
+                                backgroundColor: windowResponseI === "Connection established!" ? '#EEE' : '',
+                                borderColor: windowResponseI === "Connection established!" ? '#DDD' : ''
+                              }}/>
+                              <input id="source_input_topic_text" placeholder="Kafka topic for realtime broker" className="textinput" type="text"
                               disabled={
                                 windowResponseI === "Connecting..." ? 'True' : 
                                 windowResponseI === "Connection established!" ? 'True': ''
@@ -3003,6 +3019,28 @@ function Root() {
               : w
           )
         );
+        return;
+      }
+
+      if (type === "relationship_graph") {
+        setGraphStatus(prev => ({
+          ...prev,
+          [session_id]: {
+            ...prev[session_id],
+            graph: data
+          }
+        }));
+
+        targetWindows.forEach(w => {
+          const iframe = iframeRefs.current[w.id];
+          if (iframe?.current?.contentWindow) {
+            iframe.current.contentWindow.postMessage(
+              { action: "new_graph", payload: data },
+              "*"
+            );
+          }
+        });
+        return;
       }
     };
 
@@ -3711,9 +3749,28 @@ function Root() {
           })
           .then((res) => res.json())
           .then((data) => {
+            const result = data.results || null;
+            const dataframeInfo = result ? [
+              result.actions || [],
+              result.broker_url || result.api_url || "",
+              result.columns || [],
+              result.num_columns || 0,
+              result.num_rows || 0,
+              result.rules || [],
+              result.storage_url || "",
+              result.tool || "",
+            ] : null;
             setWindows(prev =>
               prev.map(w =>
-                w.id === id ? { ...w, windowResponseI: data.message } : w
+                w.id === id
+                  ? {
+                      ...w,
+                      windowResponseI: data.message,
+                      batchFilesDataframeInfoI: dataframeInfo || w.batchFilesDataframeInfoI,
+                      selectedContent: dataframeInfo ? "batch_input" : w.selectedContent,
+                      selectedSubContent: dataframeInfo ? "batch_input_form_pageIII" : w.selectedSubContent,
+                    }
+                  : w
               )
             );
           })

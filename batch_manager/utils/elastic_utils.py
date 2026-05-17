@@ -14,7 +14,7 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
     payload = {search_column: keyword}
 
     try:
-        print("DF payload:",payload)
+        print("DF payload ES:",payload)
         response = requests.post(API_URL, json=payload, timeout=timeout)
         response.raise_for_status()
         result = response.json()

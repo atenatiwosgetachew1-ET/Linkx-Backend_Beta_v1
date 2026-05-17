@@ -28,11 +28,28 @@ def _append_dataframe(dfs, df, label="dataframe"):
 
 def load_dataframes_for_create_df(data, session_id):
     files = data.get("value", [])
+    address_value = files if isinstance(files, str) else None
     date = data.get("date", None)
     kind = data.get("kind", "")
     df_type = data.get("type")
+    topic = data.get("topic") or data.get("kafka_topic")
+    if kind == "address" and df_type == "api" and topic:
+        df_type = "broker"
     use_spark = True if kind.lower() == "spark" else False
     dfs = []
+
+    if (not files or files == []) and kind != "address":
+        active_source_type = load_temp_config("active_source_type", session_id)
+        if active_source_type in {"broker", "kafka", "api"}:
+            kind = "address"
+            df_type = "broker" if active_source_type in {"broker", "kafka"} else "api"
+            address_value = (
+                load_temp_config("active_kafka_adress", session_id)
+                if df_type == "broker"
+                else load_temp_config("active_REST_API", session_id)
+            )
+            topic = load_temp_config("active_kafka_topic", session_id) if df_type == "broker" else topic
+            files = address_value or []
 
     if kind == "files":
         for file_value in files:
@@ -56,6 +73,11 @@ def load_dataframes_for_create_df(data, session_id):
             "id": "load_sourceData",
             "session_id": session_id,
             "files": files,
+            "address": data.get("address") or data.get("broker_url") or address_value,
+            "broker": data.get("broker") or data.get("broker_url") or (address_value if df_type in {"broker", "kafka"} else None),
+            "topic": topic,
+            "max_messages": data.get("max_messages") or data.get("limit"),
+            "from_beginning": data.get("from_beginning", False),
             "date": date,
             "use_spark": use_spark,
             "type": df_type,

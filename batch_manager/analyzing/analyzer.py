@@ -13,6 +13,7 @@ from connection_utils import tools
 from logger import log_writer
 from batch_manager.analyzing.LA_rules_script import batch_graph_analysis_cdr, batch_graph_analysis_posts, batch_graph_analysis_transactions
 from batch_manager.processing.file_source_loader import load_file
+from batch_manager.processing.realtime_source_loader import records_to_dataframe, iter_kafka_messages, iter_api_messages
 from globals import load_temp_config,_session_store
 
 
@@ -106,6 +107,37 @@ def run_incremental_rule(module, driver, session_id, node_label, batch_id, log_f
     return None
 
 
+def _spark_or_pandas_row_dict(row):
+    if hasattr(row, "asDict"):
+        return row.asDict(recursive=True)
+    if isinstance(row, dict):
+        return row
+    return dict(row)
+
+
+def _clean_neo4j_props(row):
+    return {key: ("" if value is None else value) for key, value in row.items()}
+
+
+def _iter_dataframe_row_batches(df, batch_size, transform=None):
+    if hasattr(df, "to_dict"):
+        iterator = df.to_dict(orient="records")
+    else:
+        iterator = df.toLocalIterator()
+
+    batch = []
+    for row in iterator:
+        record = _spark_or_pandas_row_dict(row)
+        if transform:
+            record = transform(record)
+        batch.append(record)
+        if len(batch) >= batch_size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+
+
 def neo4j_row_data_injector(payload, batch_size=500):
     tool_credentials = payload.get("neo4j_conf")
     df = payload.get("dataframe")
@@ -131,39 +163,40 @@ def neo4j_row_data_injector(payload, batch_size=500):
         log_writer(log_file, f"[{datetime.now()}] [Info] - Injection started for action '{action}'")
 
         if action == "Store data":
-            log_writer(log_file, f"[{datetime.now()}] [Info] - Storing nodes in batches of {batch_size}")
+            log_writer(log_file, f"[{datetime.now()}] [Info] - Storing nodes in Neo4j batches of {batch_size}")
 
-            # Collect rows safely
-            rows = [r.asDict() for r in df.toLocalIterator()]
-            total_rows = len(rows)
-            log_writer(log_file, f"[{datetime.now()}] [Info] - {total_rows} rows collected")
+            def prepare_store_row(row):
+                clean = _clean_neo4j_props(row)
+                clean.setdefault("NodeId", str(uuid.uuid4()))
+                return clean
 
+            total_rows = 0
             with driver.session() as session:
                 session.run("""
                     CREATE CONSTRAINT IF NOT EXISTS FOR (n:Entity) REQUIRE n.NodeId IS UNIQUE
                 """)
 
-                for i in range(0, total_rows, batch_size):
+                for batch_number, batch in enumerate(
+                    _iter_dataframe_row_batches(df, batch_size, transform=prepare_store_row),
+                    start=1,
+                ):
                     if stop_event and stop_event.is_set():
                         log_writer(log_file, f"[{datetime.now()}] [STOP] Node insertion cancelled")
                         break
-
-                    batch = rows[i:i + batch_size]
-                    for r in batch:
-                        r.setdefault("NodeId", str(uuid.uuid4()))
 
                     session.run("""
                         UNWIND $rows AS row
                         MERGE (n:Entity { NodeId: row.NodeId, node_identity: 'Entity Node' })
                         SET n += row
                     """, rows=batch)
+                    total_rows += len(batch)
 
                     log_writer(
                         log_file,
-                        f"[{datetime.now()}] [Info] - Inserted batch {i//batch_size + 1} ({len(batch)} rows)"
+                        f"[{datetime.now()}] [Info] - Inserted Neo4j batch {batch_number} ({len(batch)} rows)"
                     )
             set_session_status(driver, session_id, "READY_FOR_ANALYSIS")
-            log_writer(log_file, f"[{datetime.now()}] [Info] - Node insertion completed successfully")
+            log_writer(log_file, f"[{datetime.now()}] [Info] - Node insertion completed successfully ({total_rows} rows)")
         if action == "Source / Target Relationship":
             source_col = payload.get("source")
             target_col = payload.get("target")
@@ -305,16 +338,10 @@ def neo4j_row_data_injector(payload, batch_size=500):
         if action == "Link Analysis":
             rule = payload.get("rule")
             rule_key = str(rule).strip().lower().replace(' ', '_') if rule else ""
-            log_writer(log_file, f"[{datetime.now()}] [Info] - Preparing Link Analysis data")
+            log_writer(log_file, f"[{datetime.now()}] [Info] - Preparing Link Analysis data in Neo4j batches of {batch_size}")
 
-            # Collect rows from dataframe
-            rows = [r.asDict() for r in df.toLocalIterator()]
-            total_rows = len(rows)
-            log_writer(log_file, f"[{datetime.now()}] [Info] - {total_rows} rows collected for Link Analysis")
-
-            if total_rows == 0:
-                log_writer(log_file, f"[{datetime.now()}] [Info] - No rows to process for Link Analysis")
-                return
+            total_rows = 0
+            batches_inserted = 0
 
             # Delete existing nodes for this session
             with driver.session() as session:
@@ -325,12 +352,6 @@ def neo4j_row_data_injector(payload, batch_size=500):
                 """, session_id=session_id)
                 log_writer(log_file, f"[{datetime.now()}] [Info] - Existing Link Analysis nodes for session '{session_id}' deleted")
 
-            # Prepare clean rows
-            clean_rows = []
-            for r in rows:
-                row = {k: ("" if v is None else v) for k, v in r.items()}
-                row.setdefault("NodeId", str(uuid.uuid4()))
-                clean_rows.append(row)
             # Run rule-specific analysis on whatever was injected
             # ------------------------------------------------------------------------------------------------------------- Identifing rules to label nodes with 1
             #Stored/uploaded rules
@@ -354,30 +375,33 @@ def neo4j_row_data_injector(payload, batch_size=500):
             print(f"Loading rule from {rule_path}")  # debug
             # Insert nodes in batches; run cheap incremental rules after every batch.
 
+            def prepare_link_row(row):
+                clean = _clean_neo4j_props(row)
+                clean.setdefault("NodeId", str(uuid.uuid4()))
+                return clean
+
             with driver.session() as session:
-                for i in range(0, len(clean_rows), batch_size):
+                for batch_number, batch in enumerate(
+                    _iter_dataframe_row_batches(df, batch_size, transform=prepare_link_row),
+                    start=1,
+                ):
                     if stop_event and stop_event.is_set():
-                        log_writer(log_file, f"[{datetime.now()}] [STOP] Insertion stopped at batch {i//batch_size + 1}")
+                        log_writer(log_file, f"[{datetime.now()}] [STOP] Insertion stopped at batch {batch_number}")
                         break
 
-                    batch_number = i // batch_size + 1
-                    batch = clean_rows[i:i + batch_size]
-
-                    for row in batch:
-                        row["batch_id"] = f"{session_id}_{batch_number}"
-                        row["nodes_label"] = node_label
                     batch_id = f"{session_id}_{batch_number}"
-                    # session.run("""
-                    #     UNWIND $rows AS row
-                    #     MERGE (n:{node_label} { NodeId: row.NodeId, node_identity: 'Entity Node' })
-                    #     SET n += row
-                    # """, rows=batch)
+                    for row in batch:
+                        row["batch_id"] = batch_id
+                        row["nodes_label"] = node_label
+
                     query = f"""
                         UNWIND $rows AS row
                         MERGE (n:`{node_label}` {{ NodeId: row.NodeId, node_identity: 'Entity Node' }})
                         SET n += row
                         """
                     session.run(query, rows=batch)
+                    total_rows += len(batch)
+                    batches_inserted = batch_number
 
                     if module:
                         try:
@@ -387,7 +411,7 @@ def neo4j_row_data_injector(payload, batch_size=500):
                                     _session_store[session_id]["live_analysis"] = {
                                         "batch_id": batch_id,
                                         "batch_number": batch_number,
-                                        "total_batches": (total_rows + batch_size - 1) // batch_size,
+                                        "total_batches": None,
                                         "flags": live_counts,
                                         "provisional": True,
                                     }
@@ -403,8 +427,12 @@ def neo4j_row_data_injector(payload, batch_size=500):
 
                     log_writer(
                         log_file,
-                        f"[{datetime.now()}] [Info] Inserted batch {batch_number} ({len(batch)} rows)"
+                        f"[{datetime.now()}] [Info] Inserted Neo4j batch {batch_number} ({len(batch)} rows)"
                     )
+
+            if total_rows == 0:
+                log_writer(log_file, f"[{datetime.now()}] [Info] - No rows to process for Link Analysis")
+                return
             # ---------- FULL-GRAPH RECOMPUTATION ALWAYS RUNS ----------
             log_writer(log_file, f"[{datetime.now()}] [Info] - Starting full-graph recomputation for rule '{rule}'")
 
@@ -426,7 +454,7 @@ def neo4j_row_data_injector(payload, batch_size=500):
                     _session_store[session_id]["live_analysis"] = {
                         "batch_id": None,
                         "batch_number": None,
-                        "total_batches": (total_rows + batch_size - 1) // batch_size,
+                        "total_batches": batches_inserted,
                         "flags": final_counts,
                         "provisional": False,
                     }
@@ -453,10 +481,181 @@ def recover_pending_sessions(driver):
         return [(r["session_id"], r["rule"]) for r in result]
 
 
+
+def _dataframe_to_row_dicts(df):
+    if df is None:
+        return []
+    if hasattr(df, "to_dict"):
+        return df.to_dict(orient="records")
+    if hasattr(df, "toLocalIterator"):
+        return [row.asDict(recursive=True) for row in df.toLocalIterator()]
+    return []
+
+
+def _load_rule_module(rule, session_id):
+    rule_key = str(rule).strip().lower().replace(' ', '_') if rule else ""
+    rules_dir = 'public/temp_rules/'
+    rule_filename = f"{rule_key}_rules.py"
+    session_rule_path = os.path.join(rules_dir, str(session_id), rule_filename)
+    default_rule_path = os.path.join(rules_dir, rule_filename)
+    rule_path = session_rule_path if os.path.exists(session_rule_path) else default_rule_path
+    module, rule_status = check_rule_status(rule_key, rule_path)
+    return rule_key, module, rule_status
+
+
+def realtime_neo4j_message_ingest(payload, df, batch_number):
+    session_id = payload.get("session_id")
+    log_file = payload.get("log_file")
+    action = payload.get("action") or "Link Analysis"
+    rule = payload.get("rule")
+    stop_event = payload.get("stop_event")
+    tool_credentials = payload.get("tool_credentials")
+    rows = _dataframe_to_row_dicts(df)
+
+    if not rows:
+        log_writer(log_file, f"[{datetime.now()}] [Info] - Realtime message normalized to 0 rows; skipping")
+        return
+    if not tool_credentials:
+        log_writer(log_file, f"[{datetime.now()}] [Error] - Missing Neo4j credentials for realtime ingestion")
+        return
+    if stop_event and stop_event.is_set():
+        return
+
+    driver = GraphDatabase.driver(
+        tool_credentials["url"],
+        auth=(tool_credentials["username"], tool_credentials["password"])
+    )
+    batch_id = f"{session_id}_rt_{batch_number}"
+    try:
+        set_session_status(driver, session_id, "INGESTING", rule=rule)
+        clean_rows = []
+        for row in rows:
+            clean = {k: ("" if v is None else v) for k, v in row.items()}
+            clean.setdefault("NodeId", str(uuid.uuid4()))
+            clean["session_id"] = session_id
+            clean["batch_id"] = batch_id
+            clean_rows.append(clean)
+
+        if action == "Source / Target Relationship":
+            source_col = payload.get("source")
+            target_col = payload.get("target")
+            relationship_type = payload.get("relationship") or "HAS_RELATIONSHIP"
+            relationship_type = re.sub(r'[^a-zA-Z0-9_]', '_', relationship_type.strip())
+            relationship_rows = [
+                {
+                    "source": row.get(source_col),
+                    "target": row.get(target_col),
+                    "props": row,
+                }
+                for row in clean_rows
+                if source_col and target_col and row.get(source_col) and row.get(target_col)
+            ]
+            if relationship_rows:
+                with driver.session() as session:
+                    session.run(f"""
+                        UNWIND $rows AS row
+                        MERGE (a:Entity {{`{source_col}`: row.source, session_id: $session_id, node_identity: 'Source Node'}})
+                        SET a += row.props
+                        MERGE (b:Entity {{`{target_col}`: row.target, session_id: $session_id, node_identity: 'Target Node'}})
+                        SET b += row.props
+                        CREATE (a)-[rel:{relationship_type} {{session_id: $session_id, batch_id: $batch_id, weight: 1}}]->(b)
+                    """, rows=relationship_rows, session_id=session_id, batch_id=batch_id)
+            log_writer(log_file, f"[{datetime.now()}] [Info] - Realtime relationship batch {batch_id} ingested ({len(relationship_rows)} rows)")
+            return
+
+        if action == "Store data":
+            with driver.session() as session:
+                session.run("""
+                    UNWIND $rows AS row
+                    MERGE (n:Entity { NodeId: row.NodeId, node_identity: 'Entity Node' })
+                    SET n += row
+                """, rows=clean_rows)
+            log_writer(log_file, f"[{datetime.now()}] [Info] - Realtime storage batch {batch_id} ingested ({len(clean_rows)} rows)")
+            return
+
+        rule_key, module, rule_status = _load_rule_module(rule, session_id)
+        node_label = f"{rule_key}_{session_id}"
+        for row in clean_rows:
+            row["nodes_label"] = node_label
+
+        if session_id in _session_store:
+            _session_store[session_id]["node_label"] = node_label
+
+        with driver.session() as session:
+            query = f"""
+                UNWIND $rows AS row
+                MERGE (n:`{node_label}` {{ NodeId: row.NodeId, node_identity: 'Entity Node' }})
+                SET n += row
+            """
+            session.run(query, rows=clean_rows)
+
+        if module:
+            live_counts = run_incremental_rule(module, driver, session_id, node_label, batch_id, log_file)
+            if session_id in _session_store and live_counts is not None:
+                _session_store[session_id]["live_analysis"] = {
+                    "batch_id": batch_id,
+                    "batch_number": batch_number,
+                    "total_batches": None,
+                    "flags": live_counts,
+                    "provisional": True,
+                }
+            log_writer(log_file, f"[{datetime.now()}] [Info] - Realtime incremental analysis for {batch_id}: {live_counts}")
+        else:
+            log_writer(log_file, f"[{datetime.now()}] [Warning] - {rule_status}")
+    finally:
+        driver.close()
+
+
+def realtime_analyzer(payload):
+    session_id = payload.get("session_id")
+    source_type = payload.get("source_type")
+    stop_event = payload.get("stop_event")
+    log_file = payload.get("log_file")
+    log_writer(log_file, f"[{datetime.now()}] [Info] - Realtime listener starting for {source_type}")
+
+    if payload.get("tool") != "neo4j":
+        log_writer(log_file, f"[{datetime.now()}] [Error] - Realtime ingestion currently requires Neo4j tool integration")
+        return
+
+    try:
+        if source_type == "kafka":
+            broker_url = payload.get("broker_url")
+            topic = payload.get("topic")
+            if not broker_url or not topic:
+                log_writer(log_file, f"[{datetime.now()}] [Error] - Missing Kafka broker or topic for realtime listener")
+                return
+            messages = iter_kafka_messages(broker_url, topic, stop_event=stop_event)
+        elif source_type == "api":
+            api_url = payload.get("api_url")
+            if not api_url:
+                log_writer(log_file, f"[{datetime.now()}] [Error] - Missing API URL for realtime listener")
+                return
+            messages = iter_api_messages(api_url, stop_event=stop_event, interval_seconds=payload.get("api_poll_interval", 5))
+        else:
+            log_writer(log_file, f"[{datetime.now()}] [Error] - Unsupported realtime source type: {source_type}")
+            return
+
+        for batch_number, message in enumerate(messages, start=1):
+            if stop_event and stop_event.is_set():
+                break
+            try:
+                df = records_to_dataframe(message, capitalized_keys_only=(source_type == "kafka"))
+                realtime_neo4j_message_ingest(payload, df, batch_number)
+            except Exception as e:
+                log_writer(log_file, f"[{datetime.now()}] [Error] - Realtime message processing failed: {e}")
+    except Exception as e:
+        log_writer(log_file, f"[{datetime.now()}] [Error] - Realtime listener failed: {e}")
+    finally:
+        log_writer(log_file, f"[{datetime.now()}] [Info] - Realtime listener stopped for {source_type}")
+
+
 # ----------------- Analyzer -----------------
 
 def analyzer(payload):
     print("analyzer called")
+    if payload.get("id") == "realtime_data":
+        realtime_analyzer(payload)
+        return
     session_id = payload.get("session_id")
     stop_event = payload.get("stop_event")
     dataframe_dir = payload.get("dataframe_dir")
@@ -484,6 +683,11 @@ def analyzer(payload):
         if payload.get("tool") == "neo4j":
             print(2)
             driver = tools("neo4j", "check", {"session_id": session_id})
+            if not driver:
+                print(f"[{session_id}] Neo4j driver not found!")
+                log_writer(payload.get("log_file"), f"[{datetime.now()}] [Error] - Neo4j driver not found")
+                return False
+
             pending = recover_pending_sessions(driver)
             for sid, rule in pending:
                 if sid == session_id:
@@ -516,10 +720,6 @@ def analyzer(payload):
 
                 set_session_status(driver, sid, "ANALYZED")
 
-            if not driver:
-                print(f"[{session_id}] Neo4j driver not found!")
-                return
-
             try:
                 params = {
                     "neo4j_conf": payload.get("tool_credentials"),
@@ -536,9 +736,11 @@ def analyzer(payload):
                 }
                 neo4j_row_data_injector(params)
                 print(f"[{session_id}] Batch analysis completed successfully.")
+                return True
             except Exception as e:
                 print(f"[{session_id}] Batch analysis failed: {e}")
                 log_writer(payload.get("log_file"), f"[Error] Analyzing session {session_id} failed {e}")
+                return False
 
 
 

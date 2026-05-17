@@ -1,5 +1,6 @@
 from batch_manager.processing.file_source_loader import load_file
 from batch_manager.processing.api_source_loader import load_api
+from batch_manager.processing.realtime_source_loader import load_kafka_batch_messages
 from batch_manager.processing.hdfs_source_loader import load_source
 from batch_manager.processing.merger import merge_pandas_and_save, merge_spark_and_save
 from batch_manager.processing.session_manager import create_session,start_session,end_session
@@ -12,9 +13,14 @@ from batch_manager.utils.elastic_utils import es_keyword_search
 from py4j.java_gateway import java_import
 import os, pickle
 from datetime import datetime, timedelta
-from globals import load_temp_config
+from globals import load_temp_config, save_temp_config
 import re
 from werkzeug.utils import secure_filename
+
+def _is_kafka_batch_topic(topic):
+    topic_name = str(topic or "")
+    return topic_name.endswith(".batches") or topic_name.endswith("batches")
+
 
 def batch_data_manager(payload):
     action_id = payload.get("id")
@@ -27,13 +33,30 @@ def batch_data_manager(payload):
         return create_session(payload)
     if action_id == "start_session":
         session_id=payload["session_id"]
-        payload["id"]="batch_data"
-        payload["type"]="new"
-        #Loading the merged parquet files onto spark
-        directory ="public/temp_dfParts/merged_dfpart_"+session_id+"/" #Pass only the directory (loads all the files inside it)
-        #dataframe=load_file(directory,session_id,use_spark=True)
-        #print(dataframe)
-        payload["dataframe_dir"]=directory
+        active_source_type = load_temp_config("active_source_type", session_id)
+        active_topic = load_temp_config("active_kafka_topic", session_id)
+        active_source_mode = payload.get("source_mode") or load_temp_config("active_source_mode", session_id)
+        should_listen_realtime = (
+            active_source_type in {"broker", "kafka", "api"}
+            and active_source_mode != "batch"
+            and not _is_kafka_batch_topic(active_topic)
+        )
+        if should_listen_realtime:
+            payload["id"] = "realtime_data"
+            payload["type"] = "listen"
+            payload["source_type"] = "kafka" if active_source_type == "broker" else active_source_type
+            payload["broker_url"] = load_temp_config("active_kafka_adress", session_id)
+            payload["topic"] = active_topic
+            payload["api_url"] = load_temp_config("active_REST_API", session_id)
+            payload["api_poll_interval"] = payload.get("api_poll_interval", 5)
+        else:
+            payload["id"]="batch_data"
+            payload["type"]="new"
+            #Loading the merged parquet files onto spark
+            directory ="public/temp_dfParts/merged_dfpart_"+session_id+"/" #Pass only the directory (loads all the files inside it)
+            #dataframe=load_file(directory,session_id,use_spark=True)
+            #print(dataframe)
+            payload["dataframe_dir"]=directory
         spark_port = load_temp_config("spark_port", session_id)
         active_tool = load_temp_config("active_tool",session_id)
         tool_credentials = load_temp_config("tool_credentials",session_id)
@@ -127,16 +150,51 @@ def batch_data_manager(payload):
             except Exception as e:
                 print("Error in load_file handler:", e)
                 return None
-        elif payload["type"] == "api" and payload["kind"] == "address": #Only for api and brokers
+        elif payload["kind"] == "address" and payload["type"] in {"api", "broker", "kafka"}:
             use_spark = payload.get("use_spark", False)
             session_id = payload["session_id"]
-            url = payload["files"]
-            try:               
-                df = load_api(url, session_id, use_spark)
-                print("df:",df)
+            source_type = payload["type"]
+            if source_type == "api" and payload.get("topic"):
+                source_type = "broker"
+            try:
+                if source_type == "api":
+                    url = payload.get("files") or payload.get("address")
+                    if url:
+                        save_temp_config("active_REST_API", url, session_id)
+                        save_temp_config("active_source_type", "api", session_id)
+                    df = load_api(url, session_id, use_spark=use_spark)
+                else:
+                    broker_url = payload.get("broker") or payload.get("broker_url") or payload.get("address") or payload.get("files")
+                    if isinstance(broker_url, (list, tuple)):
+                        broker_url = broker_url[0] if broker_url else None
+                    topic = payload.get("topic")
+                    if broker_url:
+                        save_temp_config("active_kafka_adress", broker_url, session_id)
+                        save_temp_config("active_source_type", "broker", session_id)
+                    if topic:
+                        save_temp_config("active_kafka_topic", topic, session_id)
+                    if not broker_url:
+                        raise ValueError("Missing Kafka broker address")
+                    if not topic:
+                        raise ValueError("Missing Kafka topic")
+                    is_batch_topic = _is_kafka_batch_topic(topic)
+                    save_temp_config("active_source_mode", "batch" if is_batch_topic else "realtime", session_id)
+                    max_messages = payload.get("max_messages") or payload.get("limit") or (200 if is_batch_topic else 1)
+                    max_rows = payload.get("max_rows") or payload.get("row_limit") or (1000 if is_batch_topic else None)
+                    from_beginning = bool(payload.get("from_beginning", False))
+                    df = load_kafka_batch_messages(
+                        broker_url,
+                        topic,
+                        session_id,
+                        use_spark=use_spark,
+                        max_messages=max_messages,
+                        max_rows=max_rows,
+                        from_beginning=from_beginning,
+                    )
+                print("df:", df)
                 return df
             except Exception as e:
-                print("Error in load_file handler:", e)
+                print("Error in address source handler:", e)
                 return None
         
         elif payload["type"] == "array" and payload["kind"] == "hybrid": # Works with along side # CASE 2 (Fresh meat)-- #For files and keyword search

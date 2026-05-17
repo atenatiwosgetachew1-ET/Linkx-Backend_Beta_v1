@@ -10,6 +10,8 @@ _session_store = {}
 fetch_thread_registry = {}
 sockets_registry = {}
 notifications_registry = {}
+str_report_pending_registry = {}
+str_report_status_registry = {}
 
 def create_file(path, name, type, instant_text):
     output_file = os.path.join(path, f'{name}.{type}')
