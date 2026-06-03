@@ -169,11 +169,12 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
                         WITH
                             type,
                             rels[0] AS rep
+                        WITH type, rep, properties(rep) AS props
                         RETURN
                             type,
                             elementId(rep) AS id,
-                            coalesce(rep.color, '#333') AS color,
-                            coalesce(rep.bgcolor, '#DDD') AS bgcolor
+                            coalesce(props.color, '#333') AS color,
+                            coalesce(props.bgcolor, '#DDD') AS bgcolor
                         ORDER BY type
                         """,
                         session_id=session_id

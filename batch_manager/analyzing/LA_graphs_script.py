@@ -1,6 +1,7 @@
 from globals import create_file,save_temp_config,load_temp_config
 from connection_utils import tools
 import json
+import re
 from flask import jsonify
 
 def build_node_properties_full(node):
@@ -72,18 +73,26 @@ def prepare_graph_data_full(records):
 def fetch_graph(id,action,source_id,value,batch):        
     print(id,source_id,value)
     if id == "relationship":
+        driver = None
         try:
             tool = load_temp_config("tool", source_id)
             driver = tools(tool.lower(), "check", {"session_id": source_id})
 
             nodes = {}
             edges = []
-            rel_type = value
+            rel_type = str(value or "").strip()
             batch_id = batch
             
             if not rel_type:
                 print("No relationship type provided")
                 return {"nodes": [], "edges": [], "error": "No relationship type provided"}
+            if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", rel_type):
+                return {"nodes": [], "edges": [], "error": "Invalid relationship type"}
+            try:
+                graph_limit = int(load_temp_config("graph_fetch_limit", source_id) or 5000)
+            except (TypeError, ValueError):
+                graph_limit = 5000
+            graph_limit = max(1, min(graph_limit, 30000))
             print("dawg:",source_id)
             # query = f"""
             #         MATCH (a)-[r:{rel_type}]->(b)
@@ -95,11 +104,11 @@ def fetch_graph(id,action,source_id,value,batch):
                     MATCH (a)-[r:{rel_type}]->(b)
                     WHERE r.session_id = $source_id
                     RETURN a, r, b
-                    LIMIT 300000
+                    LIMIT $limit
                     """
                   
             with driver.session() as session:
-                for record in session.run(query, source_id=str(source_id)):
+                for record in session.run(query, source_id=str(source_id), limit=graph_limit):
                     a = record["a"]
                     b = record["b"]
                     r = record["r"]
@@ -132,7 +141,8 @@ def fetch_graph(id,action,source_id,value,batch):
             print("Relationship graph error:", e)
             return {"nodes": [], "edges": [], "error": str(e)}
         finally:
-            driver.close()
+            if driver:
+                driver.close()
 
     if id == "uploads":
         pass

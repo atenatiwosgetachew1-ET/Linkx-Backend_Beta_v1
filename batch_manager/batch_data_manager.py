@@ -38,10 +38,20 @@ def batch_data_manager(payload):
         active_source_mode = payload.get("source_mode") or load_temp_config("active_source_mode", session_id)
         dataframe_actions = {"Store data", "Source / Target Relationship", "Link Analysis"}
         explicit_realtime = payload.get("source_mode") == "realtime" or payload.get("listen_realtime") is True
-        dataframe_analysis = payload.get("action") in dataframe_actions and not explicit_realtime
+        explicit_batch = payload.get("source_mode") == "batch" or payload.get("use_dataframe") is True
+        dataframe_ready = load_temp_config("dataframe_ready", session_id) is True
+        active_dataframe_kind = load_temp_config("active_dataframe_kind", session_id)
+        live_address_dataframe = active_dataframe_kind == "address" and active_source_type in {"broker", "kafka", "api"}
+        dataframe_analysis = (
+            payload.get("action") in dataframe_actions
+            and dataframe_ready
+            and not explicit_realtime
+            and (explicit_batch or not live_address_dataframe)
+        )
         should_listen_realtime = (
             active_source_type in {"broker", "kafka", "api"}
             and active_source_mode != "batch"
+            and not explicit_batch
             and not dataframe_analysis
             and not _is_kafka_batch_topic(active_topic)
         )

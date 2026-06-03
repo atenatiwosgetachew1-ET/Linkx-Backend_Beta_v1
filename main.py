@@ -358,6 +358,7 @@ def connect_to_source():
             print("broker verified")
             save_temp_config("active_source_type", "broker", session_id)
             save_temp_config("active_source_mode", "batch" if _is_kafka_batch_topic(topic) else "realtime", session_id)
+            save_temp_config("dataframe_ready", False, session_id)
             if topic:
                 try:
                     if _is_kafka_batch_topic(topic):
@@ -378,6 +379,7 @@ def connect_to_source():
             print("api verified")
             save_temp_config("active_source_type", "api", session_id)
             save_temp_config("active_source_mode", "realtime", session_id)
+            save_temp_config("dataframe_ready", False, session_id)
             try:
                 df = load_realtime_api(address, session_id)
                 return _source_connected_response(df, session_id)

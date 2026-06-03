@@ -7,7 +7,7 @@ from flask import jsonify
 from batch_manager.batch_data_manager import batch_data_manager
 from batch_manager.processing.merger import merge_pandas_and_save, merge_spark_and_save
 from batch_manager.utils.schema_utils import align_schemas
-from globals import load_temp_config
+from globals import load_temp_config, save_temp_config
 
 
 def _is_spark_df(df):
@@ -160,6 +160,8 @@ def create_dataframe_response(data, session_id):
 
         final_columns = list(set(columns_pandas + list(columns_spark)))
         total_rows = num_rows_pandas + num_rows_spark
+        save_temp_config("dataframe_ready", True, session_id)
+        save_temp_config("active_dataframe_kind", data.get("kind"), session_id)
 
         return jsonify({
             "results": {
