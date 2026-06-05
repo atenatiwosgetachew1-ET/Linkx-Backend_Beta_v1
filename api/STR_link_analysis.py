@@ -11,6 +11,7 @@ from batch_manager.services.dataframe_workflow import create_dataframe_response
 from batch_manager.utils.elastic_utils import es_keyword_search
 from batch_manager.utils.notification_utils import emit_status_payload, emit_str_report_link_analysis
 from globals import create_file, load_temp_config, save_temp_config
+from security.payload_validation import COMMON_SCHEMAS, validate_json_payload, validated_json
 
 
 STR_link_analysis_api = Blueprint("STR_link_analysis_api", __name__)
@@ -327,15 +328,13 @@ def _success_response(session_id, entity, frontend_session_id=None):
 
 
 @STR_link_analysis_api.route("/STR_link_analysis", methods=["POST"])
+@validate_json_payload(COMMON_SCHEMAS["str_link_analysis"], error_message="failed!", include_detail=False)
 def STR_link_analysis():
     public_api_key = os.getenv("LINKX_PUBLIC_API_KEY")
     if public_api_key and request.headers.get("X-API-Key") != public_api_key:
         return jsonify({'message': 'unauthorized'}), 401
 
-    data = request.get_json(silent=True)
-
-    if not data:
-        return jsonify({'message': 'failed!'}), 400
+    data = validated_json()
 
     entity = str(data.get("entity", "")).strip().lower()
     type = str(data.get("type", "")).strip().lower()

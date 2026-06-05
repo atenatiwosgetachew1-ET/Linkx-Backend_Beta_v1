@@ -13,6 +13,8 @@ from batch_manager.utils.notification_utils import (
 )
 from globals import load_temp_config,get_or_create_socket_entry,sockets_registry,_session_store
 from connection_utils import tools
+from auth.repository import get_service_account_by_id, get_user_by_id, public_actor
+from auth.tokens import verify_access_token
 
 # check if socket is alive
 def is_socket_alive(sid, socketio_instance=None):
@@ -32,9 +34,25 @@ def register_socket_handlers(socketio: SocketIO):
     print("[str_report_socket] socket handlers registered (socketio ready)")
 
     @socketio.on("connect")
-    def handle_connect():
+    def handle_connect(auth=None):
         sid = request.sid
-        print(f"[str_report_socket] client connected sid={sid}")
+        token = (auth or {}).get("token")
+        payload = verify_access_token(token)
+        actor = None
+        if payload:
+            actor_type = payload.get("actor_type") or "user"
+            if actor_type == "service":
+                actor = get_service_account_by_id(payload.get("sub"))
+            else:
+                actor = get_user_by_id(payload.get("sub"))
+        if not actor:
+            print(f"[str_report_socket] rejected unauthenticated sid={sid}")
+            return False
+
+        entry = get_or_create_socket_entry(sid)
+        entry["actor"] = public_actor(actor)
+        actor_name = actor.get("username") or actor.get("client_id")
+        print(f"[str_report_socket] client connected sid={sid} actor={actor_name}")
 
     # --------------------------
     # NOTIFICATION SUBSCRIBE

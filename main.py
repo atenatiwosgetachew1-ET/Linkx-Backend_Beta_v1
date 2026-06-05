@@ -34,6 +34,10 @@ from batch_manager.analyzing.analyzer import analyzer
 from logger import log_writer,log_stream_background
 from io_sockets import register_socket_handlers
 from api.STR_link_analysis import STR_link_analysis_api
+from auth.decorators import auth_required, current_actor_from_request
+from auth.repository import bind_analysis_session_actor
+from auth.routes import auth_api
+from security.payload_validation import COMMON_SCHEMAS, validate_json_payload, validated_json
 import globals #Globally used by multible pages (functions and variables) #Contains the front end url
 
 
@@ -41,12 +45,14 @@ import globals #Globally used by multible pages (functions and variables) #Conta
 app = Flask(__name__)
 allowed_origins = os.getenv("LINKX_CORS_ORIGINS", "*")
 cors_origins = "*" if allowed_origins == "*" else [origin.strip() for origin in allowed_origins.split(",") if origin.strip()]
-CORS(app, origins=cors_origins)  # Allow frontend
+CORS(app, origins=cors_origins)  # Allow configured clients
 app.secret_key = os.getenv("LINKX_FLASK_SECRET_KEY", "dev-only-change-me")
 app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("LINKX_MAX_UPLOAD_BYTES", "104857600"))
 socketio = SocketIO(app, cors_allowed_origins=cors_origins, async_mode="eventlet") #Socket listners are found inside 'logger.py' page
 # Register socket
 register_socket_handlers(socketio)
+# Register auth API blueprint
+app.register_blueprint(auth_api, url_prefix="/auth")
 # Register external API blueprint
 app.register_blueprint(STR_link_analysis_api, url_prefix="/api")
 
@@ -106,13 +112,18 @@ def db_health():
         return jsonify({'status': 'error'}), 500
 
 @app.route('/init', methods=['POST'])
+@auth_required
+@validate_json_payload(COMMON_SCHEMAS["init"])
 def init():
     print("Initializing ....")
-    data = request.get_json()
+    data = validated_json()
+    current_actor = current_actor_from_request()
     # Check if the config file already exists
     old_session = data.get('existing_session')
     file_path = f'public/temp_config/{old_session}_temp_config.json'    # Check if file exists
     if os.path.isfile(file_path):
+        if not bind_analysis_session_actor(old_session, current_actor):
+            return jsonify({'message': 'forbidden'}), 403
         # if the File exists just return
         configs=load_temp_config("data",old_session)
         return jsonify({'results': old_session, 'configurations': configs, 'message': 'success!'}), 200
@@ -127,6 +138,8 @@ def init():
         configs = get_default_session_config(session_id)
         # Create info file
         create_file(config_folder, f"{session_id}_temp_config", "json", configs)
+        if not bind_analysis_session_actor(session_id, current_actor):
+            return jsonify({'message': 'failed!', 'results': 'Could not bind session to user.'}), 500
         print("config_folder:",config_folder)
         stored_new_configs=load_temp_config("data",session_id)
         return jsonify({'results': session_id, 'configurations': stored_new_configs, 'message': 'success!'}), 200
