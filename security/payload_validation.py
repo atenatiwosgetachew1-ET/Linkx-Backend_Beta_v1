@@ -252,10 +252,20 @@ COMMON_SCHEMAS = {
     "init_source": {
         "type": "object",
         "required": ["session_id", "window_id"],
-        "additionalProperties": False,
+        "additionalProperties": True,
         "properties": {
-            "session_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
-            "window_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+            "session_id": {
+                "anyOf": [
+                    {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+                    {"type": "integer"},
+                ],
+            },
+            "window_id": {
+                "anyOf": [
+                    {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+                    {"type": "integer"},
+                ],
+            },
         },
     },
     "connect_to_source": {

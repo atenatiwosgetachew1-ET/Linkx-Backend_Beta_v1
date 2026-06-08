@@ -37,7 +37,14 @@ from api.STR_link_analysis import STR_link_analysis_api
 from auth.decorators import auth_required, current_actor_from_request
 from auth.repository import bind_analysis_session_actor
 from auth.routes import auth_api
-from security.payload_validation import COMMON_SCHEMAS, validate_json_payload, validated_json
+from security.payload_validation import (
+    COMMON_SCHEMAS,
+    PayloadValidationError,
+    validate_json_payload,
+    validate_payload,
+    validate_uploaded_files,
+    validated_json,
+)
 import globals #Globally used by multible pages (functions and variables) #Contains the front end url
 
 
@@ -56,6 +63,13 @@ app.register_blueprint(auth_api, url_prefix="/auth")
 # Register external API blueprint
 app.register_blueprint(STR_link_analysis_api, url_prefix="/api")
 
+
+
+def _validation_error_response(exc):
+    body = {"message": "validation_error", "detail": exc.message}
+    if exc.field:
+        body["field"] = exc.field
+    return jsonify(body), 400
 
 def _is_spark_df(df):
     return "pyspark.sql.dataframe.DataFrame" in str(type(df))
@@ -152,18 +166,28 @@ def configuration():
     data = {}
     files = {}
     if request.is_json:
-        data = request.get_json()
+        raw_data = request.get_json(silent=True)
+        if raw_data is None or not isinstance(raw_data, dict):
+            return jsonify({'message': 'validation_error', 'detail': 'json_object_required'}), 400
+        try:
+            data = validate_payload(raw_data, COMMON_SCHEMAS["configuration"])
+        except PayloadValidationError as exc:
+            return _validation_error_response(exc)
     else:
         data = request.form.to_dict() #Passed datas
         files = request.files.to_dict()  #Uploaded files -> FileStorage object
         files = {key: file for key, file in files.items() if file and file.filename}
         # If any fields are JSON-encoded strings, try parsing
-        for key, value in data.items():
+        for key, value in list(data.items()):
             try:
                 import json
                 data[key] = json.loads(value)
             except (ValueError, TypeError):
                 pass
+        try:
+            data = validate_payload(data, COMMON_SCHEMAS["configuration"])
+        except PayloadValidationError as exc:
+            return _validation_error_response(exc)
 
     session_id = data.get("session_id")
     if data.get("id") == "load":
@@ -177,15 +201,16 @@ def configuration():
         print("Form fields:", data)
         #uploaded file
         if files:
-            for key, file in files.items():
-                print(f"Uploaded file: {key} -> {file.filename}")
-                if not file.filename or not file.filename.lower().endswith(".json"):
-                    return jsonify({'results': "Rule upload must be a JSON file.", 'message': 'failed!'}), 400
+            try:
+                safe_files = validate_uploaded_files(list(files.values()), allowed_extensions={"json"}, max_files=5)
+            except PayloadValidationError as exc:
+                return _validation_error_response(exc)
+            for file, filename, _ext in safe_files:
+                print(f"Uploaded file: {filename}")
                 #Check uploading folder exists
                 upload_dir = os.path.join("public","temp_uploads")
                 os.makedirs(upload_dir, exist_ok=True)
                 #save upload into Temp folder
-                filename = secure_filename(file.filename)
                 file_path = os.path.join(upload_dir, f"{session_id}_{filename}")
                 file.save(file_path)
                 #Validate rule (the uploaded rule)
@@ -317,9 +342,10 @@ def configuration():
         return jsonify({'results': "unknown action", 'message': 'failed!'}), 400
 
 @app.route('/init_source', methods=['POST'])
+@validate_json_payload(COMMON_SCHEMAS["init_source"])
 def init_source():
     print("Initializing source window....")
-    data = request.get_json()
+    data = validated_json()
     # Check if the config file already exists
     active_session = data.get('session_id')
     window_id = data.get('window_id')
@@ -345,8 +371,9 @@ def init_source():
         return jsonify({'results': str(e), 'message': 'failed!'}), 200
 
 @app.route('/connect_to_source', methods=['POST'])
+@validate_json_payload(COMMON_SCHEMAS["connect_to_source"])
 def connect_to_source():
-    data = request.get_json() or {}
+    data = validated_json() or {}
     address_type = data.get('addressType') or data.get('type')
     address = data.get('address') or data.get('broker') or data.get('broker_url') or data.get('api') or data.get('url')
     storage = data.get('storage') or data.get('hdfs') #passed hdfs_ip:port
@@ -418,8 +445,9 @@ def connect_to_source():
         return jsonify({'status': 'error', 'message': 'Connection failed!'}), 400
 
 @app.route('/disconnect_source', methods=['POST'])
+@validate_json_payload(COMMON_SCHEMAS["disconnect_source"])
 def disconnect_source():
-    data = request.get_json()
+    data = validated_json()
     broker = data.get('broker')
     hdfs = data.get('hdfs')
     session_id = data.get('session_id')
@@ -436,8 +464,9 @@ def disconnect_source():
         return jsonify({'status': 'error', 'message': 'Disconnecting failed!'}), 400
 
 @app.route('/connect_to_tool', methods=['POST'])
+@validate_json_payload(COMMON_SCHEMAS["connect_to_tool"])
 def connect_to_tool():
-    data = request.get_json()
+    data = validated_json()
     tool_name = data.get('tool_name')
     url= data.get('url')
     username = data.get('username')
@@ -453,8 +482,9 @@ def connect_to_tool():
         return jsonify({'status': 'error', 'message': 'Not connected!'}), 400
 
 @app.route('/disconnect_tool', methods=['POST'])
+@validate_json_payload(COMMON_SCHEMAS["disconnect_tool"])
 def disconnect_tool():
-    data = request.get_json()
+    data = validated_json()
     session_id = data.get('source_id')
     tool_name = data.get('tool_name')
     payload={"session_id":session_id}
@@ -470,8 +500,17 @@ def disconnect_tool():
 def upload_batch_files():
     if 'file' not in request.files:
         return jsonify({"message": "No file part in the request"}), 400
-    files = request.files.getlist('file')
-    session_id = request.form.get("session_id")
+    try:
+        form_data = validate_payload({"session_id": request.form.get("session_id")}, COMMON_SCHEMAS["upload_batch_files"])
+        safe_files = validate_uploaded_files(
+            request.files.getlist('file'),
+            allowed_extensions={"csv", "json", "parquet", "xlsx"},
+            max_files=25,
+        )
+    except PayloadValidationError as exc:
+        return _validation_error_response(exc)
+
+    session_id = form_data["session_id"]
     upload_folder = "public/temp_uploads/"
 
     # Create info file
@@ -479,15 +518,7 @@ def upload_batch_files():
     # Save session path in config (assuming you have this function)
     save_temp_config("files_storage_path", upload_folder, session_id)
 
-    for file in files:
-        if file.filename == '':
-            return jsonify({"message": "No file selected"}), 400
-        if "." not in file.filename:
-            return jsonify({"message": "Unsupported file type: missing extension"}), 400
-        ext = file.filename.rsplit('.', 1)[1].lower()
-        allowed_ext = {"csv", "json", "parquet", "xlsx"}
-        if ext not in allowed_ext:
-            return jsonify({"message": f"Unsupported file type: .{ext}"}), 400
+    for file, _filename, _ext in safe_files:
         saved_path = save_uploaded_file(file, upload_folder, filename_prefix=session_id, session_id=session_id)
         if not saved_path:
             return jsonify({"message": "Failed to save file"}), 500
@@ -495,8 +526,9 @@ def upload_batch_files():
     return jsonify({"message": "success!"}), 200
 
 @app.route('/live_batch_files', methods=['POST'])
+@validate_json_payload(COMMON_SCHEMAS["live_batch_files"])
 def live_batch_files():
-    data = request.get_json()
+    data = validated_json()
     print("1:",data)
     action_id = data.get('id')
     session_id = data.get('session_id')
@@ -584,8 +616,9 @@ def live_batch_files():
         return jsonify({'results': None, 'error': f'Invalid action: {action_id}'}), 400
 
 @app.route('/graph_link', methods=['POST'])
+@validate_json_payload(COMMON_SCHEMAS["graph_link"])
 def graph_link():
-    data = request.get_json()
+    data = validated_json()
     id = data.get('id')
     print(1)
     if id == "link":
@@ -604,42 +637,41 @@ def graph_link():
         return {'results': "No action!", "error": "Invalid Request"}, 400
 
 @app.route('/get_graph', methods=['POST'])
+@validate_json_payload(COMMON_SCHEMAS["get_graph"])
 def get_graph():
     print("fetch_graph_called")
-    if request.is_json: #If Json is sent
-        data = request.get_json()   
-        id = data.get('id')
-        source_id = data.get('source_id','')
-        #session_id = data.get('source_id')
-        # Take everything after the first underscore
-        #session_suffix = session_id.split('_', 1)[1] if session_id and '_' in session_id else None
-        # if id == "status":
-        #     try:
-        #         informationfile=fetch_graph(id,"overview",source_id,"","json");
-        #         if informationfile is not None:
-        #             return jsonify({'results': informationfile, 'message': 'success!'}), 200
-        #         else:
-        #             return jsonify({'results': "", 'message': 'failed!'}), 200
-        #     except Exception as e:
-        #         return jsonify({'exception': str(e), 'message': 'failed!'}), 200
-        if id == "relationship":
-            try:
-                print("id:",id)
-                graph = fetch_graph(id,"generate",data["source_id"],data["relationship"],"html") #Static limit is 100000 
+    data = validated_json()
+    id = data.get('id')
+    source_id = data.get('source_id','')
+    #session_id = data.get('source_id')
+    # Take everything after the first underscore
+    #session_suffix = session_id.split('_', 1)[1] if session_id and '_' in session_id else None
+    # if id == "status":
+    #     try:
+    #         informationfile=fetch_graph(id,"overview",source_id,"","json");
+    #         if informationfile is not None:
+    #             return jsonify({'results': informationfile, 'message': 'success!'}), 200
+    #         else:
+    #             return jsonify({'results': "", 'message': 'failed!'}), 200
+    #     except Exception as e:
+    #         return jsonify({'exception': str(e), 'message': 'failed!'}), 200
+    if id == "relationship":
+        try:
+            print("id:",id)
+            graph = fetch_graph(id,"generate",data["source_id"],data["relationship"],"html") #Static limit is 100000
 
-                # if fetch_graph returned a tuple (Flask Response), return it directly
-                if isinstance(graph, tuple):
-                    return graph
-                # otherwise add file info
-                graph["file"] = "graphs_template"
-                return jsonify({'results': graph, 'message': 'success!'}), 200
+            # if fetch_graph returned a tuple (Flask Response), return it directly
+            if isinstance(graph, tuple):
+                return graph
+            # otherwise add file info
+            graph["file"] = "graphs_template"
+            return jsonify({'results': graph, 'message': 'success!'}), 200
 
-            except Exception as e:
-                print(e)
-                return jsonify({'exception': str(e), 'message': 'failed!'}), 500
+        except Exception as e:
+            print(e)
+            return jsonify({'exception': str(e), 'message': 'failed!'}), 500
 
-    else: #If form is sent              
-        return jsonify({'results': "", 'message': 'failed!'}), 200
+    return jsonify({'results': "", 'message': 'failed!'}), 200
 
 
 if __name__ == "__main__":
