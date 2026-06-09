@@ -1,0 +1,14 @@
+[Unit]
+Description=LinkX Factory Cleanup Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/linkx-backend/service_factory
+EnvironmentFile=/var/www/linkx-backend/service_factory/.env
+ExecStart=/var/www/linkx-backend/service_factory/.venv/bin/python -m batch_manager.jobs.cleanup_neo4j_session --help
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

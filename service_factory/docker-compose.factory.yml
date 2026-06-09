@@ -1,0 +1,60 @@
+services:
+  api:
+    build: .
+    command: python main.py
+    env_file:
+      - .env
+    environment:
+      PORT: 8100
+      LINKX_POSTGRES_DSN: postgresql://linkx:linkx@postgres:5432/linkx
+      LINKX_REDIS_URL: redis://redis:6379/0
+      LINKX_ARTIFACT_ROOT: /mnt/linkx-artifacts
+    ports:
+      - "8100:8100"
+    volumes:
+      - .:/app
+      - linkx_artifacts:/mnt/linkx-artifacts
+    depends_on:
+      - postgres
+      - redis
+
+  worker:
+    build: .
+    command: python -m batch_manager.jobs.cleanup_neo4j_session --help
+    env_file:
+      - .env
+    environment:
+      LINKX_POSTGRES_DSN: postgresql://linkx:linkx@postgres:5432/linkx
+      LINKX_REDIS_URL: redis://redis:6379/0
+      LINKX_ARTIFACT_ROOT: /mnt/linkx-artifacts
+    volumes:
+      - .:/app
+      - linkx_artifacts:/mnt/linkx-artifacts
+    profiles:
+      - workers
+    depends_on:
+      - postgres
+      - redis
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: linkx
+      POSTGRES_USER: linkx
+      POSTGRES_PASSWORD: linkx
+    ports:
+      - "55432:5432"
+    volumes:
+      - linkx_postgres:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    ports:
+      - "16379:6379"
+    volumes:
+      - linkx_redis:/data
+
+volumes:
+  linkx_artifacts:
+  linkx_postgres:
+  linkx_redis:

@@ -1,0 +1,14 @@
+[Unit]
+Description=LinkX Factory API Service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/linkx-backend/service_factory
+EnvironmentFile=/var/www/linkx-backend/service_factory/.env
+ExecStart=/var/www/linkx-backend/service_factory/.venv/bin/python -u main.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

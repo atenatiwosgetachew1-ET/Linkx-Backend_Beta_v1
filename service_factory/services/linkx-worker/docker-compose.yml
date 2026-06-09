@@ -1,0 +1,11 @@
+services:
+  linkx-worker:
+    build: .
+    env_file:
+      - .env
+    volumes:
+      - linkx_worker_artifacts:/mnt/linkx-artifacts
+    restart: unless-stopped
+
+volumes:
+  linkx_worker_artifacts:

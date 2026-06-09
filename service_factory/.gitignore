@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+runtime/
+public/temp_config/
+public/temp_uploads/
+public/temp_dfParts/
+public/temp_logs/
+public/temp_rules/

@@ -1,0 +1,49 @@
+services:
+  neo4j:
+    image: neo4j:5-community
+    container_name: linkx-neo4j
+    env_file:
+      - .env
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - linkx_neo4j_data:/data
+      - linkx_neo4j_logs:/logs
+      - ./neo4j/import:/var/lib/neo4j/import
+      - ./neo4j/plugins:/plugins
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:7474 || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  cleanup-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.cleanup
+    env_file:
+      - .env
+    volumes:
+      - linkx_artifacts:/mnt/linkx-artifacts
+    depends_on:
+      - neo4j
+    restart: unless-stopped
+
+  cleanup-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.cleanup
+    command: python -m linkx_cleanup.scheduler
+    env_file:
+      - .env
+    depends_on:
+      - cleanup-worker
+    restart: unless-stopped
+
+volumes:
+  linkx_neo4j_data:
+  linkx_neo4j_logs:
+  linkx_artifacts:
