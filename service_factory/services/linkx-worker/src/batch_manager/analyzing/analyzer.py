@@ -118,6 +118,12 @@ def _clean_neo4j_props(row):
     return {key: ("" if value is None else value) for key, value in row.items()}
 
 
+def _relationship_node_props(row):
+    props = dict(row)
+    props.pop("NodeId", None)
+    return props
+
+
 def _iter_dataframe_row_batches(df, batch_size, transform=None):
     if hasattr(df, "to_dict"):
         iterator = df.to_dict(orient="records")
@@ -188,7 +194,8 @@ def neo4j_row_data_injector(payload, batch_size=500):
 
                     session.run("""
                         UNWIND $rows AS row
-                        MERGE (n:Entity { NodeId: row.NodeId, node_identity: 'Entity Node' })
+                        MERGE (n:Entity { NodeId: row.NodeId })
+                        ON CREATE SET n.node_identity = 'Entity Node'
                         SET n += row
                     """, rows=batch)
                     total_rows += len(batch)
@@ -236,7 +243,7 @@ def neo4j_row_data_injector(payload, batch_size=500):
                 if r[source_col] == r[target_col]:
                     continue
 
-                row_dict = sanitize_props(r.asDict(recursive=True))
+                row_dict = _relationship_node_props(sanitize_props(r.asDict(recursive=True)))
                 key = (r[source_col], r[target_col])
 
                 if rel_counter[key]["weight"] == 0:
@@ -400,7 +407,8 @@ def neo4j_row_data_injector(payload, batch_size=500):
 
                     query = f"""
                         UNWIND $rows AS row
-                        MERGE (n:`{node_label}` {{ NodeId: row.NodeId, node_identity: 'Entity Node' }})
+                        MERGE (n:`{node_label}` {{ NodeId: row.NodeId }})
+                        ON CREATE SET n.node_identity = 'Entity Node'
                         SET n += row
                         """
                     session.run(query, rows=batch)
@@ -540,7 +548,7 @@ def realtime_neo4j_message_ingest(payload, df, batch_number):
                 {
                     "source": row.get(source_col),
                     "target": row.get(target_col),
-                    "props": row,
+                    "props": _relationship_node_props(row),
                 }
                 for row in clean_rows
                 if source_col and target_col and row.get(source_col) and row.get(target_col)
@@ -562,7 +570,8 @@ def realtime_neo4j_message_ingest(payload, df, batch_number):
             with driver.session() as session:
                 session.run("""
                     UNWIND $rows AS row
-                    MERGE (n:Entity { NodeId: row.NodeId, node_identity: 'Entity Node' })
+                    MERGE (n:Entity { NodeId: row.NodeId })
+                    ON CREATE SET n.node_identity = 'Entity Node'
                     SET n += row
                 """, rows=clean_rows)
             log_writer(log_file, f"[{datetime.now()}] [Info] - Realtime storage batch {batch_id} ingested ({len(clean_rows)} rows)")
@@ -579,7 +588,8 @@ def realtime_neo4j_message_ingest(payload, df, batch_number):
         with driver.session() as session:
             query = f"""
                 UNWIND $rows AS row
-                MERGE (n:`{node_label}` {{ NodeId: row.NodeId, node_identity: 'Entity Node' }})
+                MERGE (n:`{node_label}` {{ NodeId: row.NodeId }})
+                ON CREATE SET n.node_identity = 'Entity Node'
                 SET n += row
             """
             session.run(query, rows=clean_rows)
