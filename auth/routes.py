@@ -1,6 +1,7 @@
 import hmac
 import os
 
+import requests
 from flask import Blueprint, jsonify, request
 
 from .decorators import auth_required, current_actor_from_request, permission_required
@@ -17,6 +18,7 @@ from .repository import (
     list_service_accounts,
     list_users,
     public_actor,
+    reserve_sso_code_exchange,
     update_service_account,
     update_user,
     upsert_external_user,
@@ -26,6 +28,96 @@ from security.payload_validation import COMMON_SCHEMAS, validate_json_payload, v
 
 
 auth_api = Blueprint("auth_api", __name__)
+
+
+def _allowed_sso_clients():
+    raw = os.getenv("LINKX_SSO_ALLOWED_CLIENTS", "linkx_frontend")
+    return {item.strip() for item in raw.split(",") if item.strip()}
+
+
+def _parent_sso_url():
+    return os.getenv("LINKX_PARENT_SSO_EXCHANGE_URL") or os.getenv("LINKX_PARENT_SSO_INTROSPECTION_URL")
+
+
+def _validate_parent_sso_code(code, state, client, redirect_uri):
+    parent_url = _parent_sso_url()
+    if not parent_url:
+        return None, {"message": "sso_disabled"}, 503
+
+    payload = {
+        "code": code,
+        "state": state,
+        "client": client,
+        "redirect_uri": redirect_uri,
+    }
+    headers = {"Accept": "application/json"}
+    parent_client_id = os.getenv("LINKX_PARENT_SSO_CLIENT_ID")
+    parent_client_secret = os.getenv("LINKX_PARENT_SSO_CLIENT_SECRET")
+    bearer_token = os.getenv("LINKX_PARENT_SSO_BEARER_TOKEN")
+    if parent_client_id:
+        headers["X-Linkx-Client-Id"] = parent_client_id
+    if parent_client_secret:
+        headers["X-Linkx-Client-Secret"] = parent_client_secret
+    if bearer_token:
+        headers["Authorization"] = f"Bearer {bearer_token}"
+
+    timeout = float(os.getenv("LINKX_PARENT_SSO_TIMEOUT_SECONDS", "5"))
+    try:
+        response = requests.post(parent_url, json=payload, headers=headers, timeout=timeout)
+    except requests.RequestException:
+        return None, {"message": "sso_parent_unreachable"}, 502
+
+    if response.status_code >= 500:
+        return None, {"message": "sso_parent_error"}, 502
+    if response.status_code in {400, 401, 403, 404, 409, 410, 422}:
+        return None, {"message": "invalid_sso_code"}, 401
+    if response.status_code >= 400:
+        return None, {"message": "sso_parent_rejected"}, 401
+
+    try:
+        parent_data = response.json()
+    except ValueError:
+        return None, {"message": "sso_parent_invalid_response"}, 502
+
+    valid = parent_data.get("valid")
+    active = parent_data.get("active")
+    if valid is False or active is False:
+        return None, {"message": "invalid_sso_code"}, 401
+    return parent_data, None, None
+
+
+def _parent_user_identity(parent_data):
+    user_data = parent_data.get("user") if isinstance(parent_data.get("user"), dict) else parent_data
+    claims = parent_data.get("claims") if isinstance(parent_data.get("claims"), dict) else {}
+    username = (
+        user_data.get("username")
+        or user_data.get("preferred_username")
+        or user_data.get("email")
+        or user_data.get("sub")
+        or claims.get("username")
+        or claims.get("preferred_username")
+        or claims.get("email")
+        or claims.get("sub")
+    )
+    display_name = (
+        user_data.get("display_name")
+        or user_data.get("name")
+        or claims.get("display_name")
+        or claims.get("name")
+        or username
+    )
+    roles = (
+        parent_data.get("roles")
+        or parent_data.get("parent_roles")
+        or user_data.get("roles")
+        or user_data.get("parent_roles")
+        or claims.get("roles")
+        or claims.get("parent_roles")
+        or []
+    )
+    if isinstance(roles, str):
+        roles = [roles]
+    return str(username or "").strip(), display_name, roles
 
 
 @auth_api.route("/login", methods=["POST"])
@@ -98,6 +190,51 @@ def parent_token():
         "token": create_access_token(user),
         "actor": public_actor(user),
         "user": public_actor(user),
+    }), 200
+
+
+@auth_api.route("/sso/exchange", methods=["POST"])
+@validate_json_payload(COMMON_SCHEMAS["sso_exchange"])
+def sso_exchange():
+    data = validated_json()
+    code = str(data.get("code") or "").strip()
+    state = str(data.get("state") or "").strip()
+    client = str(data.get("client") or "").strip()
+    redirect_uri = str(data.get("redirect_uri") or "").strip()
+
+    if client not in _allowed_sso_clients():
+        return jsonify({"message": "unauthorized_client"}), 403
+    if not _parent_sso_url():
+        return jsonify({"message": "sso_disabled"}), 503
+
+    try:
+        ttl_seconds = int(os.getenv("LINKX_SSO_CODE_TTL_SECONDS", "120"))
+    except (TypeError, ValueError):
+        ttl_seconds = 120
+    if not reserve_sso_code_exchange(code, state=state, client=client, ttl_seconds=ttl_seconds):
+        return jsonify({"message": "sso_code_already_used"}), 409
+
+    parent_data, error_body, status = _validate_parent_sso_code(code, state, client, redirect_uri)
+    if error_body:
+        return jsonify(error_body), status
+
+    parent_state = parent_data.get("state") if isinstance(parent_data, dict) else None
+    if parent_state and not hmac.compare_digest(str(parent_state), state):
+        return jsonify({"message": "invalid_sso_state"}), 401
+
+    username, display_name, roles = _parent_user_identity(parent_data)
+    if not username:
+        return jsonify({"message": "sso_parent_missing_identity"}), 502
+    if not isinstance(roles, list):
+        return jsonify({"message": "sso_parent_invalid_roles"}), 502
+
+    user = upsert_external_user(username, display_name=display_name, parent_roles=roles)
+    public = public_actor(user)
+    return jsonify({
+        "message": "success!",
+        "token": create_access_token(user),
+        "actor": public,
+        "user": public,
     }), 200
 
 

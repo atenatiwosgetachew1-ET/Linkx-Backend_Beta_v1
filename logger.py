@@ -36,13 +36,21 @@ def log_stream_background(socketio, session_id, sid, filename, stop_event):
 
     try:
         with open(file_path, 'r') as log_file:
-            log_file.seek(0, os.SEEK_END)
+            # Replay existing content first so late subscribers still see logs.
+            for line in log_file:
+                if stop_event.is_set():
+                    return
+                socketio.emit(
+                    'stream_logs',
+                    {'data': line, 'session_id': session_id, 'socket_id': sid, 'replay': True},
+                    to=sid
+                )
             while not stop_event.is_set():
                 line = log_file.readline()
                 if line:
                     socketio.emit(
-                        'stream_logs', 
-                        {'data': line, 'session_id': session_id, 'socket_id': sid}, 
+                        'stream_logs',
+                        {'data': line, 'session_id': session_id, 'socket_id': sid},
                         to=sid
                     )
                 else:

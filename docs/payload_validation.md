@@ -54,6 +54,7 @@ Some legacy public endpoints keep their older response body for compatibility. F
 | Endpoint | Schema |
 | --- | --- |
 | `POST /auth/login` | `login` |
+| `POST /auth/sso/exchange` | `sso_exchange` |
 | `POST /auth/service-token` | `service_token` |
 | `POST /auth/parent-token` | `parent_token` |
 | `POST /auth/verify` | `verify` |
@@ -62,7 +63,20 @@ Some legacy public endpoints keep their older response body for compatibility. F
 | `POST /auth/admin/users` | `user_create` |
 | `PATCH /auth/admin/users/<id>` | `user_update` |
 | `POST /init` | `init` |
+| `POST /configuration` | `configuration` plus JSON rule-file upload validation |
+| `POST /init_source` | `init_source` |
+| `POST /connect_to_source` | `connect_to_source` |
+| `POST /disconnect_source` | `disconnect_source` |
+| `POST /connect_to_tool` | `connect_to_tool` |
+| `POST /disconnect_tool` | `disconnect_tool` |
+| `POST /upload_batch_files` | `upload_batch_files` plus file extension/count/name validation |
+| `POST /live_batch_files` | `live_batch_files` |
+| `POST /graph_link` | `graph_link` |
+| `POST /get_graph` | `get_graph` |
 | `POST /api/STR_link_analysis` | `str_link_analysis` |
+| Socket.IO `connect` | `socket_connect` |
+| Socket.IO session subscriptions | `socket_session` |
+| Socket.IO log stream events | `socket_log_stream`, `socket_log_unplug` |
 
 ## Integration Notes
 
@@ -71,6 +85,8 @@ Some legacy public endpoints keep their older response body for compatibility. F
 - Use `Authorization: Bearer <token>` for protected endpoints before payload validation becomes relevant.
 - Admin/user management screens should show validation errors from `detail` when available.
 - Sibling services should keep service-account payloads small and explicit: `client_id`, `client_secret`, and the requested API payload only.
+- Multipart endpoints validate form fields separately from uploaded files. File contents are still parsed by their domain-specific readers after filename and extension checks.
+- Socket.IO events reject non-object payloads and invalid session/file/token fields before starting subscriptions or background log streams.
 
 ## Developer Pattern
 

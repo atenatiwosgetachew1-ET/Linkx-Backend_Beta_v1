@@ -1,9 +1,12 @@
+import hashlib
+import hmac
 import json
 import os
 import secrets
 
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from batch_manager.config_defaults import get_default_session_config
 from batch_manager.utils.postgres_utils import get_postgres_connection
 
 
@@ -51,6 +54,7 @@ DEFAULT_ROLE_PERMISSIONS = {
     ],
     "analyst": [
         "config:read",
+        "config:write",
         "source:create",
         "source:connect",
         "source:disconnect",
@@ -91,6 +95,7 @@ DEFAULT_SERVICE_PERMISSIONS = {
 def ensure_auth_schema():
     with get_postgres_connection() as conn:
         with conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(2749115301)")
             cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id BIGSERIAL PRIMARY KEY,
@@ -154,8 +159,26 @@ def ensure_auth_schema():
                 created_by_type TEXT,
                 created_by_id BIGINT,
                 parent_session_id TEXT,
+                config_snapshot_json JSONB,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """)
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS user_configurations (
+                user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                config_json JSONB NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """)
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS sso_code_exchanges (
+                code_hash TEXT PRIMARY KEY,
+                state_hash TEXT,
+                client TEXT,
+                expires_at TIMESTAMPTZ NOT NULL,
+                used_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
             """)
             _migrate_analysis_sessions(cur)
@@ -172,6 +195,7 @@ def _migrate_analysis_sessions(cur):
     cur.execute("ALTER TABLE analysis_sessions ADD COLUMN IF NOT EXISTS created_by_type TEXT")
     cur.execute("ALTER TABLE analysis_sessions ADD COLUMN IF NOT EXISTS created_by_id BIGINT")
     cur.execute("ALTER TABLE analysis_sessions ADD COLUMN IF NOT EXISTS parent_session_id TEXT")
+    cur.execute("ALTER TABLE analysis_sessions ADD COLUMN IF NOT EXISTS config_snapshot_json JSONB")
 
 
 def _seed_roles_permissions(cur):
@@ -380,6 +404,37 @@ def _upsert_service_account(cur, client_id, client_secret, permissions, display_
     return service_id
 
 
+def _sso_hash(value):
+    secret = (os.getenv("LINKX_SSO_CODE_HASH_SECRET") or os.getenv("LINKX_FLASK_SECRET_KEY") or "dev-only-change-me").encode("utf-8")
+    return hmac.new(secret, str(value or "").encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def reserve_sso_code_exchange(code, state=None, client=None, ttl_seconds=120):
+    ensure_auth_schema()
+    try:
+        ttl_seconds = int(ttl_seconds)
+    except (TypeError, ValueError):
+        ttl_seconds = 120
+    ttl_seconds = max(30, min(ttl_seconds, 300))
+    code_hash = _sso_hash(code)
+    state_hash = _sso_hash(state) if state else None
+    with get_postgres_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM sso_code_exchanges WHERE expires_at < NOW()")
+            cur.execute(
+                """
+                INSERT INTO sso_code_exchanges (code_hash, state_hash, client, expires_at)
+                VALUES (%s, %s, %s, NOW() + (%s * INTERVAL '1 second'))
+                ON CONFLICT (code_hash) DO NOTHING
+                RETURNING code_hash
+                """,
+                (code_hash, state_hash, client, ttl_seconds),
+            )
+            inserted = cur.fetchone()
+        conn.commit()
+    return inserted is not None
+
+
 def authenticate_user(username, password):
     ensure_auth_schema()
     user = get_user_by_username(username)
@@ -551,6 +606,92 @@ def upsert_external_user(username, display_name=None, parent_roles=None):
     return get_user_by_id(user_id)
 
 
+def _config_from_db(value):
+    if isinstance(value, str):
+        return json.loads(value)
+    return value or {}
+
+
+def _default_user_config(user_id):
+    config = get_default_session_config(f"user_{user_id}")
+    config["user_id"] = str(user_id)
+    return config
+
+
+def get_or_create_user_configuration(user_id):
+    ensure_auth_schema()
+    user_id = int(user_id)
+    with get_postgres_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT config_json FROM user_configurations WHERE user_id = %s",
+                (user_id,),
+            )
+            row = cur.fetchone()
+            if row:
+                return _config_from_db(row[0])
+
+            config = _default_user_config(user_id)
+            cur.execute(
+                """
+                INSERT INTO user_configurations (user_id, config_json)
+                VALUES (%s, %s::jsonb)
+                ON CONFLICT (user_id) DO NOTHING
+                RETURNING config_json
+                """,
+                (user_id, json.dumps(config)),
+            )
+            inserted = cur.fetchone()
+        conn.commit()
+    return _config_from_db(inserted[0]) if inserted else get_user_configuration(user_id)
+
+
+def get_user_configuration(user_id):
+    ensure_auth_schema()
+    with get_postgres_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT config_json FROM user_configurations WHERE user_id = %s",
+                (int(user_id),),
+            )
+            row = cur.fetchone()
+    return _config_from_db(row[0]) if row else None
+
+
+def update_user_configuration(user_id, config):
+    ensure_auth_schema()
+    if not isinstance(config, dict):
+        raise ValueError("config must be a dict")
+    config = dict(config)
+    config["user_id"] = str(user_id)
+    with get_postgres_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO user_configurations (user_id, config_json, updated_at)
+                VALUES (%s, %s::jsonb, NOW())
+                ON CONFLICT (user_id) DO UPDATE
+                SET config_json = EXCLUDED.config_json,
+                    updated_at = NOW()
+                RETURNING config_json
+                """,
+                (int(user_id), json.dumps(config)),
+            )
+            row = cur.fetchone()
+        conn.commit()
+    return _config_from_db(row[0])
+
+
+def build_actor_session_config(session_id, actor):
+    if actor and actor.get("actor_type") == "user":
+        config = dict(get_or_create_user_configuration(actor["id"]))
+        config["user_id"] = str(actor["id"])
+    else:
+        config = get_default_session_config(session_id)
+    config["session_id"] = session_id
+    return config
+
+
 def get_user_by_username(username):
     with get_postgres_connection() as conn:
         with conn.cursor() as cur:
@@ -708,7 +849,7 @@ def bind_analysis_session(session_id, user_id):
     return bind_analysis_session_actor(session_id, {"actor_type": "user", "id": user_id})
 
 
-def bind_analysis_session_actor(session_id, actor, parent_session_id=None):
+def bind_analysis_session_actor(session_id, actor, parent_session_id=None, config_snapshot=None):
     ensure_auth_schema()
     actor_type = actor.get("actor_type")
     actor_id = actor.get("id")
@@ -724,11 +865,16 @@ def bind_analysis_session_actor(session_id, actor, parent_session_id=None):
                 owner_service_id,
                 created_by_type,
                 created_by_id,
-                parent_session_id
+                parent_session_id,
+                config_snapshot_json
             )
-            VALUES (%s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
             ON CONFLICT (session_id) DO UPDATE
-            SET last_seen_at = NOW()
+            SET last_seen_at = NOW(),
+                config_snapshot_json = COALESCE(
+                    analysis_sessions.config_snapshot_json,
+                    EXCLUDED.config_snapshot_json
+                )
             WHERE
                 (analysis_sessions.owner_user_id IS NOT DISTINCT FROM EXCLUDED.owner_user_id)
                 AND (analysis_sessions.owner_service_id IS NOT DISTINCT FROM EXCLUDED.owner_service_id)
@@ -740,6 +886,7 @@ def bind_analysis_session_actor(session_id, actor, parent_session_id=None):
                 actor_type,
                 actor_id,
                 parent_session_id,
+                json.dumps(config_snapshot) if config_snapshot is not None else None,
             ))
             row = cur.fetchone()
         conn.commit()

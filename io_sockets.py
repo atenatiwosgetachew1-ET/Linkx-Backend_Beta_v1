@@ -6,6 +6,7 @@ import globals
 
 from logger import log_stream_background 
 from batch_manager.utils.database_utils import graph_status_stream
+from batch_manager.batch_data_manager import _build_default_tool_credentials
 from batch_manager.utils.notification_utils import (
     set_notification_socketio,
     subscribe_str_report_session,
@@ -15,6 +16,7 @@ from globals import load_temp_config,get_or_create_socket_entry,sockets_registry
 from connection_utils import tools
 from auth.repository import get_service_account_by_id, get_user_by_id, public_actor
 from auth.tokens import verify_access_token
+from security.payload_validation import COMMON_SCHEMAS, PayloadValidationError, validate_payload
 
 # check if socket is alive
 def is_socket_alive(sid, socketio_instance=None):
@@ -36,7 +38,11 @@ def register_socket_handlers(socketio: SocketIO):
     @socketio.on("connect")
     def handle_connect(auth=None):
         sid = request.sid
-        token = (auth or {}).get("token")
+        auth_data = _validated_socket_payload(auth or {}, "socket_connect", "connect")
+        if not auth_data:
+            print(f"[str_report_socket] rejected invalid connect payload sid={sid}")
+            return False
+        token = auth_data.get("token")
         payload = verify_access_token(token)
         actor = None
         if payload:
@@ -54,15 +60,26 @@ def register_socket_handlers(socketio: SocketIO):
         actor_name = actor.get("username") or actor.get("client_id")
         print(f"[str_report_socket] client connected sid={sid} actor={actor_name}")
 
+    def _validated_socket_payload(data, schema_name, source_event):
+        try:
+            if data is None:
+                data = {}
+            if not isinstance(data, dict):
+                raise PayloadValidationError("socket_payload_object_required")
+            return validate_payload(data, COMMON_SCHEMAS[schema_name])
+        except PayloadValidationError as exc:
+            print(f"[str_report_socket] {source_event} ignored: {exc.message}")
+            return None
+
     # --------------------------
     # NOTIFICATION SUBSCRIBE
     # --------------------------
     def _handle_str_report_subscription(data, source_event):
         sid = request.sid
-        session_id = data.get("session_id") if data else None
-        if not session_id:
-            print(f"[str_report_socket] {source_event} sid={sid} ignored: missing session_id")
+        data = _validated_socket_payload(data, "socket_session", source_event)
+        if not data:
             return
+        session_id = str(data.get("session_id") or data.get("source_id"))
 
         entry = get_or_create_socket_entry(sid)
         subscribe_str_report_session(session_id, sid)
@@ -85,7 +102,8 @@ def register_socket_handlers(socketio: SocketIO):
     @socketio.on('notification_unsubscribe')
     def handle_notification_unsubscribe(data):
         sid = request.sid
-        session_id = data.get("session_id") if data else None
+        data = _validated_socket_payload(data, "socket_session", "notification_unsubscribe")
+        session_id = str(data.get("session_id") or data.get("source_id")) if data else None
         entry = sockets_registry.get(sid, {})
         sessions = entry.get("notification_sessions")
         if sessions and session_id:
@@ -96,9 +114,12 @@ def register_socket_handlers(socketio: SocketIO):
     # --------------------------
     @socketio.on('log_stream_plug')
     def handle_log_start(data):
-        filename = data.get('filename')
-        session_id = data.get('session_id')
         sid = request.sid
+        data = _validated_socket_payload(data, "socket_log_stream", "log_stream_plug")
+        if not data:
+            return
+        filename = data.get('filename') or data.get('log_file')
+        session_id = str(data.get('session_id') or data.get('source_id'))
         print(
             f"[str_report_socket] log_stream_plug sid={sid} "
             f"session_id={session_id} filename={filename}"
@@ -123,10 +144,14 @@ def register_socket_handlers(socketio: SocketIO):
     def handle_log_stop(*args, **kwargs):
         data = args[0] if args else None  # Extract payload if provided
         sid = request.sid
+        if data is not None:
+            data = _validated_socket_payload(data, "socket_log_unplug", "log_stream_unplug")
+            if data is None:
+                return
         entry = sockets_registry.get(sid, {})
     
-        if data and "filename" in data:
-            filename = data["filename"]
+        if data and ("filename" in data or "log_file" in data):
+            filename = data.get("filename") or data.get("log_file")
             log_streams = entry.get("log_streams", {})
             log_entry = log_streams.get(filename)
             if log_entry:
@@ -157,7 +182,7 @@ def register_socket_handlers(socketio: SocketIO):
     # @socketio.on('graph_info_subscribe')
     # def handle_graph_info_subscribe(data):
     #     sid = request.sid
-    #     session_id = data.get("session_id")
+    #     session_id = str(data.get("session_id") or data.get("source_id"))
     
     #     if not session_id:
     #         return
@@ -208,11 +233,13 @@ def register_socket_handlers(socketio: SocketIO):
     @socketio.on('graph_status_subscribe')
     def handle_graph_status_subscribe(data):
         sid = request.sid
-        session_id = data.get("session_id")
-        if not session_id:
+        data = _validated_socket_payload(data, "socket_session", "graph_status_subscribe")
+        if not data:
             return
+        session_id = str(data.get("session_id") or data.get("source_id"))
 
         print(f"[str_report_socket] graph_status_subscribe sid={sid} session_id={session_id}")
+        socketio.emit("status", {"type": "subscribed", "session_id": session_id}, to=sid)
 
         entry = get_or_create_socket_entry(sid)
         replayed_status_count = flush_status_pending(session_id, sid)
@@ -242,20 +269,26 @@ def register_socket_handlers(socketio: SocketIO):
 
 
 
-        tool = load_temp_config("tool", session_id)
+        tool = load_temp_config("tool", session_id) or load_temp_config("active_tool", session_id)
         if not tool:
-            print("tool not found")
+            socketio.emit("status", {"type": "error", "error": "Tool not configured", "session_id": session_id}, to=sid)
             return
 
-        driver = tools(tool.lower(), "check", {"session_id": session_id})
-        session_info = _session_store.get(session_id)
-        if not session_info:
-            if replayed_status_count == 0:
-                socketio.emit("status", {"type": "waiting", "session_id": session_id}, to=sid)
-            return
-
-        stop_event = threading.Event()
         tool_credentials = load_temp_config("tool_credentials", session_id)
+        if not tool_credentials:
+            tool_credentials = _build_default_tool_credentials(session_id, tool)
+        if not load_temp_config("tool_credentials", session_id) and tool_credentials:
+            from globals import save_temp_config
+            save_temp_config("tool_credentials", tool_credentials, session_id)
+            save_temp_config("tool", tool, session_id)
+
+        driver = tools(str(tool).lower(), "check", {"session_id": session_id})
+        if not driver:
+            socketio.emit("status", {"type": "error", "error": "Tool connection unavailable", "session_id": session_id}, to=sid)
+            return
+
+        session_info = _session_store.get(session_id) or {}
+        stop_event = threading.Event()
         graph_entry = {
             "task": None,
             "stop_event": stop_event,
@@ -283,9 +316,10 @@ def register_socket_handlers(socketio: SocketIO):
     @socketio.on('graph_status_unsubscribe')
     def handle_graph_status_unsubscribe(data):
         sid = request.sid
+        data = _validated_socket_payload(data, "socket_session", "graph_status_unsubscribe")
         entry = sockets_registry.get(sid, {})
 
-        session_id = data.get("session_id") if data else None
+        session_id = str(data.get("session_id") or data.get("source_id")) if data else None
         if session_id:
             graph_entry = entry.get("graph_statuses", {}).get(session_id)
             if graph_entry:

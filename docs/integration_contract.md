@@ -75,6 +75,66 @@ Use the token on protected calls:
 Authorization: Bearer <user_token>
 ```
 
+
+
+## Frontend SSO Code Exchange
+
+For the frontend SSO redirect/postMessage flow:
+
+```http
+POST /auth/sso/exchange
+Content-Type: application/json
+```
+
+Request:
+
+```json
+{
+  "code": "<one-time-code-from-parent-project>",
+  "state": "<csrf-state-or-correlation-id>",
+  "client": "linkx_frontend",
+  "redirect_uri": "https://linkx.example.com/path"
+}
+```
+
+Response shape matches /auth/login:
+
+```json
+{
+  "message": "success!",
+  "token": "<linkx_user_token>",
+  "user": {
+    "id": 1,
+    "username": "user",
+    "display_name": "User",
+    "roles": ["analyst"],
+    "permissions": ["graph:read"]
+  }
+}
+```
+
+Backend behavior:
+
+- Linkx validates code, state, client, and redirect_uri with the parent backend over server-to-server HTTP.
+- Linkx does not trust frontend-decoded JWTs.
+- Linkx stores a hash of each exchanged code in PostgreSQL and rejects replay with 409 sso_code_already_used.
+- Code lifetime is controlled by LINKX_SSO_CODE_TTL_SECONDS, clamped to 30-300 seconds. Use 30-120 seconds in production.
+- Parent roles are mapped with the existing Linkx mapping: team_leader -> admin, analyst -> analyst, viewer -> viewer.
+
+Required/optional config:
+
+```text
+LINKX_PARENT_SSO_EXCHANGE_URL       required parent server-to-server validation URL
+LINKX_PARENT_SSO_INTROSPECTION_URL  fallback alias if EXCHANGE_URL is not set
+LINKX_SSO_ALLOWED_CLIENTS           optional comma list, default linkx_frontend
+LINKX_SSO_CODE_TTL_SECONDS          optional, default 120
+LINKX_SSO_CODE_HASH_SECRET          optional HMAC secret for stored code hashes
+LINKX_PARENT_SSO_CLIENT_ID          optional parent client id header
+LINKX_PARENT_SSO_CLIENT_SECRET      optional parent client secret header
+LINKX_PARENT_SSO_BEARER_TOKEN       optional bearer token for parent validation
+LINKX_PARENT_SSO_TIMEOUT_SECONDS    optional, default 5
+```
+
 ## Parent Role Exchange
 
 For the parent project or parent gateway to exchange a verified parent identity for a Linkx token:

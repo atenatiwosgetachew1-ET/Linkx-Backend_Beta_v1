@@ -142,6 +142,17 @@ COMMON_SCHEMAS = {
             "password": {"type": "string", "minLength": 1, "maxLength": 1024},
         },
     },
+    "sso_exchange": {
+        "type": "object",
+        "required": ["code", "state", "client", "redirect_uri"],
+        "additionalProperties": False,
+        "properties": {
+            "code": {"type": "string", "minLength": 1, "maxLength": 2048},
+            "state": {"type": "string", "minLength": 1, "maxLength": 512},
+            "client": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+            "redirect_uri": {"type": "string", "minLength": 1, "maxLength": 2048},
+        },
+    },
     "service_token": {
         "type": "object",
         "required": ["client_id", "client_secret"],
@@ -173,10 +184,11 @@ COMMON_SCHEMAS = {
     },
     "init": {
         "type": "object",
-        "additionalProperties": False,
+        "additionalProperties": True,
         "properties": {
             "id": {"type": "string", "maxLength": 64},
-            "existing_session": {"type": ["string", "null"], "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]*$"},
+            "existing_session": {"type": ["string", "number", "null"], "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]*$"},
+            "session_id": {"type": ["string", "number", "null"], "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]*$"},
         },
     },
     "service_account_create": {
@@ -235,6 +247,7 @@ COMMON_SCHEMAS = {
             "session_id": {"type": "string", "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
             "str_id": {"type": "string", "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
             "frontend_session_id": {"type": "string", "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+            "source_mode": {"type": "string", "enum": ["auto", "both", "ctr_only", "kafka_only"]},
             "date": {"type": ["string", "null"], "maxLength": 64},
         },
     },
@@ -251,7 +264,7 @@ COMMON_SCHEMAS = {
     },
     "init_source": {
         "type": "object",
-        "required": ["session_id", "window_id"],
+        "required": ["session_id"],
         "additionalProperties": True,
         "properties": {
             "session_id": {
@@ -264,6 +277,14 @@ COMMON_SCHEMAS = {
                 "anyOf": [
                     {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
                     {"type": "integer"},
+                    {"type": "null"},
+                ],
+            },
+            "source_id": {
+                "anyOf": [
+                    {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+                    {"type": "integer"},
+                    {"type": "null"},
                 ],
             },
         },
@@ -299,14 +320,30 @@ COMMON_SCHEMAS = {
     },
     "connect_to_tool": {
         "type": "object",
-        "required": ["tool_name", "url", "username", "password", "source_id"],
-        "additionalProperties": False,
+        "required": ["url", "username", "password"],
+        "additionalProperties": True,
         "properties": {
-            "tool_name": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9_.:-]+$"},
+            "id": {"type": "string", "maxLength": 64},
+            "tool_name": {"type": ["string", "null"], "maxLength": 64, "pattern": "^[A-Za-z0-9_.:-]*$"},
+            "tool": {"type": ["string", "null"], "maxLength": 64, "pattern": "^[A-Za-z0-9_.:-]*$"},
+            "name": {"type": ["string", "null"], "maxLength": 64, "pattern": "^[A-Za-z0-9_.:-]*$"},
             "url": {"type": "string", "minLength": 1, "maxLength": 2048},
             "username": {"type": "string", "minLength": 1, "maxLength": 255},
             "password": {"type": "string", "minLength": 1, "maxLength": 2048},
-            "source_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+            "source_id": {
+                "anyOf": [
+                    {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+                    {"type": "integer"},
+                    {"type": "null"}
+                ]
+            },
+            "session_id": {
+                "anyOf": [
+                    {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+                    {"type": "integer"},
+                    {"type": "null"}
+                ]
+            },
         },
     },
     "disconnect_tool": {
@@ -341,16 +378,21 @@ COMMON_SCHEMAS = {
     },
     "graph_link": {
         "type": "object",
-        "required": ["id", "source_id"],
-        "additionalProperties": False,
+        "required": ["id"],
+        "additionalProperties": True,
+        "anyOf": [
+            {"required": ["source_id"]},
+            {"required": ["session_id"]},
+        ],
         "properties": {
-            "id": {"type": "string", "enum": ["link"]},
+            "id": {"type": "string", "enum": ["link", "graph_link"]},
             "source_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+            "session_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
         },
     },
     "get_graph": {
         "type": "object",
-        "required": ["id", "source_id"],
+        "required": ["id", "source_id", "relationship"],
         "additionalProperties": False,
         "properties": {
             "id": {"type": "string", "enum": ["relationship"]},
@@ -366,17 +408,38 @@ COMMON_SCHEMAS = {
     },
     "socket_session": {
         "type": "object",
-        "required": ["session_id"],
-        "additionalProperties": False,
-        "properties": {"session_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"}},
+        "additionalProperties": True,
+        "anyOf": [
+            {"required": ["session_id"]},
+            {"required": ["source_id"]},
+        ],
+        "properties": {
+            "session_id": {"type": ["string", "integer"], "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+            "source_id": {"type": ["string", "integer"], "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+        },
     },
     "socket_log_stream": {
         "type": "object",
-        "required": ["session_id", "filename"],
-        "additionalProperties": False,
+        "additionalProperties": True,
+        "anyOf": [
+            {"required": ["session_id", "filename"]},
+            {"required": ["source_id", "filename"]},
+            {"required": ["session_id", "log_file"]},
+            {"required": ["source_id", "log_file"]},
+        ],
         "properties": {
-            "session_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
-            "filename": {"type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[A-Za-z0-9_.:-]+$"},
+            "session_id": {"type": ["string", "integer"], "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+            "source_id": {"type": ["string", "integer"], "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+            "filename": {"type": "string", "minLength": 1, "maxLength": 255, "pattern": r"^[A-Za-z0-9_.:\[\]-]+$"},
+            "log_file": {"type": "string", "minLength": 1, "maxLength": 255, "pattern": r"^[A-Za-z0-9_.:\[\]-]+$"},
+        },
+    },
+    "socket_log_unplug": {
+        "type": "object",
+        "additionalProperties": True,
+        "properties": {
+            "filename": {"type": "string", "minLength": 1, "maxLength": 255, "pattern": r"^[A-Za-z0-9_.:\[\]-]+$"},
+            "log_file": {"type": "string", "minLength": 1, "maxLength": 255, "pattern": r"^[A-Za-z0-9_.:\[\]-]+$"},
         },
     },
 }

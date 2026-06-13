@@ -35,8 +35,15 @@ def get_graph_metadata(driver, session_id, tool_credentials=None):
         property_keys = [
             record["key"]
             for record in session.run(
-                "MATCH (n) WHERE n.batch_id STARTS WITH $session_id UNWIND keys(n) AS key RETURN DISTINCT key",
-                session_id=session_id
+                """
+                MATCH (n)
+                WHERE n.session_id = $session_id OR n.batch_id STARTS WITH $session_id
+                WITH n LIMIT 500
+                UNWIND keys(n) AS key
+                RETURN DISTINCT key
+                ORDER BY key
+                """,
+                session_id=session_id,
             )
         ]
 
@@ -64,7 +71,7 @@ def get_graph_metadata(driver, session_id, tool_credentials=None):
     }
 
 
-def _fetch_relationship_graph(driver, session_id, relationship_type=None, limit=300000):
+def _fetch_relationship_graph(driver, session_id, relationship_type=None, limit=1000):
     rel_filter = "AND type(r) = $relationship_type" if relationship_type else ""
     query = f"""
         MATCH (a)-[r]->(b)
@@ -119,6 +126,75 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
     last_rel_hash = None
     last_graph_hash = None
 
+    def emit_metadata_once():
+        metadata = get_graph_metadata(driver, session_id, tool_credentials)
+        registry_entry["static_infos"] = metadata
+        socketio.emit(
+            "status",
+            {"type": "metadata", "data": metadata, "session_id": session_id},
+            to=sid,
+        )
+
+    def fetch_relationship_summaries():
+        with driver.session() as session:
+            result = session.run(
+                """
+                MATCH ()-[r]->()
+                WHERE r.session_id = $session_id
+                RETURN
+                    type(r) AS type,
+                    count(r) AS count,
+                    coalesce(min(properties(r).color), "#333") AS color,
+                    coalesce(min(properties(r).bgcolor), "#DDD") AS bgcolor
+                ORDER BY type
+                """,
+                session_id=session_id,
+            )
+            return [{
+                "id": r["type"],
+                "type": r["type"],
+                "count": r["count"],
+                "color": r["color"] or "#333",
+                "bgcolor": r["bgcolor"] or "#DDD",
+            } for r in result]
+
+    def emit_relationships_once():
+        relationships = fetch_relationship_summaries()
+        registry_entry["latest_relationships"] = relationships
+        socketio.emit(
+            "status",
+            {"type": "relationships", "data": relationships, "session_id": session_id},
+            to=sid,
+        )
+        socketio.emit(
+            "status",
+            {
+                "type": "metadata",
+                "data": {
+                    "sourceId": session_id,
+                    "user": tool_credentials.get("username") if tool_credentials else None,
+                    "total_relationships": sum(int(r.get("count") or 0) for r in relationships),
+                    "relationship_labels": [r.get("type") for r in relationships],
+                    "partial": True,
+                    "live_analysis": _session_store.get(session_id, {}).get("live_analysis"),
+                },
+                "session_id": session_id,
+            },
+            to=sid,
+        )
+        return relationships
+
+    try:
+        initial_relationships = emit_relationships_once()
+        last_rel_hash = hash(tuple((r["id"], r["type"], r["color"], r["bgcolor"]) for r in initial_relationships))
+    except Exception as e:
+        socketio.emit("status", {"type": "error", "error": f"Relationships error: {e}", "session_id": session_id}, to=sid)
+
+    try:
+        emit_metadata_once()
+    except Exception as e:
+        socketio.emit("status", {"type": "error", "error": f"Metadata error: {e}", "session_id": session_id}, to=sid)
+
     # -------------------------
     # Metadata loop (every 5s)
     # -------------------------
@@ -158,34 +234,7 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
         nonlocal last_rel_hash
         while not stop_event.is_set():
             try:
-                with driver.session() as session:
-                    result = session.run(
-                        """
-                        MATCH ()-[r]->()
-                        WHERE r.session_id = $session_id
-                        WITH
-                            type(r) AS type,
-                            collect(r) AS rels
-                        WITH
-                            type,
-                            rels[0] AS rep
-                        WITH type, rep, properties(rep) AS props
-                        RETURN
-                            type,
-                            elementId(rep) AS id,
-                            coalesce(props.color, '#333') AS color,
-                            coalesce(props.bgcolor, '#DDD') AS bgcolor
-                        ORDER BY type
-                        """,
-                        session_id=session_id
-                    )
-
-                    relationships = [{
-                        "id": r["id"],
-                        "type": r["type"],
-                        "color": r["color"] or "#333",
-                        "bgcolor": r["bgcolor"] or "#DDD",
-                    } for r in result]
+                relationships = fetch_relationship_summaries()
 
                 # only emit if changed
                 new_hash = hash(tuple((r["id"], r["type"], r["color"], r["bgcolor"]) for r in relationships))
@@ -226,7 +275,7 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
             try:
                 session_info = _session_store.get(session_id, {})
                 relationship_type = primary_rel_type or session_info.get("primary_rel_type")
-                graph = _fetch_relationship_graph(driver, session_id, relationship_type=relationship_type)
+                graph = _fetch_relationship_graph(driver, session_id, relationship_type=relationship_type, limit=1000)
                 new_hash = hash((
                     tuple(sorted(node.get("id") for node in graph["nodes"])),
                     tuple(sorted(edge.get("id") for edge in graph["edges"])),

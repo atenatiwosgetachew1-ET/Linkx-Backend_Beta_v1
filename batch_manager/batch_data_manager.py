@@ -22,6 +22,27 @@ def _is_kafka_batch_topic(topic):
     return topic_name.endswith(".batches") or topic_name.endswith("batches")
 
 
+def _build_default_tool_credentials(session_id, active_tool):
+    if active_tool != "neo4j":
+        return None
+    protocol = load_temp_config("active_tool_protocol", session_id)
+    username = load_temp_config("active_tool_username", session_id)
+    password = load_temp_config("active_tool_password", session_id)
+    port = load_temp_config("tool_protocol_port", session_id)
+    if not protocol or not username or not password:
+        return None
+    url = str(protocol).rstrip("/")
+    host_part = url.rsplit("/", 1)[-1]
+    if port and ":" not in host_part:
+        url = f"{url}:{port}"
+    return {
+        "url": url,
+        "username": username,
+        "password": password,
+        "session_id": session_id,
+    }
+
+
 def batch_data_manager(payload):
     action_id = payload.get("id")
     session_id = payload.get("session_id")
@@ -74,6 +95,8 @@ def batch_data_manager(payload):
         spark_port = load_temp_config("spark_port", session_id)
         active_tool = load_temp_config("active_tool",session_id)
         tool_credentials = load_temp_config("tool_credentials",session_id)
+        if not tool_credentials:
+            tool_credentials = _build_default_tool_credentials(session_id, active_tool)
         payload["spark_conf"] = {
             "storage_ip": storage_ip,
             "spark_port": spark_port

@@ -35,7 +35,13 @@ from logger import log_writer,log_stream_background
 from io_sockets import register_socket_handlers
 from api.STR_link_analysis import STR_link_analysis_api
 from auth.decorators import auth_required, current_actor_from_request
-from auth.repository import bind_analysis_session_actor
+from auth.repository import (
+    actor_has_permission,
+    bind_analysis_session_actor,
+    build_actor_session_config,
+    can_access_analysis_session_actor,
+    update_user_configuration,
+)
 from auth.routes import auth_api
 from security.payload_validation import (
     COMMON_SCHEMAS,
@@ -133,7 +139,7 @@ def init():
     data = validated_json()
     current_actor = current_actor_from_request()
     # Check if the config file already exists
-    old_session = data.get('existing_session')
+    old_session = data.get('existing_session') or data.get('session_id')
     file_path = f'public/temp_config/{old_session}_temp_config.json'    # Check if file exists
     if os.path.isfile(file_path):
         if not bind_analysis_session_actor(old_session, current_actor):
@@ -149,10 +155,10 @@ def init():
         min_value = 0
         session_id = random.randint(min_value, max_value - 1)
         config_folder = "public/temp_config/"
-        configs = get_default_session_config(session_id)
+        configs = build_actor_session_config(str(session_id), current_actor)
         # Create info file
         create_file(config_folder, f"{session_id}_temp_config", "json", configs)
-        if not bind_analysis_session_actor(session_id, current_actor):
+        if not bind_analysis_session_actor(session_id, current_actor, config_snapshot=configs):
             return jsonify({'message': 'failed!', 'results': 'Could not bind session to user.'}), 500
         print("config_folder:",config_folder)
         stored_new_configs=load_temp_config("data",session_id)
@@ -162,6 +168,7 @@ def init():
         return jsonify({'results': str(e), 'message': 'failed!'}), 200
 
 @app.route('/configuration', methods=['POST'])
+@auth_required
 def configuration():
     data = {}
     files = {}
@@ -190,7 +197,15 @@ def configuration():
             return _validation_error_response(exc)
 
     session_id = data.get("session_id")
-    if data.get("id") == "load":
+    current_actor = current_actor_from_request()
+    action = data.get("id")
+    required_permission = "config:read" if action == "load" else "config:write"
+    if not actor_has_permission(current_actor, required_permission):
+        return jsonify({"message": "forbidden", "permission": required_permission}), 403
+    if not can_access_analysis_session_actor(session_id, current_actor):
+        return jsonify({"message": "forbidden"}), 403
+
+    if action == "load":
         try:
             config_data = load_temp_config("all", session_id)
             # config_data is already the dict inside "value"
@@ -255,6 +270,8 @@ def configuration():
 
                         # Merge back into configuration
                         save_temp_config("all", config_dict, session_id)
+                        if current_actor.get("actor_type") == "user":
+                            update_user_configuration(current_actor["id"], config_dict)
 
                         return jsonify({
                             'results': "",
@@ -278,6 +295,8 @@ def configuration():
                 else:
                     config_dict[key] = value
             save_temp_config("all", config_dict, session_id)
+            if current_actor.get("actor_type") == "user":
+                update_user_configuration(current_actor["id"], config_dict)
         return jsonify({
             'results': "",
             'configurations': config_dict,
@@ -332,6 +351,8 @@ def configuration():
                     removed_paths.append(pyc_path)
 
         save_temp_config("all", config_dict, session_id)
+        if current_actor.get("actor_type") == "user":
+            update_user_configuration(current_actor["id"], config_dict)
         return jsonify({
             'results': {'removed_rule': rule_name, 'removed_files': removed_paths},
             'configurations': config_dict,
@@ -348,7 +369,7 @@ def init_source():
     data = validated_json()
     # Check if the config file already exists
     active_session = data.get('session_id')
-    window_id = data.get('window_id')
+    window_id = data.get('window_id') or data.get('source_id') or 'source'
     config_folder = "public/temp_config"
     file_path = f'{config_folder}/{window_id}_{active_session}_temp_config.json'    # Check if file exists
     if os.path.isfile(file_path):
@@ -356,16 +377,16 @@ def init_source():
         return jsonify({'message': 'success!'}), 200
     try:#if the configuration file of that specific window doesn't exist, then check for the initial configuration file and do a duplication
         file_path = f'{config_folder}/{active_session}_temp_config.json'    # Check if file exists
-        if os.path.isfile(file_path):#create a duplication of the configuration file as a duplication that represent the specific window id             
-            # duplicate the file
-            # duplicated file with window_id prefix
-            duplicated_file = os.path.join(
-                config_folder, f"{window_id}_{active_session}_temp_config.json"
-            )
-            shutil.copyfile(file_path, duplicated_file)
-            return jsonify({'message': 'success!'}), 200
-        else:
-            return jsonify({'results': "Base session config not found", 'message': 'failed!'}), 404
+        if not os.path.isfile(file_path):
+            configs = get_default_session_config(active_session)
+            create_file(config_folder, f"{active_session}_temp_config", "json", configs)
+
+        # duplicate the file with window_id prefix
+        duplicated_file = os.path.join(
+            config_folder, f"{window_id}_{active_session}_temp_config.json"
+        )
+        shutil.copyfile(file_path, duplicated_file)
+        return jsonify({'message': 'success!'}), 200
     except Exception as e:
         print(e)
         return jsonify({'results': str(e), 'message': 'failed!'}), 200
@@ -467,11 +488,11 @@ def disconnect_source():
 @validate_json_payload(COMMON_SCHEMAS["connect_to_tool"])
 def connect_to_tool():
     data = validated_json()
-    tool_name = data.get('tool_name')
+    tool_name = str(data.get('tool_name') or data.get('tool') or data.get('name') or 'neo4j').strip().lower()
     url= data.get('url')
     username = data.get('username')
     password = data.get('password')
-    session_id = data.get('source_id')
+    session_id = data.get('source_id') or data.get('session_id') or data.get('window_id')
     payload={"url":url,"username":username,"password":password,"session_id":session_id} 
     if url and username and password:
         if tools(tool_name,"connect",payload) is True:
@@ -584,14 +605,17 @@ def live_batch_files():
     # START SESSION
     # -----------------------------
     elif action_id == "stream":
-        values=data.get("value") or {}    
+        values = data.get("value") or {}
+        if not isinstance(values, dict):
+            return jsonify({'results': None, 'message': 'Stream value must be an object'}), 400
         #Create the session instance
         payload = {"id": "create_session", "session_id": session_id}
         session = batch_data_manager(payload)
         #Start the session
         if session is True:
-            values["id"]="start_session"
-            payload=values
+            payload = dict(values)
+            payload["id"] = "start_session"
+            payload["session_id"] = session_id
             stream = batch_data_manager(payload)
             if stream is not None:
                 print("stream:",stream)
@@ -619,22 +643,25 @@ def live_batch_files():
 @validate_json_payload(COMMON_SCHEMAS["graph_link"])
 def graph_link():
     data = validated_json()
-    id = data.get('id')
-    print(1)
-    if id == "link":
-        print(2)
-        session_id = data.get('source_id')
+    action_id = data.get('id')
+    if action_id in {"link", "graph_link"}:
+        session_id = data.get('source_id') or data.get('session_id')
         session_info = _session_store.get(session_id)  # returns None if not found
         str_report_status = globals.str_report_status_registry.get(str(session_id), {})
-        if session_info or str_report_status:
-            print(3)
-            return jsonify({'message': 'success!'}), 200  # Background fetch or STR status is ready
-        else:
-            print(4)
-            return jsonify({'message': 'failed!'}), 200  # No background fetch
-    else:
-        print(5)
-        return {'results': "No action!", "error": "Invalid Request"}, 400
+        temp_config_exists = os.path.isfile(f'public/temp_config/{session_id}_temp_config.json')
+        tool_ready = bool(load_temp_config("tool", session_id) or load_temp_config("active_tool", session_id))
+        if session_info or str_report_status or (temp_config_exists and tool_ready):
+            return jsonify({
+                'message': 'success!',
+                'status': 'ready',
+                'source_id': session_id,
+            }), 200
+        return jsonify({
+            'message': 'failed!',
+            'status': 'not_ready',
+            'source_id': session_id,
+        }), 200
+    return jsonify({'results': "No action!", "error": "Invalid Request"}), 400
 
 @app.route('/get_graph', methods=['POST'])
 @validate_json_payload(COMMON_SCHEMAS["get_graph"])

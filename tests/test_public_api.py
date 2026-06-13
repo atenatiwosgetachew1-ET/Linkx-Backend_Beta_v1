@@ -7,6 +7,14 @@ class STRLinkAnalysisApiTest(unittest.TestCase):
         import main
 
         self.client = main.app.test_client()
+        login_response = self.client.post("/auth/login", json={"username": "admin", "password": "Admin@12345"})
+        self.assertEqual(login_response.status_code, 200)
+        self.auth_headers = {"Authorization": f"Bearer {login_response.get_json()['token']}"}
+
+    def _post_str(self, **kwargs):
+        headers = dict(kwargs.pop("headers", {}) or {})
+        headers.update(self.auth_headers)
+        return self.client.post("/api/STR_link_analysis", headers=headers, **kwargs)
 
     def test_graph_link_accepts_cached_str_report_status(self):
         import globals
@@ -22,7 +30,59 @@ class STRLinkAnalysisApiTest(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json(), {"message": "success!"})
+        self.assertEqual(response.get_json()["message"], "success!")
+
+    def test_parent_user_configuration_persists_into_new_sessions(self):
+        import uuid
+        from unittest.mock import patch
+
+        username = f"ctms-{uuid.uuid4().hex}@example.com"
+        with patch.dict("os.environ", {"LINKX_PARENT_SHARED_SECRET": "test-secret"}, clear=False):
+            token_response = self.client.post(
+                "/auth/parent-token",
+                headers={"X-Linkx-Parent-Secret": "test-secret"},
+                json={
+                    "username": username,
+                    "display_name": "CTMS Analyst",
+                    "roles": ["analyst"],
+                },
+            )
+
+        self.assertEqual(token_response.status_code, 200)
+        user_token = token_response.get_json()["token"]
+        headers = {"Authorization": f"Bearer {user_token}"}
+
+        first_init = self.client.post("/init", json={}, headers=headers)
+        self.assertEqual(first_init.status_code, 200)
+        first_session_id = str(first_init.get_json()["results"])
+
+        save_response = self.client.post(
+            "/configuration",
+            json={
+                "id": "save",
+                "session_id": first_session_id,
+                "default_source_col": "sender_account",
+                "default_target_col": "receiver_account",
+            },
+            headers=headers,
+        )
+        self.assertEqual(save_response.status_code, 200)
+
+        second_init = self.client.post("/init", json={}, headers=headers)
+        self.assertEqual(second_init.status_code, 200)
+        second_config = second_init.get_json()["configurations"]
+        self.assertEqual(second_config["default_source_col"], "sender_account")
+        self.assertEqual(second_config["default_target_col"], "receiver_account")
+        self.assertNotEqual(str(second_init.get_json()["results"]), first_session_id)
+
+    def test_STR_link_analysis_requires_authenticated_actor(self):
+        response = self.client.post(
+            "/api/STR_link_analysis",
+            json={"entity": "bank", "type": "account_number", "value": "5642153"},
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.get_json(), {"message": "unauthorized"})
 
     def test_STR_link_analysis_creates_dataframe_when_elastic_has_results(self):
         elastic_response = {
@@ -59,8 +119,7 @@ class STRLinkAnalysisApiTest(unittest.TestCase):
              patch("api.STR_link_analysis._relationship_panel_payload", return_value=[{"id": "rel_1", "type": "SMURFING", "textcolor": "#111827", "bgcolor": "#d5d276"}]), \
              patch("api.STR_link_analysis.emit_str_report_link_analysis") as open_emit_mock, \
              patch("api.STR_link_analysis.emit_status_payload") as status_emit_mock:
-            response = self.client.post(
-                "/api/STR_link_analysis",
+            response = self._post_str(
                 json={
                     "entity": "bank",
                     "type": "account_number",
@@ -151,8 +210,7 @@ class STRLinkAnalysisApiTest(unittest.TestCase):
              patch("api.STR_link_analysis.create_dataframe_response", return_value=("response", 200)), \
              patch("api.STR_link_analysis._ingest_dataframe_to_neo4j", return_value=True), \
              patch("api.STR_link_analysis._success_response", return_value={"message": "success!", "session_id": "ok", "wait_for_prepare": False, "socket_emit": []}) as success_mock:
-            response = self.client.post(
-                "/api/STR_link_analysis",
+            response = self._post_str(
                 json={"entity": "bank", "type": "account_number", "value": "5642153"},
             )
 
@@ -169,8 +227,7 @@ class STRLinkAnalysisApiTest(unittest.TestCase):
              patch("api.STR_link_analysis.create_dataframe_response", return_value=("response", 200)), \
              patch("api.STR_link_analysis._ingest_dataframe_to_neo4j", return_value=True), \
              patch("api.STR_link_analysis._success_response", return_value={"message": "success!", "session_id": "str_report_existing", "wait_for_prepare": False, "socket_emit": []}) as success_mock:
-            response = self.client.post(
-                "/api/STR_link_analysis",
+            response = self._post_str(
                 json={
                     "entity": "bank",
                     "type": "account_number",
@@ -281,6 +338,78 @@ class STRLinkAnalysisApiTest(unittest.TestCase):
         self.assertEqual(relationship_payload["target"], "receiver_account")
         self.assertEqual(relationship_payload["relationship"], "SENDS_TO")
 
+    def test_STR_link_analysis_auto_falls_back_to_kafka_when_ctr_has_no_results(self):
+        import pandas as pd
+
+        kafka_df = pd.DataFrame({"ACCOUNTNO": ["5642153"], "BENACCOUNTNO": ["9988"]})
+        with patch("api.STR_link_analysis._prepare_session", return_value=True), \
+             patch("api.STR_link_analysis.load_temp_config", side_effect=lambda key, session_id: {
+                 "active_kafka_adress": "localhost:9092",
+                 "active_kafka_topic": "str-topic",
+                 "active_kafka_max_messages": 100,
+             }.get(key)), \
+             patch("api.STR_link_analysis.es_keyword_search", return_value=None) as search_mock, \
+             patch("api.STR_link_analysis.load_kafka_batch_messages", return_value=kafka_df) as kafka_mock, \
+             patch("api.STR_link_analysis.merge_pandas_and_save", return_value=kafka_df) as merge_mock, \
+             patch("api.STR_link_analysis.save_temp_config"), \
+             patch("api.STR_link_analysis._ingest_dataframe_to_neo4j", return_value=True), \
+             patch("api.STR_link_analysis._success_response", return_value={"message": "success!", "session_id": "ok", "wait_for_prepare": False, "socket_emit": []}):
+            response = self._post_str(
+                json={"entity": "bank", "type": "account_number", "value": "5642153", "source_mode": "auto"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["message"], "success!")
+        search_mock.assert_called_once()
+        kafka_mock.assert_called_once()
+        merge_mock.assert_called_once()
+
+    def test_STR_link_analysis_kafka_only_skips_ctr_search(self):
+        import pandas as pd
+
+        kafka_df = pd.DataFrame({"ACCOUNTNO": ["5642153"], "BENACCOUNTNO": ["9988"]})
+        with patch("api.STR_link_analysis._prepare_session", return_value=True), \
+             patch("api.STR_link_analysis.load_temp_config", side_effect=lambda key, session_id: {
+                 "active_kafka_adress": "localhost:9092",
+                 "active_kafka_topic": "str-topic",
+                 "active_kafka_max_messages": 100,
+             }.get(key)), \
+             patch("api.STR_link_analysis.es_keyword_search") as search_mock, \
+             patch("api.STR_link_analysis.load_kafka_batch_messages", return_value=kafka_df), \
+             patch("api.STR_link_analysis.merge_pandas_and_save", return_value=kafka_df), \
+             patch("api.STR_link_analysis.save_temp_config"), \
+             patch("api.STR_link_analysis._ingest_dataframe_to_neo4j", return_value=True), \
+             patch("api.STR_link_analysis._success_response", return_value={"message": "success!", "session_id": "ok", "wait_for_prepare": False, "socket_emit": []}):
+            response = self._post_str(
+                json={"entity": "bank", "type": "account_number", "value": "5642153", "source_mode": "kafka_only"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["message"], "success!")
+        search_mock.assert_not_called()
+
+    def test_STR_link_analysis_both_merges_ctr_and_kafka_dataframes(self):
+        import pandas as pd
+
+        ctr_df = pd.DataFrame({"accountno": ["5642153"], "benaccountno": ["1111"]})
+        kafka_df = pd.DataFrame({"accountno": ["5642153"], "benaccountno": ["2222"]})
+        with patch("api.STR_link_analysis._prepare_session", return_value=True), \
+             patch("api.STR_link_analysis._prepare_ctr_dataframe", return_value=True) as ctr_mock, \
+             patch("api.STR_link_analysis._session_dataframe", return_value=ctr_df), \
+             patch("api.STR_link_analysis._load_str_kafka_dataframe", return_value=kafka_df) as kafka_mock, \
+             patch("api.STR_link_analysis._save_dataframes", return_value=True) as save_mock, \
+             patch("api.STR_link_analysis.save_temp_config"), \
+             patch("api.STR_link_analysis._ingest_dataframe_to_neo4j", return_value=True), \
+             patch("api.STR_link_analysis._success_response", return_value={"message": "success!", "session_id": "ok", "wait_for_prepare": False, "socket_emit": []}):
+            response = self._post_str(
+                json={"entity": "bank", "type": "account_number", "value": "5642153", "source_mode": "both"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        ctr_mock.assert_called_once()
+        kafka_mock.assert_called_once()
+        self.assertEqual(len(save_mock.call_args.args[1]), 2)
+
     def test_STR_link_analysis_fails_when_dataframe_creation_fails(self):
         elastic_response = {"results": [{"size": 1}]}
 
@@ -288,8 +417,7 @@ class STRLinkAnalysisApiTest(unittest.TestCase):
              patch("api.STR_link_analysis.load_temp_config", return_value=None), \
              patch("api.STR_link_analysis.es_keyword_search", return_value=elastic_response), \
              patch("api.STR_link_analysis.create_dataframe_response", return_value=("response", 400)):
-            response = self.client.post(
-                "/api/STR_link_analysis",
+            response = self._post_str(
                 json={"entity": "bank", "type": "account_number", "value": "5642153"},
             )
 
@@ -301,8 +429,7 @@ class STRLinkAnalysisApiTest(unittest.TestCase):
              patch("api.STR_link_analysis.load_temp_config", return_value=None), \
              patch("api.STR_link_analysis.es_keyword_search", return_value=None), \
              patch("api.STR_link_analysis.create_dataframe_response") as dataframe_mock:
-            response = self.client.post(
-                "/api/STR_link_analysis",
+            response = self._post_str(
                 json={"entity": "bank", "type": "account_number", "value": "5642153"},
             )
 
@@ -311,14 +438,13 @@ class STRLinkAnalysisApiTest(unittest.TestCase):
         dataframe_mock.assert_not_called()
 
     def test_STR_link_analysis_requires_json_body(self):
-        response = self.client.post("/api/STR_link_analysis", data="not json")
+        response = self._post_str(data="not json")
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.get_json(), {"message": "failed!"})
 
     def test_STR_link_analysis_requires_three_fields(self):
-        response = self.client.post(
-            "/api/STR_link_analysis",
+        response = self._post_str(
             json={"entity": "bank", "type": "account_number"},
         )
 
@@ -326,8 +452,7 @@ class STRLinkAnalysisApiTest(unittest.TestCase):
         self.assertEqual(response.get_json(), {"message": "failed!"})
 
     def test_STR_link_analysis_rejects_unsupported_bank_type(self):
-        response = self.client.post(
-            "/api/STR_link_analysis",
+        response = self._post_str(
             json={"entity": "bank", "type": "phone_number", "value": "0911000000"},
         )
 
