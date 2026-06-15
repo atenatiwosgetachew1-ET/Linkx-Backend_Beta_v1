@@ -1,7 +1,6 @@
 from kafka import KafkaConsumer, KafkaProducer
 from kafka.errors import NoBrokersAvailable
 from kafka.admin import KafkaAdminClient
-from neo4j import GraphDatabase
 import re
 from datetime import datetime
 import time
@@ -11,6 +10,7 @@ import importlib.util
 from connection_utils import tools
 from logger import log_writer
 from batch_manager.processing.file_source_loader import load_file
+from batch_manager.utils.neo4j_utils import create_neo4j_driver
 from batch_manager.processing.realtime_source_loader import records_to_dataframe, iter_kafka_messages, iter_api_messages
 from globals import load_temp_config,_session_store
 
@@ -38,10 +38,7 @@ def neo4j_row_data_adjuster(row_dict):
 def make_write_partition(neo4j_conf, batch_size=500):
 
     def write_partition(rows):
-        driver = GraphDatabase.driver(
-            neo4j_conf["url"],
-            auth=(neo4j_conf["username"], neo4j_conf["password"])
-        )
+        driver = create_neo4j_driver(neo4j_conf)
 
         with driver.session() as session:
             batch = []
@@ -160,10 +157,7 @@ def neo4j_row_data_injector(payload, batch_size=500):
         log_writer(log_file, f"[{datetime.now()}] [Stop] Stop signal received — terminating injector")
         return
 
-    driver = GraphDatabase.driver(
-        tool_credentials["url"],
-        auth=(tool_credentials["username"], tool_credentials["password"])
-    )
+    driver = create_neo4j_driver(tool_credentials)
     set_session_status(driver, session_id, "INGESTING", run_id=run_id)
     try:
         log_writer(log_file, f"[{datetime.now()}] [Info] - Injection started for action '{action}'")
@@ -523,10 +517,7 @@ def realtime_neo4j_message_ingest(payload, df, batch_number):
     if stop_event and stop_event.is_set():
         return
 
-    driver = GraphDatabase.driver(
-        tool_credentials["url"],
-        auth=(tool_credentials["username"], tool_credentials["password"])
-    )
+    driver = create_neo4j_driver(tool_credentials)
     batch_id = f"{session_id}_rt_{batch_number}"
     try:
         set_session_status(driver, session_id, "INGESTING", rule=rule, run_id=run_id)

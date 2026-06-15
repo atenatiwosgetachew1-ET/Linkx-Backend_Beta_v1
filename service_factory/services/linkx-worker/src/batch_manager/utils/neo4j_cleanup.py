@@ -3,7 +3,7 @@ from datetime import datetime
 from logger import log_writer
 
 
-def clean_existing_session(driver, session_id, log_file=None, batch_size=10000, run_id=None):
+def clean_existing_session(driver, session_id, log_file=None, batch_size=10000, run_id=None, database=None):
     if not session_id:
         return
 

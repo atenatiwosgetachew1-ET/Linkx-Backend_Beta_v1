@@ -3,9 +3,9 @@ import os
 import sys
 from datetime import datetime
 
-from neo4j import GraphDatabase
 
 from batch_manager.utils.neo4j_cleanup import clean_existing_session
+from batch_manager.utils.neo4j_utils import create_neo4j_driver
 from logger import log_writer
 
 
@@ -20,12 +20,13 @@ def main():
     neo4j_url = os.environ.get("LINKX_CLEANUP_NEO4J_URL")
     neo4j_username = os.environ.get("LINKX_CLEANUP_NEO4J_USERNAME")
     neo4j_password = os.environ.get("LINKX_CLEANUP_NEO4J_PASSWORD")
+    neo4j_database = os.environ.get("LINKX_CLEANUP_NEO4J_DATABASE") or os.environ.get("LINKX_NEO4J_DATABASE")
     if not neo4j_url or not neo4j_username or not neo4j_password:
         if args.log_file:
             log_writer(args.log_file, f"[{datetime.now()}] [Error] - Cleanup process missing Neo4j credentials")
         return 2
 
-    driver = GraphDatabase.driver(neo4j_url, auth=(neo4j_username, neo4j_password))
+    driver = create_neo4j_driver({"url": neo4j_url, "username": neo4j_username, "password": neo4j_password, "database": neo4j_database})
     try:
         clean_existing_session(
             driver,

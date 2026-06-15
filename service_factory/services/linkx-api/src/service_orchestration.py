@@ -1,6 +1,8 @@
 import json
 import os
 
+from batch_manager.utils.neo4j_utils import credentials_for_cleanup
+
 
 def get_database_url():
     return os.getenv("DATABASE_URL") or os.getenv("LINKX_POSTGRES_DSN")
@@ -15,7 +17,7 @@ def connect(application_name="linkx-api-orchestration"):
     return psycopg.connect(dsn, application_name=application_name)
 
 
-def request_session_cancellation(session_id, reason="client_requested", requested_by=None):
+def request_session_cancellation(session_id, reason="client_requested", requested_by=None, neo4j_credentials=None):
     if not session_id:
         return {"cancel_requested": False, "message": "missing session_id"}
 
@@ -62,13 +64,15 @@ def request_session_cancellation(session_id, reason="client_requested", requeste
             jobs = [{"id": row[0], "status": row[1]} for row in cur.fetchall()]
             cleanup_id = None
             if session_row:
+                cleanup_summary = {"session_id": str(session_id), "reason": reason}
+                cleanup_summary.update(credentials_for_cleanup(neo4j_credentials))
                 cur.execute(
                     """
                     INSERT INTO cleanup_runs (cleanup_type, status, session_id, dry_run, summary)
                     VALUES ('session', 'created', %s, false, %s::jsonb)
                     RETURNING id::text
                     """,
-                    (str(session_id), json.dumps({"session_id": str(session_id), "reason": reason})),
+                    (str(session_id), json.dumps(cleanup_summary)),
                 )
                 cleanup_id = cur.fetchone()[0]
         conn.commit()

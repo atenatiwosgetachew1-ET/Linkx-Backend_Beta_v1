@@ -471,8 +471,11 @@ def connect_to_tool():
     url= data.get('url')
     username = data.get('username')
     password = data.get('password')
+    database = data.get('database') or load_temp_config("active_tool_database", data.get('source_id'))
     session_id = data.get('source_id')
     payload={"url":url,"username":username,"password":password,"session_id":session_id} 
+    if database:
+        payload["database"] = database
     if url and username and password:
         if tools(tool_name,"connect",payload) is True:
             return jsonify({'status': 'success', 'message': 'Connected!'}), 200

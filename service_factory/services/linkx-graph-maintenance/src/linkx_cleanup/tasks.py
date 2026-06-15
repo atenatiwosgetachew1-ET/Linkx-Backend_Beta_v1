@@ -2,9 +2,8 @@ import json
 import os
 from datetime import datetime, timezone
 
-from neo4j import GraphDatabase
-
 from batch_manager.utils.neo4j_cleanup import clean_existing_session
+from batch_manager.utils.neo4j_utils import create_neo4j_driver, neo4j_database_name
 from linkx_cleanup.artifacts import delete_filesystem_artifact
 from linkx_cleanup.db import connect
 
@@ -19,6 +18,7 @@ def _neo4j_credentials(payload=None):
         "url": payload.get("neo4j_url") or payload.get("url") or os.getenv("LINKX_NEO4J_URL") or os.getenv("LINKX_CLEANUP_NEO4J_URL"),
         "username": payload.get("neo4j_username") or payload.get("username") or os.getenv("LINKX_NEO4J_USERNAME") or os.getenv("LINKX_CLEANUP_NEO4J_USERNAME"),
         "password": payload.get("neo4j_password") or payload.get("password") or os.getenv("LINKX_NEO4J_PASSWORD") or os.getenv("LINKX_CLEANUP_NEO4J_PASSWORD"),
+        "database": payload.get("neo4j_database") or payload.get("database") or os.getenv("LINKX_NEO4J_DATABASE") or os.getenv("LINKX_CLEANUP_NEO4J_DATABASE"),
     }
 
 
@@ -28,12 +28,12 @@ def cleanup_neo4j_session(session_id, run_id=None, batch_size=10000, dry_run=Fal
     creds = _neo4j_credentials(payload)
     if not creds["url"] or not creds["username"] or not creds["password"]:
         return {"neo4j": "skipped_missing_credentials", "session_id": session_id, "run_id": run_id}
-    driver = GraphDatabase.driver(creds["url"], auth=(creds["username"], creds["password"]))
+    driver = create_neo4j_driver(creds)
     try:
         clean_existing_session(driver, session_id, batch_size=batch_size, run_id=run_id)
     finally:
         driver.close()
-    return {"neo4j": "cleaned", "session_id": session_id, "run_id": run_id}
+    return {"neo4j": "cleaned", "session_id": session_id, "run_id": run_id, "database": neo4j_database_name(creds)}
 
 
 def cleanup_artifacts(session_id=None, artifact_ids=None, expired_only=False, dry_run=False, limit=500):

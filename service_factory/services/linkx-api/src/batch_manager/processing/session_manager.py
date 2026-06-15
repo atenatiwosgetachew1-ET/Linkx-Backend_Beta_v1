@@ -55,6 +55,8 @@ def schedule_session_cleanup_process(session_id, tool_credentials, log_file=None
             "LINKX_CLEANUP_NEO4J_USERNAME": str(tool_credentials["username"]),
             "LINKX_CLEANUP_NEO4J_PASSWORD": str(tool_credentials["password"]),
         })
+        if tool_credentials.get("database"):
+            env["LINKX_CLEANUP_NEO4J_DATABASE"] = str(tool_credentials["database"])
 
         process = subprocess.Popen(
             cmd,
@@ -139,6 +141,9 @@ def end_session(payload):
     session_id = payload["session_id"]
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+    # --- Get session object ---
+    session = _session_store.get(session_id)
+
     cancellation_result = None
     if request_session_cancellation:
         try:
@@ -146,12 +151,10 @@ def end_session(payload):
                 session_id,
                 reason=payload.get("reason") or "client_end_session",
                 requested_by=payload.get("requested_by"),
+                neo4j_credentials=session.get("tool_credentials") if session else None,
             )
         except Exception as exc:
             print(f"[WARN] Failed to request DB cancellation for session {session_id}: {exc}")
-
-    # --- Get session object ---
-    session = _session_store.get(session_id)
     if not session:
         print("3:","Session not found")
         if cancellation_result and cancellation_result.get("cancel_requested"):

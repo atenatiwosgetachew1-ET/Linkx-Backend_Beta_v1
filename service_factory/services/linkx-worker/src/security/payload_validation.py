@@ -306,6 +306,7 @@ COMMON_SCHEMAS = {
             "url": {"type": "string", "minLength": 1, "maxLength": 2048},
             "username": {"type": "string", "minLength": 1, "maxLength": 255},
             "password": {"type": "string", "minLength": 1, "maxLength": 2048},
+            "database": {"type": "string", "maxLength": 255, "pattern": "^[A-Za-z0-9_.:-]*$"},
             "source_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
         },
     },

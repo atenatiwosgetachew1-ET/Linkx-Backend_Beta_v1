@@ -3,9 +3,9 @@ from flask import Flask, session
 import requests
 from kafka import KafkaConsumer
 from hdfs import InsecureClient
-from neo4j import GraphDatabase
 import json
 from globals import create_file,save_temp_config,load_temp_config,sockets_registry
+from batch_manager.utils.neo4j_utils import create_neo4j_driver, neo4j_database_name
 
 
 
@@ -96,8 +96,8 @@ def tools(id,action,payload):
             print("creds_to_connect:",credentials)
             try:
                 # response=[]
-                neo4j_driver=GraphDatabase.driver(url, auth=(username,password))
-                query = "MATCH (n) RETURN n LIMIT 1"  # Sample query to test
+                neo4j_driver=create_neo4j_driver(credentials)
+                query = "RETURN 1 AS ok"  # Sample query to test credentials/database
                 with neo4j_driver.session() as session:
                     try:
                         result = session.run(query)
@@ -138,8 +138,8 @@ def tools(id,action,payload):
             username = creds["username"]
             password = creds["password"]
             try:
-                neo4j_driver=GraphDatabase.driver(url, auth=(username,password))
-                query = "MATCH (n) RETURN n LIMIT 1"  # Sample query to test
+                neo4j_driver=create_neo4j_driver(creds)
+                query = "RETURN 1 AS ok"  # Sample query to test credentials/database
                 with neo4j_driver.session() as session:
                     try:
                         result = session.run(query)
