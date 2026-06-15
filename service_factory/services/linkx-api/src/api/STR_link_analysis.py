@@ -11,6 +11,7 @@ from batch_manager.services.dataframe_workflow import create_dataframe_response
 from batch_manager.utils.elastic_utils import es_keyword_search
 from batch_manager.utils.notification_utils import emit_status_payload, emit_str_report_link_analysis
 from globals import create_file, load_temp_config, save_temp_config
+from batch_manager.utils.artifact_utils import ensure_artifact_dir
 from security.payload_validation import COMMON_SCHEMAS, validate_json_payload, validated_json
 
 
@@ -80,7 +81,7 @@ def _base_analyzer_payload(session_id, credentials):
         "id": "batch_data",
         "type": "new",
         "session_id": session_id,
-        "dataframe_dir": f"public/temp_dfParts/merged_dfpart_{session_id}/",
+        "dataframe_dir": os.path.join(ensure_artifact_dir("dfparts"), f"merged_dfpart_{session_id}"),
         "spark_conf": {
             "storage_ip": _config_value(session_id, "active_storage_address"),
             "spark_port": _config_value(session_id, "spark_port"),

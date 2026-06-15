@@ -26,6 +26,7 @@ from batch_manager.services.dataframe_workflow import create_dataframe_response
 from batch_manager.processing.realtime_source_loader import load_latest_kafka_message, load_realtime_api, load_kafka_batch_messages
 from batch_manager.utils.schema_utils import align_schemas
 from batch_manager.utils.postgres_utils import check_postgres_connection
+from batch_manager.utils.artifact_utils import ensure_artifact_dir, register_artifact, register_artifact_dir
 from batch_manager.processing.merger import merge_pandas_and_save, merge_spark_and_save
 from batch_manager.processing.rules_validator import validate_rules_json
 from batch_manager.processing.rules_compiler import generate_python_rule, normalize_rule_key
@@ -79,7 +80,7 @@ def _dataframe_info_from_df(df, session_id):
     if df is None:
         return None
 
-    path_to_save = "public/temp_dfParts/"
+    path_to_save = ensure_artifact_dir("dfparts")
     if isinstance(df, pd.DataFrame):
         num_rows = len(df)
         columns = list(df.columns)
@@ -208,11 +209,12 @@ def configuration():
             for file, filename, _ext in safe_files:
                 print(f"Uploaded file: {filename}")
                 #Check uploading folder exists
-                upload_dir = os.path.join("public","temp_uploads")
+                upload_dir = ensure_artifact_dir("uploads", session_id)
                 os.makedirs(upload_dir, exist_ok=True)
                 #save upload into Temp folder
                 file_path = os.path.join(upload_dir, f"{session_id}_{filename}")
                 file.save(file_path)
+                register_artifact(file_path, "rule", session_id=session_id, filename=filename, metadata={"source": "uploaded_rule_json"})
                 #Validate rule (the uploaded rule)
                 try:
                     rule_json = validate_rules_json(file_path)
@@ -224,16 +226,12 @@ def configuration():
                         rule_file_name = f"{rule_key}_rules"
 
                         # Save Python version of rule
-                        rules_dir = os.path.join(
-                            os.path.dirname(os.path.abspath(__file__)),
-                            "public",
-                            "temp_rules",
-                            str(session_id),
-                        )
+                        rules_dir = ensure_artifact_dir("rules", session_id)
                         os.makedirs(rules_dir, exist_ok=True)
                         output_py = os.path.join(rules_dir, f"{rule_file_name}.py")
                         generate_python_rule(rule_json, output_py)
                         py_compile.compile(output_py, doraise=True)
+                        register_artifact(output_py, "rule", session_id=session_id, filename=os.path.basename(output_py), metadata={"source": "compiled_rule"})
 
                         # Register rule into configuration
                         print("Rule uploaded", session_id)
@@ -310,12 +308,7 @@ def configuration():
         if rule_name in active_rule:
             config_dict["active_rule"] = [config_dict["rule_names"][0]] if config_dict["rule_names"] else []
 
-        session_rules_dir = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "public",
-            "temp_rules",
-            str(session_id),
-        )
+        session_rules_dir = ensure_artifact_dir("rules", session_id)
         removed_paths = []
         candidate = os.path.join(session_rules_dir, f"{removed_file_name}.py")
         if os.path.isfile(candidate):
@@ -514,7 +507,7 @@ def upload_batch_files():
         return _validation_error_response(exc)
 
     session_id = form_data["session_id"]
-    upload_folder = "public/temp_uploads/"
+    upload_folder = ensure_artifact_dir("uploads", session_id)
 
     # Create info file
     create_file(upload_folder, "info", "txt", "This directory is used for temporary uploads.")
@@ -525,6 +518,7 @@ def upload_batch_files():
         saved_path = save_uploaded_file(file, upload_folder, filename_prefix=session_id, session_id=session_id)
         if not saved_path:
             return jsonify({"message": "Failed to save file"}), 500
+        register_artifact(saved_path, "upload", session_id=session_id, filename=os.path.basename(saved_path))
 
     return jsonify({"message": "success!"}), 200
 

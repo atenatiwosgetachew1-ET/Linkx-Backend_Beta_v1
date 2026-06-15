@@ -1,9 +1,10 @@
 import os
+from batch_manager.utils.artifact_utils import ensure_artifact_dir
 import time
 import threading
 from flask_socketio import SocketIO
 
-LOG_DIR = 'public/temp_logs/'
+LOG_DIR = ensure_artifact_dir("logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
 

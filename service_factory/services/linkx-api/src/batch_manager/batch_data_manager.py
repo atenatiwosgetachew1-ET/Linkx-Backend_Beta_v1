@@ -14,6 +14,7 @@ from py4j.java_gateway import java_import
 import os, pickle
 from datetime import datetime, timedelta
 from globals import load_temp_config, save_temp_config
+from batch_manager.utils.artifact_utils import ensure_artifact_dir
 import re
 from werkzeug.utils import secure_filename
 
@@ -67,7 +68,7 @@ def batch_data_manager(payload):
             payload["id"]="batch_data"
             payload["type"]="new"
             #Loading the merged parquet files onto spark
-            directory ="public/temp_dfParts/merged_dfpart_"+session_id+"/" #Pass only the directory (loads all the files inside it)
+            directory = os.path.join(ensure_artifact_dir("dfparts"), "merged_dfpart_" + session_id) #Pass only the directory (loads all the files inside it)
             #dataframe=load_file(directory,session_id,use_spark=True)
             #print(dataframe)
             payload["dataframe_dir"]=directory
@@ -117,7 +118,7 @@ def batch_data_manager(payload):
 
                 # CASE 1: Processed folder with parquet parts (file_info is dict)
                 if isinstance(file_info, dict):
-                    folder_path = f"public/temp_dfParts/merged_dfpart_{session_id}/"
+                    folder_path = os.path.join(ensure_artifact_dir("dfparts"), f"merged_dfpart_{session_id}")
                     df = load_file(folder_path, session_id, use_spark=True)
                     return df
 
@@ -130,10 +131,10 @@ def batch_data_manager(payload):
                     except Exception:
                         safe_name = filename
 
-                    local_path = f"public/temp_uploads/{session_id}_{safe_name}"
+                    local_path = os.path.join(ensure_artifact_dir("uploads", session_id), f"{session_id}_{safe_name}")
                     # If exact path doesn't exist, try to find a matching file
                     if not os.path.exists(local_path):
-                        uploads_dir = "public/temp_uploads"
+                        uploads_dir = ensure_artifact_dir("uploads", session_id)
                         candidates = []
                         def normalize_name(name):
                             # keep only alphanumeric and dot, convert to lower
@@ -327,7 +328,7 @@ def batch_data_manager(payload):
         dfs = payload.get("dfs", [])
         use_spark = payload.get("use_spark", False)
         kind = payload.get("kind")
-        path = "public/temp_dfParts/"  # keep as local path (relative or absolute)
+        path = ensure_artifact_dir("dfparts")
         if use_spark or kind == "hdfs":
             return merge_spark_and_save(dfs,path,session_id)
         else:

@@ -7,6 +7,7 @@ from flask import jsonify
 from batch_manager.batch_data_manager import batch_data_manager
 from batch_manager.processing.merger import merge_pandas_and_save, merge_spark_and_save
 from batch_manager.utils.schema_utils import align_schemas
+from batch_manager.utils.artifact_utils import ensure_artifact_dir, register_artifact_dir
 from globals import load_temp_config, save_temp_config
 
 
@@ -128,7 +129,7 @@ def create_dataframe_response(data, session_id):
         pandas_dfs = [df for df in aligned if isinstance(df, pd.DataFrame)]
         spark_dfs = [df for df in aligned if _is_spark_df(df)]
 
-        path_to_save = "public/temp_dfParts/"
+        path_to_save = ensure_artifact_dir("dfparts")
         folder_name = f"merged_dfpart_{session_id}"
         target_folder = os.path.join(path_to_save, folder_name)
         if os.path.exists(target_folder):
@@ -157,6 +158,8 @@ def create_dataframe_response(data, session_id):
         else:
             num_rows_spark = 0
             columns_spark = []
+
+        register_artifact_dir(target_folder, "dfpart", session_id=session_id, metadata={"kind": data.get("kind")})
 
         final_columns = list(set(columns_pandas + list(columns_spark)))
         total_rows = num_rows_pandas + num_rows_spark

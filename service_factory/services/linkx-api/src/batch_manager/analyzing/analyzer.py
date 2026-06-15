@@ -11,6 +11,7 @@ from connection_utils import tools
 from logger import log_writer
 from batch_manager.processing.file_source_loader import load_file
 from batch_manager.utils.neo4j_utils import create_neo4j_driver
+from batch_manager.utils.artifact_utils import ensure_artifact_dir
 from batch_manager.processing.realtime_source_loader import records_to_dataframe, iter_kafka_messages, iter_api_messages
 from globals import load_temp_config,_session_store
 
@@ -369,11 +370,18 @@ def neo4j_row_data_injector(payload, batch_size=500):
             # Run rule-specific analysis on whatever was injected
             # ------------------------------------------------------------------------------------------------------------- Identifing rules to analyse with 2
             # Path to the directory containing rule files
-            rules_dir = 'public/temp_rules/'
+            rules_dir = ensure_artifact_dir("rules")
             rule_filename = f"{rule_key}_rules.py"
             session_rule_path = os.path.join(rules_dir, str(session_id), rule_filename)
             default_rule_path = os.path.join(rules_dir, rule_filename)
-            rule_path = session_rule_path if os.path.exists(session_rule_path) else default_rule_path
+            legacy_default_rule_path = os.path.join("public", "temp_rules", rule_filename)
+            rule_path = (
+                session_rule_path
+                if os.path.exists(session_rule_path)
+                else default_rule_path
+                if os.path.exists(default_rule_path)
+                else legacy_default_rule_path
+            )
             module, rule_status = check_rule_status(rule_key, rule_path) #Check the rule
             print(f"Loading rule from {rule_path}")  # debug
             # Insert nodes in batches; run cheap incremental rules after every batch.
@@ -489,11 +497,18 @@ def _dataframe_to_row_dicts(df):
 
 def _load_rule_module(rule, session_id):
     rule_key = str(rule).strip().lower().replace(' ', '_') if rule else ""
-    rules_dir = 'public/temp_rules/'
+    rules_dir = ensure_artifact_dir("rules")
     rule_filename = f"{rule_key}_rules.py"
     session_rule_path = os.path.join(rules_dir, str(session_id), rule_filename)
     default_rule_path = os.path.join(rules_dir, rule_filename)
-    rule_path = session_rule_path if os.path.exists(session_rule_path) else default_rule_path
+    legacy_default_rule_path = os.path.join("public", "temp_rules", rule_filename)
+    rule_path = (
+        session_rule_path
+        if os.path.exists(session_rule_path)
+        else default_rule_path
+        if os.path.exists(default_rule_path)
+        else legacy_default_rule_path
+    )
     module, rule_status = check_rule_status(rule_key, rule_path)
     return rule_key, module, rule_status
 

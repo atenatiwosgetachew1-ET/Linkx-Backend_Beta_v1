@@ -7,6 +7,7 @@ import os
 from batch_manager.analyzing.analyzer import analyzer
 from logger import log_writer
 from globals import _session_store
+from batch_manager.utils.artifact_utils import ensure_artifact_dir, register_artifact
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, "..", ".."))
@@ -99,13 +100,14 @@ def start_session(payload):
         }
 
     # Log folder
-    log_dir = os.path.join(PROJECT_ROOT, "public", "temp_logs")
+    log_dir = ensure_artifact_dir("logs")
     os.makedirs(log_dir, exist_ok=True)
 
     log_file = f"logfile_{session_id}_[{current_time}].log"
     full_path = os.path.join(log_dir, log_file)
     with open(full_path, "w") as f:
         f.write(f"New session started at {current_time}\n")
+    register_artifact(full_path, "log", session_id=session_id, filename=log_file)
 
     run_id = uuid.uuid4().hex
     payload["log_file"] = log_file
@@ -144,7 +146,7 @@ def end_session(payload):
     log_file = session.get("log_file")
     if log_file:
         PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-        log_dir = os.path.join(PROJECT_ROOT, "public", "temp_logs")
+        log_dir = ensure_artifact_dir("logs")
         full_path = os.path.join(log_dir, log_file)
 
         if os.path.exists(full_path):
