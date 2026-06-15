@@ -184,11 +184,22 @@ COMMON_SCHEMAS = {
     },
     "init": {
         "type": "object",
-        "additionalProperties": True,
+        "additionalProperties": False,
         "properties": {
-            "id": {"type": "string", "maxLength": 64},
-            "existing_session": {"type": ["string", "number", "null"], "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]*$"},
-            "session_id": {"type": ["string", "number", "null"], "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]*$"},
+            "id": {"type": "string", "enum": ["init"]},
+            "existing_session": {
+                "anyOf": [
+                    {"type": "string", "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]*$"},
+                    {"type": "integer"},
+                    {"type": "null"},
+                ],
+            },
+            "socket_id": {
+                "anyOf": [
+                    {"type": "string", "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]*$"},
+                    {"type": "null"},
+                ],
+            },
         },
     },
     "service_account_create": {
@@ -264,9 +275,10 @@ COMMON_SCHEMAS = {
     },
     "init_source": {
         "type": "object",
-        "required": ["session_id"],
-        "additionalProperties": True,
+        "required": ["id", "session_id", "window_id"],
+        "additionalProperties": False,
         "properties": {
+            "id": {"type": "string", "enum": ["source_window"]},
             "session_id": {
                 "anyOf": [
                     {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
@@ -277,14 +289,6 @@ COMMON_SCHEMAS = {
                 "anyOf": [
                     {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
                     {"type": "integer"},
-                    {"type": "null"},
-                ],
-            },
-            "source_id": {
-                "anyOf": [
-                    {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
-                    {"type": "integer"},
-                    {"type": "null"},
                 ],
             },
         },
