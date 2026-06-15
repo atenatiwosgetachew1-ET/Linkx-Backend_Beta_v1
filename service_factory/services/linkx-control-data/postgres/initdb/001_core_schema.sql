@@ -67,6 +67,27 @@ CREATE TABLE IF NOT EXISTS analysis_sessions (
     cancel_requested_by TEXT
 );
 
+CREATE TABLE IF NOT EXISTS user_configs (
+    user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    config JSONB NOT NULL DEFAULT '{}'::jsonb,
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS session_configs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id TEXT NOT NULL REFERENCES analysis_sessions(session_id) ON DELETE CASCADE,
+    user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    service_account_id BIGINT REFERENCES service_accounts(id) ON DELETE SET NULL,
+    window_id TEXT NOT NULL DEFAULT '',
+    config JSONB NOT NULL DEFAULT '{}'::jsonb,
+    source_config_id UUID REFERENCES session_configs(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (session_id, window_id)
+);
+
 CREATE TABLE IF NOT EXISTS jobs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id TEXT REFERENCES analysis_sessions(session_id) ON DELETE SET NULL,
@@ -133,6 +154,8 @@ CREATE TABLE IF NOT EXISTS cleanup_runs (
 CREATE INDEX IF NOT EXISTS idx_analysis_sessions_owner_user ON analysis_sessions(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_analysis_sessions_owner_service ON analysis_sessions(owner_service_id);
 CREATE INDEX IF NOT EXISTS idx_analysis_sessions_status ON analysis_sessions(status, last_seen_at);
+CREATE INDEX IF NOT EXISTS idx_session_configs_user ON session_configs(user_id, updated_at);
+CREATE INDEX IF NOT EXISTS idx_session_configs_session ON session_configs(session_id, window_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_status_queue ON jobs(status, queue_name, priority, scheduled_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_cancel_requested ON jobs(status, cancellation_requested_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_session ON jobs(session_id);

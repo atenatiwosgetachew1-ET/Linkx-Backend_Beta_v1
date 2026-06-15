@@ -35,6 +35,7 @@ from batch_manager.analyzing.analyzer import analyzer
 from logger import log_writer,log_stream_background
 from io_sockets import register_socket_handlers
 from api.STR_link_analysis import STR_link_analysis_api
+from session_config_store import create_session_config, duplicate_window_config, get_user_config, save_user_config
 from auth.decorators import auth_required, current_actor_from_request
 from auth.repository import bind_analysis_session_actor
 from auth.routes import auth_api
@@ -133,34 +134,53 @@ def init():
     print("Initializing ....")
     data = validated_json()
     current_actor = current_actor_from_request()
-    # Check if the config file already exists
     old_session = data.get('existing_session')
-    file_path = f'public/temp_config/{old_session}_temp_config.json'    # Check if file exists
-    if os.path.isfile(file_path):
+    if old_session:
         if not bind_analysis_session_actor(old_session, current_actor):
             return jsonify({'message': 'forbidden'}), 403
-        # if the File exists just return
-        configs=load_temp_config("data",old_session)
-        return jsonify({'results': old_session, 'configurations': configs, 'message': 'success!'}), 200
+        configs = load_temp_config("data", old_session)
+        if configs is not None:
+            return jsonify({'results': old_session, 'configurations': configs, 'message': 'success!'}), 200
+
     try:
-        #create new session instances (called when the page initalizes load first  time)
-        #Preparing new session
-        now = datetime.now()
         max_value = 1000000
         min_value = 0
         session_id = random.randint(min_value, max_value - 1)
-        config_folder = "public/temp_config/"
         configs = get_default_session_config(session_id)
-        # Create info file
-        create_file(config_folder, f"{session_id}_temp_config", "json", configs)
         if not bind_analysis_session_actor(session_id, current_actor):
             return jsonify({'message': 'failed!', 'results': 'Could not bind session to user.'}), 500
-        print("config_folder:",config_folder)
-        stored_new_configs=load_temp_config("data",session_id)
+        stored_new_configs = create_session_config(session_id, current_actor, default_config=configs)
         return jsonify({'results': session_id, 'configurations': stored_new_configs, 'message': 'success!'}), 200
     except Exception as e:
         print(e)
         return jsonify({'results': str(e), 'message': 'failed!'}), 200
+
+@app.route('/account/configuration', methods=['GET'])
+@auth_required
+def account_configuration_load():
+    actor = current_actor_from_request()
+    if not actor or actor.get("actor_type") != "user":
+        return jsonify({"message": "user_required"}), 403
+    defaults = get_default_session_config(actor.get("id") or "default")
+    config = get_user_config(actor.get("id"), default_config=defaults)
+    return jsonify({'results': {'data': config}, 'configurations': config, 'message': 'success!'}), 200
+
+
+@app.route('/account/configuration', methods=['POST'])
+@auth_required
+def account_configuration_save():
+    actor = current_actor_from_request()
+    if not actor or actor.get("actor_type") != "user":
+        return jsonify({"message": "user_required"}), 403
+    raw_data = request.get_json(silent=True)
+    if raw_data is None or not isinstance(raw_data, dict):
+        return jsonify({'message': 'validation_error', 'detail': 'json_object_required'}), 400
+    config = raw_data.get("config") or raw_data.get("data") or raw_data
+    if not isinstance(config, dict):
+        return jsonify({'message': 'validation_error', 'detail': 'config_object_required'}), 400
+    save_user_config(actor.get("id"), config)
+    return jsonify({'results': {'data': config}, 'configurations': config, 'message': 'success!'}), 200
+
 
 @app.route('/configuration', methods=['POST'])
 def configuration():
@@ -339,26 +359,23 @@ def configuration():
 def init_source():
     print("Initializing source window....")
     data = validated_json()
-    # Check if the config file already exists
     active_session = data.get('session_id')
     window_id = data.get('window_id')
-    config_folder = "public/temp_config"
-    file_path = f'{config_folder}/{window_id}_{active_session}_temp_config.json'    # Check if file exists
-    if os.path.isfile(file_path):
-        # if the File exists just return        
-        return jsonify({'message': 'success!'}), 200
-    try:#if the configuration file of that specific window doesn't exist, then check for the initial configuration file and do a duplication
-        file_path = f'{config_folder}/{active_session}_temp_config.json'    # Check if file exists
-        if os.path.isfile(file_path):#create a duplication of the configuration file as a duplication that represent the specific window id             
-            # duplicate the file
-            # duplicated file with window_id prefix
-            duplicated_file = os.path.join(
-                config_folder, f"{window_id}_{active_session}_temp_config.json"
-            )
+    try:
+        copied_config = duplicate_window_config(active_session, window_id)
+        if copied_config is not None:
+            return jsonify({'message': 'success!'}), 200
+
+        config_folder = "public/temp_config"
+        file_path = f'{config_folder}/{window_id}_{active_session}_temp_config.json'
+        if os.path.isfile(file_path):
+            return jsonify({'message': 'success!'}), 200
+        file_path = f'{config_folder}/{active_session}_temp_config.json'
+        if os.path.isfile(file_path):
+            duplicated_file = os.path.join(config_folder, f"{window_id}_{active_session}_temp_config.json")
             shutil.copyfile(file_path, duplicated_file)
             return jsonify({'message': 'success!'}), 200
-        else:
-            return jsonify({'results': "Base session config not found", 'message': 'failed!'}), 404
+        return jsonify({'results': "Base session config not found", 'message': 'failed!'}), 404
     except Exception as e:
         print(e)
         return jsonify({'results': str(e), 'message': 'failed!'}), 200

@@ -3,6 +3,7 @@ import os
 import ast
 from datetime import datetime, timedelta
 from werkzeug.utils import secure_filename
+from session_config_store import load_session_config, response_config, save_session_config
 
 
 session_thread_registry = {}
@@ -56,6 +57,14 @@ def save_uploaded_file(uploaded_file, save_dir, filename_prefix, session_id):
         return None
 
 def load_temp_config(key, session_id):
+    db_config = load_session_config(session_id)
+    if db_config is not None:
+        if key == "all":
+            return response_config(db_config)
+        if key == "data":
+            return db_config
+        return db_config.get(key)
+
     config_path = os.path.join("public", "temp_config", f"{session_id}_temp_config.json")
     try:
         with open(config_path, "r", encoding="utf-8") as f:
@@ -64,7 +73,6 @@ def load_temp_config(key, session_id):
             return config
         if key == "data":
             return config.get("data")
-        # Look inside 'data' first
         return config.get("data", {}).get(key)
     except Exception as e:
         print(f"[load_temp_config] Error: {e}")
@@ -73,12 +81,19 @@ def load_temp_config(key, session_id):
 
 def save_temp_config(key, value, session_id):
     """
-    Save a key-value pair into the temp configuration for a session.
-    If key == "all", merge the provided dictionary into the existing 'data' instead of replacing it.
+    Save a key-value pair into the session configuration.
+    PostgreSQL is preferred; JSON files remain as a fallback.
     """
-    config_path = os.path.join("public", "temp_config", f"{session_id}_temp_config.json")
+    if key == "all":
+        if not isinstance(value, dict):
+            raise ValueError("When key='all', value must be a dict to merge.")
+        if save_session_config(session_id, value, merge=True):
+            return
+    else:
+        if save_session_config(session_id, {key: value}, merge=True):
+            return
 
-    # Load existing config, or create base structure
+    config_path = os.path.join("public", "temp_config", f"{session_id}_temp_config.json")
     if os.path.exists(config_path):
         with open(config_path, "r", encoding="utf-8") as f:
             file_content = json.load(f)
@@ -88,20 +103,14 @@ def save_temp_config(key, value, session_id):
     if "data" not in file_content or not isinstance(file_content["data"], dict):
         file_content["data"] = {}
 
-    # Merge instead of replace
     if key == "all":
-        if not isinstance(value, dict):
-            raise ValueError("When key='all', value must be a dict to merge.")
-        # Update only the keys in value, keep existing ones
         file_content["data"].update(value)
     else:
         file_content["data"][key] = value
 
-    # Update timestamp
     file_content["Last modified"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-    # Write back
     try:
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(file_content, f, indent=2)
     except Exception as e:
