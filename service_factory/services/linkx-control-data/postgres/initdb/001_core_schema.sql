@@ -61,7 +61,10 @@ CREATE TABLE IF NOT EXISTS analysis_sessions (
     status TEXT NOT NULL DEFAULT 'active',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    ended_at TIMESTAMPTZ
+    ended_at TIMESTAMPTZ,
+    cancellation_requested_at TIMESTAMPTZ,
+    cancellation_reason TEXT,
+    cancel_requested_by TEXT
 );
 
 CREATE TABLE IF NOT EXISTS jobs (
@@ -81,7 +84,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     scheduled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     started_at TIMESTAMPTZ,
     finished_at TIMESTAMPTZ,
-    error_message TEXT
+    error_message TEXT,
+    cancellation_requested_at TIMESTAMPTZ,
+    cancellation_reason TEXT
 );
 
 CREATE TABLE IF NOT EXISTS job_events (
@@ -127,7 +132,9 @@ CREATE TABLE IF NOT EXISTS cleanup_runs (
 
 CREATE INDEX IF NOT EXISTS idx_analysis_sessions_owner_user ON analysis_sessions(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_analysis_sessions_owner_service ON analysis_sessions(owner_service_id);
+CREATE INDEX IF NOT EXISTS idx_analysis_sessions_status ON analysis_sessions(status, last_seen_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_status_queue ON jobs(status, queue_name, priority, scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_jobs_cancel_requested ON jobs(status, cancellation_requested_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_session ON jobs(session_id);
 CREATE INDEX IF NOT EXISTS idx_job_events_job ON job_events(job_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_job_events_session ON job_events(session_id, created_at);

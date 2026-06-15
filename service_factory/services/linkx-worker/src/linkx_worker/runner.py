@@ -5,6 +5,11 @@ import socket
 import time
 from datetime import datetime, timezone
 
+from linkx_worker.cancellation import (
+    enqueue_session_cleanup,
+    is_cancel_requested,
+    mark_job_cancelled,
+)
 from linkx_worker.handlers import run_job_safely
 
 
@@ -40,12 +45,15 @@ def claim_job(conn, queues, worker_name):
         cur.execute(
             """
             WITH candidate AS (
-                SELECT id
-                FROM jobs
-                WHERE status IN ('created', 'queued', 'retry')
-                  AND queue_name = ANY(%s)
-                  AND scheduled_at <= NOW()
-                ORDER BY priority ASC, scheduled_at ASC, created_at ASC
+                SELECT j.id
+                FROM jobs j
+                LEFT JOIN analysis_sessions s ON s.session_id = j.session_id
+                WHERE j.status IN ('created', 'queued', 'retry')
+                  AND j.queue_name = ANY(%s)
+                  AND j.scheduled_at <= NOW()
+                  AND COALESCE(s.status, 'active') NOT IN ('cancel_requested', 'cancelling', 'cancelled')
+                  AND s.cancellation_requested_at IS NULL
+                ORDER BY j.priority ASC, j.scheduled_at ASC, j.created_at ASC
                 FOR UPDATE SKIP LOCKED
                 LIMIT 1
             )
@@ -75,6 +83,9 @@ def claim_job(conn, queues, worker_name):
             "attempts": row[6],
             "max_attempts": row[7],
         }
+        job["payload"]["job_id"] = job["id"]
+        job["payload"].setdefault("session_id", job.get("session_id"))
+        job["payload"].setdefault("run_id", job.get("run_id"))
         emit_event(cur, job, "job_started", f"Job claimed by {worker_name}")
         conn.commit()
         return job
@@ -125,9 +136,32 @@ def run_loop(queues, poll_interval, once=False):
             job = claim_job(conn, queues, worker_name)
             if job:
                 print(f"[worker] running job_id={job['id']} type={job['job_type']} queue={job['queue_name']}", flush=True)
+                if is_cancel_requested(conn, session_id=job.get("session_id"), job_id=job.get("id")):
+                    mark_job_cancelled(conn, job, "Job cancelled before execution")
+                    enqueue_session_cleanup(
+                        conn,
+                        job.get("session_id"),
+                        job_id=job.get("id"),
+                        payload={"reason": "cancelled_before_execution"},
+                    )
+                    print(f"[worker] cancelled job_id={job['id']} before execution", flush=True)
+                    if once:
+                        return
+                    time.sleep(poll_interval)
+                    continue
                 ok, result, error = run_job_safely(job["job_type"], job["payload"])
-                finish_job(conn, job, ok, result=result, error=error)
-                print(f"[worker] finished job_id={job['id']} ok={ok}", flush=True)
+                if is_cancel_requested(conn, session_id=job.get("session_id"), job_id=job.get("id")):
+                    mark_job_cancelled(conn, job, "Job cancelled during execution")
+                    enqueue_session_cleanup(
+                        conn,
+                        job.get("session_id"),
+                        job_id=job.get("id"),
+                        payload={"reason": "cancelled_during_execution"},
+                    )
+                    print(f"[worker] cancelled job_id={job['id']} during execution", flush=True)
+                else:
+                    finish_job(conn, job, ok, result=result, error=error)
+                    print(f"[worker] finished job_id={job['id']} ok={ok}", flush=True)
             elif once:
                 print("[worker] no job found", flush=True)
                 return

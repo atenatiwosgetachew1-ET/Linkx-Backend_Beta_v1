@@ -8,6 +8,11 @@ from batch_manager.analyzing.analyzer import analyzer
 from logger import log_writer
 from globals import _session_store
 
+try:
+    from service_orchestration import request_session_cancellation
+except Exception:
+    request_session_cancellation = None
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, "..", ".."))
 
@@ -134,10 +139,28 @@ def end_session(payload):
     session_id = payload["session_id"]
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+    cancellation_result = None
+    if request_session_cancellation:
+        try:
+            cancellation_result = request_session_cancellation(
+                session_id,
+                reason=payload.get("reason") or "client_end_session",
+                requested_by=payload.get("requested_by"),
+            )
+        except Exception as exc:
+            print(f"[WARN] Failed to request DB cancellation for session {session_id}: {exc}")
+
     # --- Get session object ---
     session = _session_store.get(session_id)
     if not session:
         print("3:","Session not found")
+        if cancellation_result and cancellation_result.get("cancel_requested"):
+            return {
+                "status": "success",
+                "message": "cancellation requested",
+                "cleanup": "scheduled",
+                "orchestration": cancellation_result,
+            }
         return {"status": "failed", "message": "Session not found"}
 
     # --- Stop log file ---
@@ -159,13 +182,14 @@ def end_session(payload):
     if thread and stop_event:
         stop_event.set()
         thread.join(timeout=3)
-        cleanup_job = schedule_session_cleanup_process(
-            session_id,
-            session.get("tool_credentials"),
-            log_file=log_file,
-            run_id=session.get("run_id"),
-            wait_thread=thread if thread.is_alive() else None,
-        )
+        if not (cancellation_result and cancellation_result.get("cleanup_id")):
+            cleanup_job = schedule_session_cleanup_process(
+                session_id,
+                session.get("tool_credentials"),
+                log_file=log_file,
+                run_id=session.get("run_id"),
+                wait_thread=thread if thread.is_alive() else None,
+            )
     else:
         print("3:","Thread or stop_event missing")
         return {"status": "failed", "message": "Thread or stop_event missing"}
@@ -173,9 +197,14 @@ def end_session(payload):
     # --- Clean session store ---
     del _session_store[session_id]
     print("3:","success")
-    if thread.is_alive():
-        return {"status": "success", "message": "stopping", "cleanup": "scheduled" if cleanup_job else "skipped"}
-    return {"status": "success", "message":"success", "cleanup": "scheduled" if cleanup_job else "skipped"}
+    response = {
+        "status": "success",
+        "message": "stopping" if thread.is_alive() else "success",
+        "cleanup": "scheduled" if (cleanup_job or cancellation_result) else "skipped",
+    }
+    if cancellation_result:
+        response["orchestration"] = cancellation_result
+    return response
 
 
 def save_temp_config(key, value, sid):

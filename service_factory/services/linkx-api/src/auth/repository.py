@@ -172,6 +172,11 @@ def _migrate_analysis_sessions(cur):
     cur.execute("ALTER TABLE analysis_sessions ADD COLUMN IF NOT EXISTS created_by_type TEXT")
     cur.execute("ALTER TABLE analysis_sessions ADD COLUMN IF NOT EXISTS created_by_id BIGINT")
     cur.execute("ALTER TABLE analysis_sessions ADD COLUMN IF NOT EXISTS parent_session_id TEXT")
+    cur.execute("ALTER TABLE analysis_sessions ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'")
+    cur.execute("ALTER TABLE analysis_sessions ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ")
+    cur.execute("ALTER TABLE analysis_sessions ADD COLUMN IF NOT EXISTS cancellation_requested_at TIMESTAMPTZ")
+    cur.execute("ALTER TABLE analysis_sessions ADD COLUMN IF NOT EXISTS cancellation_reason TEXT")
+    cur.execute("ALTER TABLE analysis_sessions ADD COLUMN IF NOT EXISTS cancel_requested_by TEXT")
 
 
 def _seed_roles_permissions(cur):

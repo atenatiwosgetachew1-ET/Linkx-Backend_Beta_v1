@@ -3,6 +3,7 @@ import traceback
 
 from batch_manager.batch_data_manager import batch_data_manager
 from batch_manager.analyzing.analyzer import analyzer
+from linkx_worker.cancellation import DatabaseCancellationEvent
 
 
 def _normalize_payload(payload):
@@ -16,6 +17,14 @@ def _normalize_payload(payload):
 def run_job(job_type, payload):
     payload = _normalize_payload(payload)
     job_type = str(job_type or payload.get("job_type") or payload.get("id") or "")
+    session_id = payload.get("session_id")
+    job_id = payload.get("job_id")
+
+    if session_id and "stop_event" not in payload:
+        payload["stop_event"] = DatabaseCancellationEvent(
+            session_id=session_id,
+            job_id=job_id,
+        )
 
     if job_type in {
         "batch_data_manager",
