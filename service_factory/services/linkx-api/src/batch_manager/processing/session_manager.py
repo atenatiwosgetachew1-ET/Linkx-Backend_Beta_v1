@@ -10,8 +10,9 @@ from globals import _session_store
 from batch_manager.utils.artifact_utils import ensure_artifact_dir, register_artifact
 
 try:
-    from service_orchestration import request_session_cancellation
+    from service_orchestration import enqueue_cleanup_run, request_session_cancellation
 except Exception:
+    enqueue_cleanup_run = None
     request_session_cancellation = None
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -147,11 +148,14 @@ def end_session(payload):
     session = _session_store.get(session_id)
 
     cancellation_result = None
-    if request_session_cancellation:
+    stop_reason = payload.get("reason") or "client_end_session"
+    stop_only_reasons = {"client_end_session", "socket_disconnect_abandoned"}
+    should_preserve_session_config = stop_reason in stop_only_reasons
+    if request_session_cancellation and not should_preserve_session_config:
         try:
             cancellation_result = request_session_cancellation(
                 session_id,
-                reason=payload.get("reason") or "client_end_session",
+                reason=stop_reason,
                 requested_by=payload.get("requested_by"),
                 neo4j_credentials=session.get("tool_credentials") if session else None,
             )
@@ -187,7 +191,20 @@ def end_session(payload):
     if thread and stop_event:
         stop_event.set()
         thread.join(timeout=3)
-        if not (cancellation_result and cancellation_result.get("cleanup_id")):
+        if should_preserve_session_config and enqueue_cleanup_run and session.get("run_id"):
+            try:
+                cleanup_id = enqueue_cleanup_run(
+                    "run",
+                    session_id=session_id,
+                    run_id=session.get("run_id"),
+                    reason=stop_reason,
+                    neo4j_credentials=session.get("tool_credentials"),
+                    payload={"event": "stop_ingestion", "preserve_session_config": True},
+                )
+                cleanup_job = {"cleanup_id": cleanup_id}
+            except Exception as exc:
+                print(f"[WARN] Failed to queue run cleanup for session {session_id}: {exc}")
+        elif not (cancellation_result and cancellation_result.get("cleanup_id")):
             cleanup_job = schedule_session_cleanup_process(
                 session_id,
                 session.get("tool_credentials"),

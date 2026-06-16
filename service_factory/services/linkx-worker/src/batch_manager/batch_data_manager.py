@@ -79,6 +79,16 @@ def batch_data_manager(payload):
                 "should_listen_realtime": should_listen_realtime,
             },
         )
+        if explicit_realtime and not active_source_is_realtime:
+            return {
+                "status": "failed",
+                "message": "Realtime source is not connected for this session. Reconnect the source before streaming.",
+                "detail": {
+                    "active_source_type": active_source_type,
+                    "active_source_mode": active_source_mode,
+                    "active_topic": active_topic,
+                },
+            }
         if should_listen_realtime:
             payload["id"] = "realtime_data"
             payload["type"] = "listen"

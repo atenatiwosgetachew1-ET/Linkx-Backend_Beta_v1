@@ -9,6 +9,12 @@ from logger import log_writer
 from globals import _session_store
 from batch_manager.utils.artifact_utils import ensure_artifact_dir, register_artifact
 
+try:
+    from service_orchestration import enqueue_cleanup_run, request_session_cancellation
+except Exception:
+    enqueue_cleanup_run = None
+    request_session_cancellation = None
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, "..", ".."))
 
@@ -138,8 +144,30 @@ def end_session(payload):
 
     # --- Get session object ---
     session = _session_store.get(session_id)
+
+    cancellation_result = None
+    stop_reason = payload.get("reason") or "client_end_session"
+    stop_only_reasons = {"client_end_session", "socket_disconnect_abandoned"}
+    should_preserve_session_config = stop_reason in stop_only_reasons
+    if request_session_cancellation and not should_preserve_session_config:
+        try:
+            cancellation_result = request_session_cancellation(
+                session_id,
+                reason=stop_reason,
+                requested_by=payload.get("requested_by"),
+                neo4j_credentials=session.get("tool_credentials") if session else None,
+            )
+        except Exception as exc:
+            print(f"[WARN] Failed to request DB cancellation for session {session_id}: {exc}")
     if not session:
         print("3:","Session not found")
+        if cancellation_result and cancellation_result.get("cancel_requested"):
+            return {
+                "status": "success",
+                "message": "cancellation requested",
+                "cleanup": "scheduled",
+                "orchestration": cancellation_result,
+            }
         return {"status": "failed", "message": "Session not found"}
 
     # --- Stop log file ---
@@ -161,13 +189,27 @@ def end_session(payload):
     if thread and stop_event:
         stop_event.set()
         thread.join(timeout=3)
-        cleanup_job = schedule_session_cleanup_process(
-            session_id,
-            session.get("tool_credentials"),
-            log_file=log_file,
-            run_id=session.get("run_id"),
-            wait_thread=thread if thread.is_alive() else None,
-        )
+        if should_preserve_session_config and enqueue_cleanup_run and session.get("run_id"):
+            try:
+                cleanup_id = enqueue_cleanup_run(
+                    "run",
+                    session_id=session_id,
+                    run_id=session.get("run_id"),
+                    reason=stop_reason,
+                    neo4j_credentials=session.get("tool_credentials"),
+                    payload={"event": "stop_ingestion", "preserve_session_config": True},
+                )
+                cleanup_job = {"cleanup_id": cleanup_id}
+            except Exception as exc:
+                print(f"[WARN] Failed to queue run cleanup for session {session_id}: {exc}")
+        elif not (cancellation_result and cancellation_result.get("cleanup_id")):
+            cleanup_job = schedule_session_cleanup_process(
+                session_id,
+                session.get("tool_credentials"),
+                log_file=log_file,
+                run_id=session.get("run_id"),
+                wait_thread=thread if thread.is_alive() else None,
+            )
     else:
         print("3:","Thread or stop_event missing")
         return {"status": "failed", "message": "Thread or stop_event missing"}
