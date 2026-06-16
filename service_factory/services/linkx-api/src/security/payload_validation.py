@@ -296,6 +296,8 @@ COMMON_SCHEMAS = {
             "hdfs": {"type": ["string", "null"], "maxLength": 512},
             "topic": {"type": ["string", "null"], "maxLength": 255},
             "kafka_topic": {"type": ["string", "null"], "maxLength": 255},
+            "source_mode": {"type": ["string", "null"], "enum": ["batch", "realtime", None]},
+            "mode": {"type": ["string", "null"], "enum": ["batch", "realtime", None]},
             "session_id": {"type": ["string", "null"], "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]*$"},
             "source_id": {"type": ["string", "null"], "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]*$"},
         },

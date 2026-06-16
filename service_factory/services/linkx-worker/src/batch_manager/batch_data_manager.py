@@ -177,6 +177,7 @@ def batch_data_manager(payload):
                     if url:
                         save_temp_config("active_REST_API", url, session_id)
                         save_temp_config("active_source_type", "api", session_id)
+                        save_temp_config("active_source_mode", payload.get("source_mode") or "batch", session_id)
                     df = load_api(url, session_id, use_spark=use_spark)
                 else:
                     broker_url = payload.get("broker") or payload.get("broker_url") or payload.get("address") or payload.get("files")

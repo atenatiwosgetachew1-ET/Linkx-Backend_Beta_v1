@@ -396,6 +396,7 @@ def connect_to_source():
     storage = data.get('storage') or data.get('hdfs') #passed hdfs_ip:port
     topic = data.get('topic') or data.get('kafka_topic')
     session_id = data.get('session_id') or data.get('source_id')
+    source_mode = data.get('source_mode') or data.get('mode')
 
     if topic and address_type == "api" and not str(address or "").startswith(("http://", "https://")):
         address_type = "broker"
@@ -435,7 +436,7 @@ def connect_to_source():
         if rest_api("check", address, session_id) is True:
             print("api verified")
             save_temp_config("active_source_type", "api", session_id)
-            save_temp_config("active_source_mode", "realtime", session_id)
+            save_temp_config("active_source_mode", "batch" if source_mode == "batch" else "realtime", session_id)
             save_temp_config("dataframe_ready", False, session_id)
             try:
                 df = load_realtime_api(address, session_id)
