@@ -513,22 +513,55 @@ def _dataframe_to_row_dicts(df):
     return []
 
 
+def _parent_session_id(session_id):
+    raw = str(session_id or "")
+    if "_" not in raw:
+        return None
+    _, parent = raw.split("_", 1)
+    return parent or None
+
+
+def _first_config_value(value):
+    if isinstance(value, (list, tuple)):
+        return value[0] if value else None
+    return value
+
+
+def _resolve_rule_name(rule, session_id):
+    if rule:
+        return rule
+    active_rule = _first_config_value(load_temp_config("active_rule", session_id))
+    if active_rule:
+        return active_rule
+    rule_names = load_temp_config("rule_names", session_id)
+    return _first_config_value(rule_names)
+
+
 def _load_rule_module(rule, session_id):
-    rule_key = str(rule).strip().lower().replace(' ', '_') if rule else ""
+    resolved_rule = _resolve_rule_name(rule, session_id)
+    rule_key = str(resolved_rule).strip().lower().replace(' ', '_') if resolved_rule else ""
+    if not rule_key:
+        return "", None, "No active rule selected."
+
     rules_dir = ensure_artifact_dir("rules")
     rule_filename = f"{rule_key}_rules.py"
-    session_rule_path = os.path.join(rules_dir, str(session_id), rule_filename)
-    default_rule_path = os.path.join(rules_dir, rule_filename)
-    legacy_default_rule_path = os.path.join("public", "temp_rules", rule_filename)
-    rule_path = (
-        session_rule_path
-        if os.path.exists(session_rule_path)
-        else default_rule_path
-        if os.path.exists(default_rule_path)
-        else legacy_default_rule_path
-    )
-    module, rule_status = check_rule_status(rule_key, rule_path)
-    return rule_key, module, rule_status
+    candidate_paths = [
+        os.path.join(rules_dir, str(session_id), rule_filename),
+    ]
+    parent_session_id = _parent_session_id(session_id)
+    if parent_session_id:
+        candidate_paths.append(os.path.join(rules_dir, parent_session_id, rule_filename))
+    candidate_paths.extend([
+        os.path.join(rules_dir, rule_filename),
+        os.path.join("public", "temp_rules", rule_filename),
+    ])
+
+    for rule_path in candidate_paths:
+        if os.path.exists(rule_path):
+            module, rule_status = check_rule_status(rule_key, rule_path)
+            return rule_key, module, rule_status
+
+    return rule_key, None, f"No rule file found. Checked: {candidate_paths}"
 
 
 def realtime_neo4j_message_ingest(payload, df, batch_number):
