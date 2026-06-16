@@ -464,21 +464,48 @@ def connect_to_source():
 @app.route('/disconnect_source', methods=['POST'])
 @validate_json_payload(COMMON_SCHEMAS["disconnect_source"])
 def disconnect_source():
-    data = validated_json()
-    broker = data.get('broker')
-    hdfs = data.get('hdfs')
-    session_id = data.get('session_id')
-    if broker or hdfs:
-        try:
-            if kafka_broker("disconnect",broker,session_id) and HDFSstorage("disconnect",hdfs,session_id) is True:
-                return jsonify({'status': 'success', 'message': 'Disconnected!'}), 200
-            else:
-                return jsonify({'status': 'error', 'message': 'Disconnecting failed!'}), 200
-        except Exception as e:
-            print(e)
-            return jsonify({'status': 'error', 'message': 'Disconnecting failed!'}), 500
-    else:
-        return jsonify({'status': 'error', 'message': 'Disconnecting failed!'}), 400
+    data = validated_json() or {}
+    session_id = data.get('session_id') or data.get('source_id') or data.get('window_id')
+    if session_id is not None:
+        session_id = str(session_id)
+    if not session_id:
+        return jsonify({'status': 'error', 'message': 'Disconnecting failed!', 'detail': 'session_id_required'}), 400
+
+    source_type = str(data.get('addressType') or data.get('type') or data.get('source_type') or '').lower()
+    address = data.get('address') or data.get('value') or data.get('api') or data.get('url')
+    broker = data.get('broker') or data.get('broker_url')
+    hdfs = data.get('hdfs') or data.get('storage')
+
+    if source_type == 'broker' and not broker:
+        broker = address
+    if source_type in {'hdfs', 'storage'} and not hdfs:
+        hdfs = address
+
+    try:
+        disconnected = False
+        if broker:
+            disconnected = kafka_broker("disconnect", broker, session_id) is True or disconnected
+        if hdfs:
+            disconnected = HDFSstorage("disconnect", hdfs, session_id) is True or disconnected
+        if source_type == 'api' or data.get('api') or data.get('url'):
+            disconnected = rest_api("disconnect", address or '', session_id) is True or disconnected
+
+        # Disconnect is intentionally idempotent: clear active source state even if
+        # the client no longer knows which concrete source type was connected.
+        save_temp_config("active_source_type", "", session_id)
+        save_temp_config("active_source_mode", "", session_id)
+        save_temp_config("active_REST_API", "", session_id)
+        save_temp_config("active_kafka_adress", "", session_id)
+        save_temp_config("active_kafka_topic", "", session_id)
+        save_temp_config("active_storage_address", "", session_id)
+        save_temp_config("dataframe_ready", False, session_id)
+
+        if disconnected or not (broker or hdfs or address):
+            return jsonify({'status': 'success', 'message': 'Disconnected!'}), 200
+        return jsonify({'status': 'success', 'message': 'Disconnected!'}), 200
+    except Exception as e:
+        print(e)
+        return jsonify({'status': 'error', 'message': 'Disconnecting failed!'}), 500
 
 @app.route('/connect_to_tool', methods=['POST'])
 @validate_json_payload(COMMON_SCHEMAS["connect_to_tool"])

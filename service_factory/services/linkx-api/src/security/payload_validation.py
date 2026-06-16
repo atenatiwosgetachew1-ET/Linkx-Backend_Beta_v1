@@ -302,12 +302,27 @@ COMMON_SCHEMAS = {
     },
     "disconnect_source": {
         "type": "object",
-        "required": ["session_id"],
         "additionalProperties": False,
         "properties": {
+            "id": {"type": ["string", "null"], "maxLength": 64},
+            "addressType": {"type": ["string", "null"], "maxLength": 64},
+            "type": {"type": ["string", "null"], "maxLength": 64},
+            "source_type": {"type": ["string", "null"], "maxLength": 64},
             "broker": {"type": ["string", "null"], "maxLength": 512},
+            "broker_url": {"type": ["string", "null"], "maxLength": 512},
+            "address": {"type": ["string", "null"], "maxLength": 2048},
+            "value": {"type": ["string", "null"], "maxLength": 2048},
+            "api": {"type": ["string", "null"], "maxLength": 2048},
+            "url": {"type": ["string", "null"], "maxLength": 2048},
             "hdfs": {"type": ["string", "null"], "maxLength": 512},
-            "session_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+            "storage": {"type": ["string", "null"], "maxLength": 512},
+            "session_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+            "source_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+            "window_id": {"anyOf": [
+                {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+                {"type": "integer"},
+                {"type": "null"}
+            ]},
         },
     },
     "connect_to_tool": {
