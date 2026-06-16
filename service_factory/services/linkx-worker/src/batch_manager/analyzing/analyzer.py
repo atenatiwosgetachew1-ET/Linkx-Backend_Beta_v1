@@ -2,6 +2,7 @@ from kafka import KafkaConsumer, KafkaProducer
 from kafka.errors import NoBrokersAvailable
 from kafka.admin import KafkaAdminClient
 import re
+import json
 from datetime import datetime
 import time
 import uuid
@@ -112,8 +113,22 @@ def _spark_or_pandas_row_dict(row):
     return dict(row)
 
 
+def _neo4j_property_value(value):
+    if value is None:
+        return ""
+    if isinstance(value, float) and value != value:
+        return ""
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (dict, list, tuple, set)):
+        return json.dumps(value, default=str, sort_keys=True)
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
 def _clean_neo4j_props(row):
-    return {key: ("" if value is None else value) for key, value in row.items()}
+    return {key: _neo4j_property_value(value) for key, value in row.items()}
 
 
 def _relationship_node_props(row):
@@ -538,7 +553,7 @@ def realtime_neo4j_message_ingest(payload, df, batch_number):
         set_session_status(driver, session_id, "INGESTING", rule=rule, run_id=run_id)
         clean_rows = []
         for row in rows:
-            clean = {k: ("" if v is None else v) for k, v in row.items()}
+            clean = _clean_neo4j_props(row)
             clean.setdefault("NodeId", str(uuid.uuid4()))
             clean["session_id"] = session_id
             clean["run_id"] = run_id
