@@ -233,13 +233,8 @@ def neo4j_row_data_injector(payload, batch_size=500):
             def sanitize_props(d):
                 return {k.replace(" ", "_").replace(".", "_"): v for k, v in d.items() if v is not None}
 
-            # Collect rows (NO dropDuplicates -> we need frequency)
-            rows = (
-                df.where(f"`{source_col}` IS NOT NULL AND `{target_col}` IS NOT NULL")
-                .toLocalIterator()
-            )
-
-            # -------- WEIGHT AGGREGATION --------
+            # Collect rows (NO dropDuplicates -> we need frequency). This path must
+            # support both pandas and Spark dataframes, so filtering is done in Python.
             from collections import defaultdict
 
             rel_counter = defaultdict(lambda: {
@@ -249,19 +244,22 @@ def neo4j_row_data_injector(payload, batch_size=500):
                 "weight": 0
             })
 
-            for r in rows:
-                if r[source_col] == r[target_col]:
-                    continue
+            for row_batch in _iter_dataframe_row_batches(df, batch_size):
+                for raw_row in row_batch:
+                    source_value = _neo4j_property_value(raw_row.get(source_col))
+                    target_value = _neo4j_property_value(raw_row.get(target_col))
+                    if source_value == "" or target_value == "" or source_value == target_value:
+                        continue
 
-                row_dict = _relationship_node_props(sanitize_props(r.asDict(recursive=True)))
-                key = (r[source_col], r[target_col])
+                    row_dict = _relationship_node_props(_clean_neo4j_props(sanitize_props(raw_row)))
+                    key = (source_value, target_value)
 
-                if rel_counter[key]["weight"] == 0:
-                    rel_counter[key]["source"] = r[source_col]
-                    rel_counter[key]["target"] = r[target_col]
-                    rel_counter[key]["props"] = row_dict
+                    if rel_counter[key]["weight"] == 0:
+                        rel_counter[key]["source"] = source_value
+                        rel_counter[key]["target"] = target_value
+                        rel_counter[key]["props"] = row_dict
 
-                rel_counter[key]["weight"] += 1
+                    rel_counter[key]["weight"] += 1
 
             rels = []
             for v in rel_counter.values():
