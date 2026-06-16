@@ -350,6 +350,19 @@ COMMON_SCHEMAS = {
         },
         "additionalProperties": True,
     },
+    "close_source_window": {
+        "type": "object",
+        "required": ["id"],
+        "additionalProperties": True,
+        "properties": {
+            "id": {"type": "string", "enum": ["close_source_window", "source_window_closed", "window_closed"]},
+            "session_id": {"type": ["string", "integer", "null"], "maxLength": 128},
+            "source_id": {"type": ["string", "integer", "null"], "maxLength": 128},
+            "window_id": {"type": ["string", "integer", "null"], "maxLength": 128},
+            "run_id": {"type": ["string", "null"], "maxLength": 128},
+            "reason": {"type": ["string", "null"], "maxLength": 255},
+        },
+    },
     "graph_link": {
         "type": "object",
         "required": ["id", "source_id"],

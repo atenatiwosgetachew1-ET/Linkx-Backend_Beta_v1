@@ -574,6 +574,59 @@ def disconnect_tool():
     else:
         return jsonify({'status': 'error', 'message': 'Disconnecting failed!'}), 400
 
+def _source_window_session_id(data):
+    source_id = data.get('source_id')
+    if source_id:
+        return str(source_id)
+    session_id = data.get('session_id')
+    window_id = data.get('window_id')
+    if session_id is None:
+        return None
+    session_id = str(session_id)
+    if "_" in session_id:
+        return session_id
+    if window_id is None or str(window_id) == "":
+        return session_id
+    return f"{window_id}_{session_id}"
+
+
+@app.route('/close_source_window', methods=['POST'])
+@auth_required
+@validate_json_payload(COMMON_SCHEMAS["close_source_window"])
+def close_source_window():
+    data = validated_json() or {}
+    session_id = _source_window_session_id(data)
+    if not session_id:
+        return jsonify({'status': 'error', 'message': 'missing_session_id'}), 400
+
+    tool_credentials = load_temp_config("tool_credentials", session_id)
+    cleanup_id = None
+    try:
+        cleanup_id = enqueue_cleanup_run(
+            "window",
+            session_id=session_id,
+            run_id=data.get("run_id"),
+            reason=data.get("reason") or "source_window_closed",
+            neo4j_credentials=tool_credentials if isinstance(tool_credentials, dict) else None,
+            payload={
+                "cleanup_targets": ["neo4j", "artifacts"],
+                "event": "close_source_window",
+                "base_session_id": str(data.get('session_id')) if data.get('session_id') is not None else None,
+                "window_id": str(data.get('window_id')) if data.get('window_id') is not None else None,
+            },
+        )
+    except Exception as exc:
+        print(f"[cleanup] failed to enqueue close_source_window cleanup for {session_id}: {exc}")
+        return jsonify({'status': 'error', 'message': 'cleanup_enqueue_failed', 'detail': str(exc)}), 500
+
+    return jsonify({
+        'status': 'success',
+        'message': 'cleanup_queued',
+        'session_id': session_id,
+        'cleanup_id': cleanup_id,
+    }), 202
+
+
 @app.route('/upload_batch_files', methods=['POST'])
 def upload_batch_files():
     if 'file' not in request.files:

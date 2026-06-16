@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from batch_manager.utils.neo4j_cleanup import clean_existing_session
 from batch_manager.utils.neo4j_utils import create_neo4j_driver, neo4j_database_name
-from linkx_cleanup.artifacts import delete_filesystem_artifact
+from linkx_cleanup.artifacts import artifact_root, delete_filesystem_artifact
 from linkx_cleanup.db import connect
 
 
@@ -34,6 +34,82 @@ def cleanup_neo4j_session(session_id, run_id=None, batch_size=10000, dry_run=Fal
     finally:
         driver.close()
     return {"neo4j": "cleaned", "session_id": session_id, "run_id": run_id, "database": neo4j_database_name(creds)}
+
+
+def _split_window_session(session_id):
+    raw = str(session_id or "")
+    if "_" not in raw:
+        return raw, ""
+    window_id, base_session = raw.split("_", 1)
+    return base_session or raw, window_id
+
+
+def cleanup_filesystem_footprint(session_id, dry_run=False):
+    root = artifact_root()
+    session_id = str(session_id or "")
+    candidates = [
+        root / "dfparts" / f"merged_dfpart_{session_id}",
+        root / "uploads" / session_id,
+        root / "rules" / session_id,
+        root / "graphs" / session_id,
+        root / "reports" / session_id,
+        root / "configs" / f"{session_id}_temp_config.json",
+        root / "configs" / session_id,
+    ]
+    candidates.extend((root / "logs").glob(f"logfile_{session_id}_*.log"))
+    candidates.extend((root / "logs").glob(f"logfile_{session_id}_[*].log"))
+
+    deleted = []
+    skipped = []
+    seen = set()
+    for candidate in candidates:
+        candidate = candidate.resolve()
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            if candidate.exists():
+                deleted.append(delete_filesystem_artifact(str(candidate), dry_run=dry_run))
+            else:
+                skipped.append({"path": str(candidate), "exists": False})
+        except Exception as exc:
+            skipped.append({"path": str(candidate), "error": str(exc)})
+    return {"deleted": deleted, "skipped": skipped, "count": len(deleted), "dry_run": dry_run}
+
+
+def cleanup_session_config(session_id, dry_run=False):
+    base_session, window_id = _split_window_session(session_id)
+    if dry_run:
+        return {"session_id": str(session_id), "base_session": base_session, "window_id": window_id, "dry_run": True}
+    with connect() as conn:
+        with conn.cursor() as cur:
+            if window_id:
+                cur.execute(
+                    "DELETE FROM session_configs WHERE (session_id = %s AND window_id = %s) OR session_id = %s",
+                    (base_session, window_id, str(session_id)),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE session_configs
+                    SET config = config
+                        - 'active_source_type'
+                        - 'active_source_mode'
+                        - 'active_REST_API'
+                        - 'active_kafka_adress'
+                        - 'active_kafka_topic'
+                        - 'active_storage_address'
+                        - 'tool_credentials'
+                        - 'tool'
+                        || '{"dataframe_ready": false}'::jsonb,
+                        updated_at = NOW()
+                    WHERE session_id = %s
+                    """,
+                    (str(session_id),),
+                )
+            affected = cur.rowcount
+        conn.commit()
+    return {"session_id": str(session_id), "base_session": base_session, "window_id": window_id, "rows_changed": affected}
 
 
 def cleanup_artifacts(session_id=None, artifact_ids=None, expired_only=False, dry_run=False, limit=500):
@@ -126,6 +202,8 @@ def _child_sessions(parent_session_id):
 def cleanup_session(session_id, run_id=None, dry_run=False, payload=None, mark_status="cleaned"):
     results = {"session_id": session_id, "run_id": run_id, "dry_run": dry_run}
     results["artifacts"] = cleanup_artifacts(session_id=session_id, dry_run=dry_run)
+    results["filesystem"] = cleanup_filesystem_footprint(session_id, dry_run=dry_run)
+    results["session_config"] = cleanup_session_config(session_id, dry_run=dry_run)
     results["neo4j"] = cleanup_neo4j_session(session_id, run_id=run_id, dry_run=dry_run, payload=payload)
     if not dry_run:
         with connect() as conn:
