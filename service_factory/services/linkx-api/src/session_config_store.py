@@ -202,21 +202,26 @@ def load_session_config(session_id, window_id=None):
     target_window = str(window_id if window_id is not None else inferred_window)
     with _connect() as conn:
         with conn.cursor() as cur:
+            base_config = None
+            if target_window:
+                cur.execute(
+                    "SELECT config FROM session_configs WHERE session_id = %s AND window_id = ''",
+                    (str(base_session),),
+                )
+                base_row = cur.fetchone()
+                if base_row:
+                    base_config = base_row[0] or {}
             cur.execute(
                 "SELECT config FROM session_configs WHERE session_id = %s AND window_id = %s",
                 (str(base_session), target_window),
             )
             row = cur.fetchone()
             if row:
+                if target_window and base_config is not None:
+                    return {**base_config, **(row[0] or {})}
                 return row[0] or {}
             if target_window:
-                cur.execute(
-                    "SELECT config FROM session_configs WHERE session_id = %s AND window_id = ''",
-                    (str(base_session),),
-                )
-                row = cur.fetchone()
-                if row:
-                    return row[0] or {}
+                return base_config
     return None
 
 
