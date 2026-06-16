@@ -74,6 +74,27 @@ def _validation_error_response(exc):
         body["field"] = exc.field
     return jsonify(body), 400
 
+
+def _normalize_neo4j_url(url):
+    value = str(url or "").strip()
+    if value.startswith("neo4j://"):
+        value = "bolt://" + value[len("neo4j://"):]
+    if not value.startswith("bolt://"):
+        return value
+    remainder = value[len("bolt://"):]
+    authority, separator, path = remainder.partition("/")
+    if ":" not in authority:
+        authority = f"{authority}:7687"
+    return f"bolt://{authority}{separator}{path}"
+
+
+def _parent_session_id(session_id):
+    raw = str(session_id or "")
+    if "_" not in raw:
+        return None
+    _, parent = raw.split("_", 1)
+    return parent or None
+
 def _is_spark_df(df):
     return "pyspark.sql.dataframe.DataFrame" in str(type(df))
 
@@ -546,17 +567,26 @@ def disconnect_source():
 def connect_to_tool():
     data = validated_json()
     tool_name = data.get('tool_name')
-    url= data.get('url')
+    url = data.get('url')
     username = data.get('username')
     password = data.get('password')
-    database = data.get('database') or load_temp_config("active_tool_database", data.get('source_id'))
     session_id = data.get('source_id')
-    payload={"url":url,"username":username,"password":password,"session_id":session_id} 
+    database = data.get('database') or load_temp_config("active_tool_database", session_id)
+    if tool_name == "neo4j":
+        url = _normalize_neo4j_url(url)
+    payload = {"url": url, "username": username, "password": password, "session_id": session_id}
     if database:
         payload["database"] = database
     if url and username and password:
-        if tools(tool_name,"connect",payload) is True:
-            return jsonify({'status': 'success', 'message': 'Connected!'}), 200
+        if tools(tool_name, "connect", payload) is True:
+            parent_session_id = _parent_session_id(session_id)
+            if parent_session_id:
+                parent_payload = {**payload, "session_id": parent_session_id}
+                save_temp_config("tool", tool_name, parent_session_id)
+                save_temp_config("tool_credentials", parent_payload, parent_session_id)
+                if database:
+                    save_temp_config("active_tool_database", database, parent_session_id)
+            return jsonify({'status': 'success', 'message': 'Connected!', 'url': url}), 200
         else:
             return jsonify({'status': 'error', 'message': 'Not connected!'}), 200
     else:
