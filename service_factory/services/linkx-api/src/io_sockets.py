@@ -1,6 +1,7 @@
 from flask import request
 from flask_socketio import SocketIO
 
+import os
 import threading
 import globals
 
@@ -13,6 +14,7 @@ from batch_manager.utils.notification_utils import (
 )
 from globals import load_temp_config,get_or_create_socket_entry,sockets_registry,_session_store
 from connection_utils import tools
+from batch_manager.processing.session_manager import end_session
 from auth.repository import get_service_account_by_id, get_user_by_id, public_actor
 from auth.tokens import verify_access_token
 
@@ -32,6 +34,49 @@ def register_socket_handlers(socketio: SocketIO):
     """
     set_notification_socketio(socketio)
     print("[str_report_socket] socket handlers registered (socketio ready)")
+
+    disconnect_grace_seconds = int(os.getenv("LINKX_SOCKET_DISCONNECT_GRACE_SECONDS", "45"))
+
+    def _track_socket_session(sid, session_id):
+        if not session_id:
+            return
+        entry = get_or_create_socket_entry(sid)
+        entry.setdefault("analysis_sessions", set()).add(str(session_id))
+
+    def _socket_has_session(entry, session_id):
+        session_key = str(session_id)
+        if session_key in entry.get("analysis_sessions", set()):
+            return True
+        if session_key in entry.get("notification_sessions", set()):
+            return True
+        if session_key in entry.get("graph_statuses", {}):
+            return True
+        log_stream = entry.get("log_stream")
+        return isinstance(log_stream, dict) and str(log_stream.get("session_id")) == session_key
+
+    def _has_live_socket_for_session(session_id):
+        session_key = str(session_id)
+        for sid, entry in list(sockets_registry.items()):
+            if not is_socket_alive(sid, socketio):
+                continue
+            if _socket_has_session(entry, session_key):
+                return True
+        return False
+
+    def _stop_abandoned_api_session(session_id):
+        session_key = str(session_id)
+        socketio.sleep(disconnect_grace_seconds)
+        if _has_live_socket_for_session(session_key):
+            print(f"[str_report_socket] session {session_key} reconnected before abandonment grace")
+            return
+        if session_key not in _session_store:
+            return
+        print(f"[str_report_socket] stopping abandoned API session {session_key}")
+        try:
+            result = end_session({"session_id": session_key, "reason": "socket_disconnect_abandoned"})
+            print(f"[str_report_socket] abandoned session stop result session_id={session_key}: {result}")
+        except Exception as exc:
+            print(f"[str_report_socket] failed to stop abandoned API session {session_key}: {exc}")
 
     @socketio.on("connect")
     def handle_connect(auth=None):
@@ -65,6 +110,7 @@ def register_socket_handlers(socketio: SocketIO):
             return
 
         entry = get_or_create_socket_entry(sid)
+        _track_socket_session(sid, session_id)
         subscribe_str_report_session(session_id, sid)
         print(
             f"[str_report_socket] {source_event} sid={sid} session_id={session_id} "
@@ -110,9 +156,11 @@ def register_socket_handlers(socketio: SocketIO):
         )
 
         entry = get_or_create_socket_entry(sid)
+        _track_socket_session(sid, session_id)
         entry["log_stream"] = {
             "task": task,
-            "stop_event": stop_event
+            "stop_event": stop_event,
+            "session_id": str(session_id) if session_id else None,
         }
 
 
@@ -215,6 +263,7 @@ def register_socket_handlers(socketio: SocketIO):
         print(f"[str_report_socket] graph_status_subscribe sid={sid} session_id={session_id}")
 
         entry = get_or_create_socket_entry(sid)
+        _track_socket_session(sid, session_id)
         replayed_status_count = flush_status_pending(session_id, sid)
 
         # ensure multiple session support
@@ -300,15 +349,24 @@ def register_socket_handlers(socketio: SocketIO):
         sid = request.sid
         print(f"[str_report_socket] client disconnected sid={sid}")
         entry = sockets_registry.pop(sid, {})
+        watched_sessions = set(str(value) for value in entry.get("analysis_sessions", set()) if value)
+        watched_sessions.update(str(value) for value in entry.get("notification_sessions", set()) if value)
+        watched_sessions.update(str(value) for value in entry.get("graph_statuses", {}).keys() if value)
 
         log_stream = entry.get("log_stream")
         if isinstance(log_stream, dict):
             stop_event = log_stream.get("stop_event")
             if stop_event:
                 stop_event.set()
+            if log_stream.get("session_id"):
+                watched_sessions.add(str(log_stream.get("session_id")))
 
         for graph_entry in entry.get("graph_statuses", {}).values():
             if isinstance(graph_entry, dict):
                 stop_event = graph_entry.get("stop_event")
                 if stop_event:
                     stop_event.set()
+
+        for session_id in watched_sessions:
+            if session_id in _session_store:
+                socketio.start_background_task(_stop_abandoned_api_session, session_id)
