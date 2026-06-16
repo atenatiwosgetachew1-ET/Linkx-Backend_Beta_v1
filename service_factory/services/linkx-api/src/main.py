@@ -36,8 +36,8 @@ from logger import log_writer,log_stream_background
 from io_sockets import register_socket_handlers
 from api.STR_link_analysis import STR_link_analysis_api
 from session_config_store import create_session_config, duplicate_window_config, get_user_config, save_user_config
-from service_orchestration import enqueue_cleanup_run
-from auth.decorators import auth_required, current_actor_from_request
+from service_orchestration import enqueue_cleanup_run, list_cleanup_audit
+from auth.decorators import auth_required, current_actor_from_request, permission_required
 from auth.repository import bind_analysis_session_actor
 from auth.routes import auth_api
 from security.payload_validation import (
@@ -118,6 +118,24 @@ def _source_connected_response(df, session_id, message="Connection established!"
 def _is_kafka_batch_topic(topic):
     topic_name = str(topic or "")
     return topic_name.endswith(".batches") or topic_name.endswith("batches")
+
+@app.route('/admin/audit/cleanup', methods=['GET'])
+@permission_required("users:manage")
+def admin_cleanup_audit():
+    filters = {
+        "session_id": request.args.get("session_id"),
+        "cleanup_type": request.args.get("cleanup_type"),
+        "status": request.args.get("status"),
+        "limit": request.args.get("limit"),
+        "offset": request.args.get("offset"),
+    }
+    try:
+        result = list_cleanup_audit(filters)
+        return jsonify({"message": "success", "results": result}), 200
+    except Exception as exc:
+        current_app.logger.warning("cleanup audit query failed: %s", exc)
+        return jsonify({"message": "audit_query_failed", "detail": str(exc)}), 500
+
 
 @app.route('/db/health', methods=['GET'])
 def db_health():

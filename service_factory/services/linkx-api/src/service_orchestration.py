@@ -108,3 +108,106 @@ def request_session_cancellation(session_id, reason="client_requested", requeste
         "jobs": jobs,
         "cleanup_id": cleanup_id,
     }
+
+
+def _clamp_limit(value, default=50, maximum=200):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(1, min(parsed, maximum))
+
+
+def _clamp_offset(value):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = 0
+    return max(0, parsed)
+
+
+def list_cleanup_audit(filters=None):
+    filters = filters or {}
+    limit = _clamp_limit(filters.get("limit"))
+    offset = _clamp_offset(filters.get("offset"))
+    where = []
+    params = []
+
+    if filters.get("session_id"):
+        where.append("c.session_id = %s")
+        params.append(str(filters["session_id"]))
+    if filters.get("cleanup_type"):
+        where.append("c.cleanup_type = %s")
+        params.append(str(filters["cleanup_type"]))
+    if filters.get("status"):
+        where.append("c.status = %s")
+        params.append(str(filters["status"]))
+
+    where_sql = "WHERE " + " AND ".join(where) if where else ""
+
+    with connect(application_name="linkx-cleanup-audit") as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT count(*) FROM cleanup_runs c {where_sql}", params)
+            total = cur.fetchone()[0]
+            cur.execute(
+                f"""
+                SELECT
+                    c.id::text,
+                    c.cleanup_type,
+                    c.status,
+                    c.session_id,
+                    c.job_id::text,
+                    c.dry_run,
+                    c.started_at,
+                    c.finished_at,
+                    c.created_at,
+                    c.error_message,
+                    c.summary,
+                    s.parent_session_id,
+                    s.owner_user_id,
+                    s.status AS session_status,
+                    COALESCE(a.artifact_count, 0) AS artifact_count,
+                    COALESCE(a.deleted_artifact_count, 0) AS deleted_artifact_count
+                FROM cleanup_runs c
+                LEFT JOIN analysis_sessions s ON s.session_id = c.session_id
+                LEFT JOIN LATERAL (
+                    SELECT
+                        count(*) AS artifact_count,
+                        count(*) FILTER (WHERE delete_status = 'deleted') AS deleted_artifact_count
+                    FROM artifacts a
+                    WHERE a.session_id = c.session_id
+                ) a ON TRUE
+                {where_sql}
+                ORDER BY c.created_at DESC
+                LIMIT %s OFFSET %s
+                """,
+                [*params, limit, offset],
+            )
+            rows = cur.fetchall()
+
+    items = []
+    for row in rows:
+        items.append({
+            "id": row[0],
+            "cleanup_type": row[1],
+            "status": row[2],
+            "session_id": row[3],
+            "job_id": row[4],
+            "dry_run": row[5],
+            "started_at": row[6].isoformat() if row[6] else None,
+            "finished_at": row[7].isoformat() if row[7] else None,
+            "created_at": row[8].isoformat() if row[8] else None,
+            "error_message": row[9],
+            "summary": row[10] or {},
+            "session": {
+                "parent_session_id": row[11],
+                "owner_user_id": row[12],
+                "status": row[13],
+            },
+            "artifacts": {
+                "count": row[14],
+                "deleted_count": row[15],
+            },
+        })
+
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
