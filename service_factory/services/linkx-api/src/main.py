@@ -36,6 +36,7 @@ from logger import log_writer,log_stream_background
 from io_sockets import register_socket_handlers
 from api.STR_link_analysis import STR_link_analysis_api
 from session_config_store import create_session_config, duplicate_window_config, get_user_config, save_user_config
+from service_orchestration import enqueue_cleanup_run
 from auth.decorators import auth_required, current_actor_from_request
 from auth.repository import bind_analysis_session_actor
 from auth.routes import auth_api
@@ -501,9 +502,23 @@ def disconnect_source():
         save_temp_config("active_storage_address", "", session_id)
         save_temp_config("dataframe_ready", False, session_id)
 
-        if disconnected or not (broker or hdfs or address):
-            return jsonify({'status': 'success', 'message': 'Disconnected!'}), 200
-        return jsonify({'status': 'success', 'message': 'Disconnected!'}), 200
+        cleanup_id = None
+        tool_credentials = load_temp_config("tool_credentials", session_id)
+        try:
+            cleanup_id = enqueue_cleanup_run(
+                "window",
+                session_id=session_id,
+                reason="source_disconnected",
+                neo4j_credentials=tool_credentials if isinstance(tool_credentials, dict) else None,
+                payload={"cleanup_targets": ["neo4j", "artifacts"], "event": "disconnect_source"},
+            )
+        except Exception as exc:
+            print(f"[cleanup] failed to enqueue window cleanup for {session_id}: {exc}")
+
+        response = {'status': 'success', 'message': 'Disconnected!'}
+        if cleanup_id:
+            response['cleanup_id'] = cleanup_id
+        return jsonify(response), 200
     except Exception as e:
         print(e)
         return jsonify({'status': 'error', 'message': 'Disconnecting failed!'}), 500
@@ -537,8 +552,23 @@ def disconnect_tool():
     tool_name = data.get('tool_name')
     payload={"session_id":session_id}
     if session_id:
+        tool_credentials = load_temp_config("tool_credentials", session_id)
         if tools(tool_name,"disconnect",payload) is True:
-            return jsonify({'status': 'success', 'message': 'Disconnected!'}), 200
+            cleanup_id = None
+            try:
+                cleanup_id = enqueue_cleanup_run(
+                    "window",
+                    session_id=session_id,
+                    reason="tool_disconnected",
+                    neo4j_credentials=tool_credentials if isinstance(tool_credentials, dict) else None,
+                    payload={"cleanup_targets": ["neo4j"], "event": "disconnect_tool", "tool_name": tool_name},
+                )
+            except Exception as exc:
+                print(f"[cleanup] failed to enqueue tool cleanup for {session_id}: {exc}")
+            response = {'status': 'success', 'message': 'Disconnected!'}
+            if cleanup_id:
+                response['cleanup_id'] = cleanup_id
+            return jsonify(response), 200
         else:
             return jsonify({'status': 'error', 'message': 'Disconnecting failed!'}), 200
     else:

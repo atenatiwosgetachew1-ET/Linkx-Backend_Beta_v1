@@ -106,22 +106,88 @@ def prune_cleaned_metadata(retention_days=30, dry_run=False):
     return {"artifacts": artifact_count, "jobs": job_count, "dry_run": dry_run}
 
 
-def cleanup_session(session_id, run_id=None, dry_run=False, payload=None):
+def _child_sessions(parent_session_id):
+    if not parent_session_id:
+        return []
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT session_id
+                FROM analysis_sessions
+                WHERE parent_session_id = %s
+                ORDER BY created_at ASC
+                """,
+                (str(parent_session_id),),
+            )
+            return [row[0] for row in cur.fetchall()]
+
+
+def cleanup_session(session_id, run_id=None, dry_run=False, payload=None, mark_status="cleaned"):
     results = {"session_id": session_id, "run_id": run_id, "dry_run": dry_run}
     results["artifacts"] = cleanup_artifacts(session_id=session_id, dry_run=dry_run)
     results["neo4j"] = cleanup_neo4j_session(session_id, run_id=run_id, dry_run=dry_run, payload=payload)
     if not dry_run:
         with connect() as conn:
             with conn.cursor() as cur:
-                cur.execute("UPDATE analysis_sessions SET status = 'cleaned', ended_at = COALESCE(ended_at, NOW()) WHERE session_id = %s", (str(session_id),))
+                cur.execute(
+                    "UPDATE analysis_sessions SET status = %s, ended_at = COALESCE(ended_at, NOW()) WHERE session_id = %s",
+                    (mark_status, str(session_id)),
+                )
             conn.commit()
     return results
 
 
+def cleanup_session_tree(session_id, dry_run=False, payload=None):
+    session_ids = [str(session_id), *_child_sessions(session_id)]
+    return {
+        "session_id": session_id,
+        "children": session_ids[1:],
+        "results": [cleanup_session(sid, dry_run=dry_run, payload=payload) for sid in session_ids],
+        "dry_run": dry_run,
+    }
+
+
+def cleanup_run(session_id, run_id, dry_run=False, payload=None):
+    results = {"session_id": session_id, "run_id": run_id, "dry_run": dry_run}
+    results["neo4j"] = cleanup_neo4j_session(session_id, run_id=run_id, dry_run=dry_run, payload=payload)
+    return results
+
+
+def cleanup_abandoned(retention_minutes=360, dry_run=False, payload=None):
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT session_id
+                FROM analysis_sessions
+                WHERE status IN ('active', 'cancel_requested')
+                  AND parent_session_id IS NULL
+                  AND last_seen_at < NOW() - (%s || ' minutes')::interval
+                ORDER BY last_seen_at ASC
+                LIMIT %s
+                """,
+                (int(retention_minutes), int((payload or {}).get("limit", 100))),
+            )
+            stale_sessions = [row[0] for row in cur.fetchall()]
+    return {
+        "retention_minutes": int(retention_minutes),
+        "sessions": stale_sessions,
+        "results": [cleanup_session_tree(sid, dry_run=dry_run, payload=payload) for sid in stale_sessions],
+        "dry_run": dry_run,
+    }
+
+
 def run_cleanup(cleanup_type, payload=None, dry_run=False):
     payload = payload or {}
-    if cleanup_type == "session":
+    if cleanup_type in {"session", "window"}:
         return cleanup_session(payload.get("session_id"), run_id=payload.get("run_id"), dry_run=dry_run, payload=payload)
+    if cleanup_type == "session_tree":
+        return cleanup_session_tree(payload.get("session_id"), dry_run=dry_run, payload=payload)
+    if cleanup_type == "run":
+        return cleanup_run(payload.get("session_id"), payload.get("run_id"), dry_run=dry_run, payload=payload)
+    if cleanup_type == "abandoned_sessions":
+        return cleanup_abandoned(retention_minutes=int(payload.get("retention_minutes", 360)), dry_run=dry_run, payload=payload)
     if cleanup_type == "artifacts_expired":
         return cleanup_artifacts(expired_only=True, dry_run=dry_run, limit=int(payload.get("limit", 500)))
     if cleanup_type == "artifacts_session":

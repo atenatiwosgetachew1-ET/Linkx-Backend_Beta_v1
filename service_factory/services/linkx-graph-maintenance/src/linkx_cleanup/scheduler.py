@@ -27,6 +27,15 @@ def schedule_once(dry_run=False):
     ids = []
     ids.append(enqueue_cleanup("artifacts_expired", {"limit": int(os.getenv("CLEANUP_ARTIFACT_LIMIT", "500"))}, dry_run=dry_run))
     ids.append(enqueue_cleanup("metadata_prune", {"retention_days": int(os.getenv("LINKX_METADATA_RETENTION_DAYS", "30"))}, dry_run=dry_run))
+    ids.append(enqueue_cleanup(
+        "abandoned_sessions",
+        {
+            "retention_minutes": int(os.getenv("LINKX_ABANDONED_SESSION_MINUTES", "360")),
+            "limit": int(os.getenv("CLEANUP_ABANDONED_SESSION_LIMIT", "100")),
+            "reason": "scheduled_abandoned_session_scan",
+        },
+        dry_run=dry_run,
+    ))
     return ids
 
 

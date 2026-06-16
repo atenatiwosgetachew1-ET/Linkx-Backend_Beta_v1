@@ -16,6 +16,11 @@ from batch_manager.utils.artifact_utils import ensure_artifact_dir
 from batch_manager.processing.realtime_source_loader import records_to_dataframe, iter_kafka_messages, iter_api_messages
 from globals import load_temp_config,_session_store
 
+try:
+    from service_orchestration import enqueue_cleanup_run
+except Exception:
+    enqueue_cleanup_run = None
+
 
 global_iteration_thread = None
 iteration_thread_registry = {}
@@ -759,6 +764,19 @@ def analyzer(payload):
             except Exception as e:
                 print(f"[{session_id}] Batch analysis failed: {e}")
                 log_writer(payload.get("log_file"), f"[Error] Analyzing session {session_id} failed {e}")
+                if enqueue_cleanup_run and payload.get("run_id"):
+                    try:
+                        cleanup_id = enqueue_cleanup_run(
+                            "run",
+                            session_id=session_id,
+                            run_id=payload.get("run_id"),
+                            reason="analysis_failed",
+                            neo4j_credentials=payload.get("tool_credentials"),
+                            payload={"event": "analysis_failed", "error": str(e)},
+                        )
+                        log_writer(payload.get("log_file"), f"[Info] Cleanup queued for failed run {payload.get('run_id')}: {cleanup_id}")
+                    except Exception as cleanup_exc:
+                        log_writer(payload.get("log_file"), f"[Warning] Failed to queue cleanup for failed run: {cleanup_exc}")
                 return False
 
 
