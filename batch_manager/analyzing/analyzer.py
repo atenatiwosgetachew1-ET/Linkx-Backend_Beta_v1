@@ -705,8 +705,8 @@ def analyzer(payload):
     dataframe_dir = payload.get("dataframe_dir")
     spark_conf = payload.get("spark_conf")
 
-    # Determine if we should use Spark
-    use_spark = True  # set True if you want Spark reading
+    # Spark is opt-in; API nodes in the split deployment do not require Java.
+    use_spark = bool(payload.get("use_spark", False))
 
     # Load the DataFrame (handles local/Windows paths safely)
     df = load_file(dataframe_dir, session_id, use_spark=use_spark)
