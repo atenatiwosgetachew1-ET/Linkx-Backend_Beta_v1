@@ -61,6 +61,24 @@ def batch_data_manager(payload):
             and not explicit_batch
             and not dataframe_analysis
         )
+        print(
+            "[batch_router]",
+            {
+                "session_id": session_id,
+                "action": payload.get("action"),
+                "payload_source_mode": payload.get("source_mode"),
+                "active_source_type": active_source_type,
+                "active_source_mode": active_source_mode,
+                "active_topic": active_topic,
+                "dataframe_ready": dataframe_ready,
+                "active_dataframe_kind": active_dataframe_kind,
+                "explicit_batch": explicit_batch,
+                "explicit_realtime": explicit_realtime,
+                "active_source_is_realtime": active_source_is_realtime,
+                "dataframe_analysis": dataframe_analysis,
+                "should_listen_realtime": should_listen_realtime,
+            },
+        )
         if should_listen_realtime:
             payload["id"] = "realtime_data"
             payload["type"] = "listen"

@@ -764,7 +764,16 @@ def live_batch_files():
     # START SESSION
     # -----------------------------
     elif action_id == "stream":
-        values=data.get("value") or {}    
+        values = data.get("value") or {}
+        if not isinstance(values, dict):
+            return jsonify({'results': None, 'message': 'Invalid stream value'}), 400
+        values.setdefault("session_id", session_id)
+        values.setdefault("source_mode", data.get("source_mode") or data.get("mode"))
+        values.setdefault("mode", data.get("mode") or data.get("source_mode"))
+        if data.get("listen_realtime") is True:
+            values.setdefault("listen_realtime", True)
+        if data.get("use_dataframe") is True:
+            values.setdefault("use_dataframe", True)
         #Create the session instance
         payload = {"id": "create_session", "session_id": session_id}
         session = batch_data_manager(payload)
