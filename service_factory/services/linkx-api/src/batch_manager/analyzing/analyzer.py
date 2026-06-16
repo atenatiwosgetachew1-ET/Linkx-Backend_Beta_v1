@@ -14,6 +14,7 @@ from batch_manager.processing.file_source_loader import load_file
 from batch_manager.utils.neo4j_utils import create_neo4j_driver
 from batch_manager.utils.artifact_utils import ensure_artifact_dir
 from batch_manager.processing.realtime_source_loader import records_to_dataframe, iter_kafka_messages, iter_api_messages
+from batch_manager.analyzing import LA_rules_script
 from globals import load_temp_config,_session_store
 
 try:
@@ -108,6 +109,48 @@ def run_incremental_rule(module, driver, session_id, node_label, batch_id, log_f
     if hasattr(module, "incremental_graph_analysis_transactions"):
         return module.incremental_graph_analysis_transactions(driver, session_id, node_label, batch_id, log_file)
     return None
+
+
+class _BuiltinRuleModule:
+    def __init__(self, main_func, incremental_func):
+        self._main_func = main_func
+        self._incremental_func = incremental_func
+
+    def main(self, driver, session_id, node_label, log_file):
+        return self._main_func(driver, log_file, session_id=session_id, nodes_label=node_label)
+
+    def incremental(self, driver, session_id, node_label, batch_id, log_file):
+        return self._incremental_func(driver, session_id, node_label, batch_id, log_file)
+
+
+def _builtin_rule_module(rule_key):
+    mapping = {
+        "bank_transactions": _BuiltinRuleModule(
+            LA_rules_script.batch_graph_analysis_transactions,
+            LA_rules_script.incremental_graph_analysis_transactions,
+        ),
+        "transactions": _BuiltinRuleModule(
+            LA_rules_script.batch_graph_analysis_transactions,
+            LA_rules_script.incremental_graph_analysis_transactions,
+        ),
+        "social_media_(tweeter)": _BuiltinRuleModule(
+            LA_rules_script.batch_graph_analysis_posts,
+            LA_rules_script.incremental_graph_analysis_posts,
+        ),
+        "social_media": _BuiltinRuleModule(
+            LA_rules_script.batch_graph_analysis_posts,
+            LA_rules_script.incremental_graph_analysis_posts,
+        ),
+        "call_data_records": _BuiltinRuleModule(
+            LA_rules_script.batch_graph_analysis_cdr,
+            LA_rules_script.incremental_graph_analysis_cdr,
+        ),
+        "cdr": _BuiltinRuleModule(
+            LA_rules_script.batch_graph_analysis_cdr,
+            LA_rules_script.incremental_graph_analysis_cdr,
+        ),
+    }
+    return mapping.get(rule_key)
 
 
 def _spark_or_pandas_row_dict(row):
@@ -560,6 +603,10 @@ def _load_rule_module(rule, session_id):
         if os.path.exists(rule_path):
             module, rule_status = check_rule_status(rule_key, rule_path)
             return rule_key, module, rule_status
+
+    builtin_module = _builtin_rule_module(rule_key)
+    if builtin_module:
+        return rule_key, builtin_module, "Using built-in rule module."
 
     return rule_key, None, f"No rule file found. Checked: {candidate_paths}"
 
