@@ -416,40 +416,16 @@ def neo4j_row_data_injector(payload, batch_size=500):
                         )
         if action == "Link Analysis":
             rule = payload.get("rule")
-            rule_key = str(rule).strip().lower().replace(' ', '_') if rule else ""
+            rule_key, module, rule_status = _load_rule_module(rule, session_id)
             log_writer(log_file, f"[{datetime.now()}] [Info] - Preparing Link Analysis data in Neo4j batches of {batch_size}")
+            if module:
+                log_writer(log_file, f"[{datetime.now()}] [Info] - Link Analysis rule resolved: {rule_key} ({rule_status})")
 
             total_rows = 0
             batches_inserted = 0
-
-            # Run rule-specific analysis on whatever was injected
-            # ------------------------------------------------------------------------------------------------------------- Identifing rules to label nodes with 1
-            #Stored/uploaded rules
-            rules=load_temp_config("rule_file_names",session_id)        
-            # Decide node label
-            # rule_name_first_part = rule_key.split('_')[0]
-            # node_label = f"{rule_name_first_part}_{session_id}"
-            node_label = f"{rule_key}_{session_id}"
-            #Linking the node_label to the session
+            node_label = f"{rule_key}_{session_id}" if rule_key else f"link_analysis_{session_id}"
             if session_id in _session_store:
                 _session_store[session_id]["node_label"] = node_label
-            # Run rule-specific analysis on whatever was injected
-            # ------------------------------------------------------------------------------------------------------------- Identifing rules to analyse with 2
-            # Path to the directory containing rule files
-            rules_dir = ensure_artifact_dir("rules")
-            rule_filename = f"{rule_key}_rules.py"
-            session_rule_path = os.path.join(rules_dir, str(session_id), rule_filename)
-            default_rule_path = os.path.join(rules_dir, rule_filename)
-            legacy_default_rule_path = os.path.join("public", "temp_rules", rule_filename)
-            rule_path = (
-                session_rule_path
-                if os.path.exists(session_rule_path)
-                else default_rule_path
-                if os.path.exists(default_rule_path)
-                else legacy_default_rule_path
-            )
-            module, rule_status = check_rule_status(rule_key, rule_path) #Check the rule
-            print(f"Loading rule from {rule_path}")  # debug
             # Insert nodes in batches; run cheap incremental rules after every batch.
 
             def prepare_link_row(row):
