@@ -14,6 +14,7 @@ from batch_manager.processing.file_source_loader import load_file
 from batch_manager.utils.neo4j_utils import create_neo4j_driver
 from batch_manager.utils.artifact_utils import ensure_artifact_dir
 from batch_manager.processing.realtime_source_loader import records_to_dataframe, iter_kafka_messages, iter_api_messages
+from batch_manager.processing.rules_compiler import normalize_rule_key
 from batch_manager.analyzing import LA_rules_script
 from globals import load_temp_config,_session_store
 
@@ -132,6 +133,10 @@ def _builtin_rule_module(rule_key):
         "transactions": _BuiltinRuleModule(
             LA_rules_script.batch_graph_analysis_transactions,
             LA_rules_script.incremental_graph_analysis_transactions,
+        ),
+        "social_media_tweeter": _BuiltinRuleModule(
+            LA_rules_script.batch_graph_analysis_posts,
+            LA_rules_script.incremental_graph_analysis_posts,
         ),
         "social_media_(tweeter)": _BuiltinRuleModule(
             LA_rules_script.batch_graph_analysis_posts,
@@ -582,7 +587,7 @@ def _resolve_rule_name(rule, session_id):
 
 def _load_rule_module(rule, session_id):
     resolved_rule = _resolve_rule_name(rule, session_id)
-    rule_key = str(resolved_rule).strip().lower().replace(' ', '_') if resolved_rule else ""
+    rule_key = normalize_rule_key(resolved_rule) if resolved_rule else ""
     if not rule_key:
         return "", None, "No active rule selected."
 
