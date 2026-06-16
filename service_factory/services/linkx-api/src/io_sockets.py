@@ -8,6 +8,7 @@ import globals
 from logger import log_stream_background 
 from batch_manager.utils.database_utils import graph_status_stream
 from batch_manager.utils.notification_utils import (
+    add_notification,
     set_notification_socketio,
     subscribe_str_report_session,
     flush_status_pending,
@@ -63,6 +64,39 @@ def register_socket_handlers(socketio: SocketIO):
                 return True
         return False
 
+    def _parent_session_id(session_id):
+        raw = str(session_id or "")
+        if "_" not in raw:
+            return None
+        _, parent = raw.split("_", 1)
+        return parent or None
+
+    def _queue_session_lost_notification(session_id):
+        session_key = str(session_id)
+        details = {
+            "session_id": session_key,
+            "reason": "socket_disconnect_abandoned",
+            "grace_seconds": disconnect_grace_seconds,
+        }
+        add_notification(
+            session_key,
+            "warning",
+            "session_lost",
+            "The analysis session was stopped because the browser disconnected and did not reconnect in time.",
+            source="api_socket_guard",
+            details=details,
+        )
+        parent_session = _parent_session_id(session_key)
+        if parent_session:
+            add_notification(
+                parent_session,
+                "warning",
+                "source_window_session_lost",
+                "A source window analysis was stopped because the browser disconnected and did not reconnect in time.",
+                source="api_socket_guard",
+                details={**details, "source_session_id": session_key, "parent_session_id": parent_session},
+            )
+
     def _stop_abandoned_api_session(session_id):
         session_key = str(session_id)
         socketio.sleep(disconnect_grace_seconds)
@@ -72,6 +106,7 @@ def register_socket_handlers(socketio: SocketIO):
         if session_key not in _session_store:
             return
         print(f"[str_report_socket] stopping abandoned API session {session_key}")
+        _queue_session_lost_notification(session_key)
         try:
             result = end_session({"session_id": session_key, "reason": "socket_disconnect_abandoned"})
             print(f"[str_report_socket] abandoned session stop result session_id={session_key}: {result}")
