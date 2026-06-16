@@ -361,7 +361,14 @@ def init_source():
     data = validated_json()
     active_session = data.get('session_id')
     window_id = data.get('window_id')
+    current_actor = current_actor_from_request()
+    if not current_actor:
+        return jsonify({'message': 'unauthorized'}), 401
+    child_session_id = f"{window_id}_{active_session}"
     try:
+        if not bind_analysis_session_actor(child_session_id, current_actor, parent_session_id=str(active_session)):
+            return jsonify({'results': "Could not bind source window session to user.", 'message': 'failed!'}), 500
+
         copied_config = duplicate_window_config(active_session, window_id)
         if copied_config is not None:
             return jsonify({'message': 'success!'}), 200
