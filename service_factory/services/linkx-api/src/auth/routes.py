@@ -25,7 +25,7 @@ from .tokens import create_access_token, create_service_token, verify_access_tok
 from security.payload_validation import COMMON_SCHEMAS, validate_json_payload, validated_json
 from globals import _session_store
 from batch_manager.processing.session_manager import end_session
-from service_orchestration import request_session_cancellation
+from service_orchestration import lock_session as persist_session_lock, request_session_cancellation, unlock_session_lock
 
 
 auth_api = Blueprint("auth_api", __name__)
@@ -77,6 +77,27 @@ def session_policy():
     return jsonify({"message": "success", "results": _idle_policy()}), 200
 
 
+@auth_api.route("/lock", methods=["POST"])
+@auth_required
+@validate_json_payload(COMMON_SCHEMAS["lock_session"])
+def lock_session_endpoint():
+    actor = current_actor_from_request()
+    data = validated_json() or {}
+    session_id = str(data.get("session_id") or "").strip()
+    reason = data.get("reason") or "idle_lock"
+    lock = persist_session_lock(session_id, actor=actor, reason=reason)
+    return jsonify({
+        "message": "success",
+        "results": {
+            "session_id": session_id,
+            "status": "locked",
+            "reason": reason,
+            "actor": public_actor(actor),
+            "lock": lock,
+        },
+    }), 200
+
+
 @auth_api.route("/unlock", methods=["POST"])
 @auth_required
 @validate_json_payload(COMMON_SCHEMAS["unlock_session"])
@@ -84,12 +105,16 @@ def unlock_session():
     actor = current_actor_from_request()
     data = validated_json() or {}
     session_id = str(data.get("session_id") or "").strip()
+    reason = data.get("reason") or "idle_lock"
+    lock = unlock_session_lock(session_id, actor=actor, reason=reason)
     return jsonify({
         "message": "success",
         "results": {
             "session_id": session_id,
             "status": "active",
+            "reason": reason,
             "actor": public_actor(actor),
+            "lock": lock,
             "token": None,
             "token_refreshed": False,
         },

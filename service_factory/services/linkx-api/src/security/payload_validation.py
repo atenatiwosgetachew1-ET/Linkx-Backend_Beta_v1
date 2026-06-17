@@ -171,6 +171,16 @@ COMMON_SCHEMAS = {
             "token": {"type": "string", "minLength": 1, "maxLength": 8192},
         },
     },
+    "lock_session": {
+        "type": "object",
+        "required": ["id", "session_id"],
+        "additionalProperties": False,
+        "properties": {
+            "id": {"type": "string", "enum": ["lock_session"]},
+            "session_id": {"type": ["string", "integer"], "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+            "reason": {"type": "string", "enum": ["idle_lock"]},
+        },
+    },
     "unlock_session": {
         "type": "object",
         "required": ["id", "session_id"],

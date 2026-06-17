@@ -110,6 +110,175 @@ def request_session_cancellation(session_id, reason="client_requested", requeste
     }
 
 
+def _actor_lock_ids(actor=None):
+    actor = actor or {}
+    actor_type = actor.get("actor_type") or "user"
+    actor_id = actor.get("id")
+    return str(actor_type), int(actor_id) if actor_id is not None else None
+
+
+def ensure_session_lock_schema(cur):
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_locks (
+            id BIGSERIAL PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            actor_type TEXT NOT NULL,
+            actor_id BIGINT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'locked',
+            reason TEXT,
+            locked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            unlocked_at TIMESTAMPTZ,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (session_id, actor_type, actor_id)
+        )
+        """
+    )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_session_locks_actor_status ON session_locks(actor_type, actor_id, status)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_session_locks_session_status ON session_locks(session_id, status)")
+
+
+def _lock_row(row):
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "session_id": row[1],
+        "actor_type": row[2],
+        "actor_id": row[3],
+        "status": row[4],
+        "reason": row[5],
+        "locked_at": row[6].isoformat() if row[6] else None,
+        "unlocked_at": row[7].isoformat() if row[7] else None,
+    }
+
+
+def _lock_scope_session_id(session_id):
+    raw = str(session_id or "").strip()
+    if "_" in raw:
+        _, parent = raw.split("_", 1)
+        return parent or raw
+    return raw
+
+
+def lock_session(session_id, actor=None, reason="idle_lock"):
+    session_id = _lock_scope_session_id(session_id)
+    if not session_id:
+        return None
+    actor_type, actor_id = _actor_lock_ids(actor)
+    if actor_id is None:
+        raise ValueError("actor_id_required")
+    with connect(application_name="linkx-session-lock") as conn:
+        with conn.cursor() as cur:
+            ensure_session_lock_schema(cur)
+            cur.execute(
+                """
+                INSERT INTO session_locks (session_id, actor_type, actor_id, status, reason, locked_at, unlocked_at, updated_at)
+                VALUES (%s, %s, %s, 'locked', %s, NOW(), NULL, NOW())
+                ON CONFLICT (session_id, actor_type, actor_id) DO UPDATE
+                SET status = 'locked',
+                    reason = EXCLUDED.reason,
+                    locked_at = NOW(),
+                    unlocked_at = NULL,
+                    updated_at = NOW()
+                RETURNING id::text, session_id, actor_type, actor_id, status, reason, locked_at, unlocked_at
+                """,
+                (str(session_id), actor_type, actor_id, reason),
+            )
+            row = cur.fetchone()
+        conn.commit()
+    return _lock_row(row)
+
+
+def unlock_session_lock(session_id, actor=None, reason="idle_lock"):
+    session_id = _lock_scope_session_id(session_id)
+    if not session_id:
+        return None
+    actor_type, actor_id = _actor_lock_ids(actor)
+    if actor_id is None:
+        raise ValueError("actor_id_required")
+    with connect(application_name="linkx-session-unlock") as conn:
+        with conn.cursor() as cur:
+            ensure_session_lock_schema(cur)
+            cur.execute(
+                """
+                UPDATE session_locks
+                SET status = 'unlocked',
+                    reason = COALESCE(%s, reason),
+                    unlocked_at = NOW(),
+                    updated_at = NOW()
+                WHERE session_id = %s
+                  AND actor_type = %s
+                  AND actor_id = %s
+                RETURNING id::text, session_id, actor_type, actor_id, status, reason, locked_at, unlocked_at
+                """,
+                (reason, str(session_id), actor_type, actor_id),
+            )
+            row = cur.fetchone()
+        conn.commit()
+    return _lock_row(row)
+
+
+def _session_lock_candidates(session_id):
+    raw = str(session_id or "")
+    candidates = [raw] if raw else []
+    if "_" in raw:
+        _, parent = raw.split("_", 1)
+        if parent:
+            candidates.append(parent)
+    return list(dict.fromkeys(candidates))
+
+
+def get_active_session_lock(session_id, actor=None):
+    candidates = _session_lock_candidates(session_id)
+    if not candidates:
+        return None
+    actor_type, actor_id = _actor_lock_ids(actor)
+    if actor_id is None:
+        return None
+    with connect(application_name="linkx-session-lock-check") as conn:
+        with conn.cursor() as cur:
+            ensure_session_lock_schema(cur)
+            cur.execute(
+                """
+                SELECT id::text, session_id, actor_type, actor_id, status, reason, locked_at, unlocked_at
+                FROM session_locks
+                WHERE session_id = ANY(%s)
+                  AND actor_type = %s
+                  AND actor_id = %s
+                  AND status = 'locked'
+                ORDER BY locked_at DESC
+                LIMIT 1
+                """,
+                (candidates, actor_type, actor_id),
+            )
+            row = cur.fetchone()
+    return _lock_row(row)
+
+
+def get_any_active_actor_lock(actor=None):
+    actor_type, actor_id = _actor_lock_ids(actor)
+    if actor_id is None:
+        return None
+    with connect(application_name="linkx-actor-lock-check") as conn:
+        with conn.cursor() as cur:
+            ensure_session_lock_schema(cur)
+            cur.execute(
+                """
+                SELECT id::text, session_id, actor_type, actor_id, status, reason, locked_at, unlocked_at
+                FROM session_locks
+                WHERE actor_type = %s
+                  AND actor_id = %s
+                  AND status = 'locked'
+                ORDER BY locked_at DESC
+                LIMIT 1
+                """,
+                (actor_type, actor_id),
+            )
+            row = cur.fetchone()
+    return _lock_row(row)
+
+
 def _clamp_limit(value, default=50, maximum=200):
     try:
         parsed = int(value)

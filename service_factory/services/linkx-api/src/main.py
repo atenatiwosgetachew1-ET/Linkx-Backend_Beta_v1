@@ -36,7 +36,7 @@ from logger import log_writer,log_stream_background
 from io_sockets import register_socket_handlers
 from api.STR_link_analysis import STR_link_analysis_api
 from session_config_store import create_session_config, duplicate_window_config, get_user_config, save_user_config
-from service_orchestration import enqueue_cleanup_run, list_cleanup_audit
+from service_orchestration import enqueue_cleanup_run, get_active_session_lock, get_any_active_actor_lock, list_cleanup_audit
 from auth.decorators import auth_required, current_actor_from_request, permission_required
 from auth.repository import bind_analysis_session_actor
 from auth.routes import auth_api
@@ -73,6 +73,110 @@ def _validation_error_response(exc):
     if exc.field:
         body["field"] = exc.field
     return jsonify(body), 400
+
+
+_LOCK_EXEMPT_PATHS = {
+    "/auth/lock",
+    "/auth/unlock",
+    "/auth/idle-timeout",
+    "/auth/session-policy",
+    "/auth/login",
+    "/auth/me",
+    "/auth/verify",
+    "/db/health",
+}
+
+_LOCK_PROTECTED_PREFIXES = (
+    "/api/",
+    "/auth/admin/",
+)
+
+_LOCK_PROTECTED_PATHS = {
+    "/account/configuration",
+    "/configuration",
+    "/init",
+    "/init_source",
+    "/connect_to_source",
+    "/disconnect_source",
+    "/connect_to_tool",
+    "/disconnect_tool",
+    "/close_source_window",
+    "/live_batch_files",
+    "/upload_batch_files",
+    "/graph_link",
+    "/get_graph",
+    "/admin/audit/cleanup",
+}
+
+
+def _is_lock_protected_request(path):
+    if path in _LOCK_PROTECTED_PATHS:
+        return True
+    return any(path.startswith(prefix) for prefix in _LOCK_PROTECTED_PREFIXES)
+
+
+def _first_session_like_value(payload):
+    if not isinstance(payload, dict):
+        return None
+    for key in ("session_id", "source_id", "run_id"):
+        value = payload.get(key)
+        if value not in (None, ""):
+            return str(value)
+    nested = payload.get("value")
+    if isinstance(nested, dict):
+        for key in ("session_id", "source_id", "run_id", "window_id"):
+            value = nested.get(key)
+            if value not in (None, ""):
+                return str(value)
+    return None
+
+
+def _request_session_id_for_lock():
+    data = request.get_json(silent=True) if request.is_json else None
+    session_id = _first_session_like_value(data)
+    if session_id:
+        return session_id
+    for key in ("session_id", "source_id", "run_id", "window_id"):
+        value = request.values.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return None
+
+
+@app.before_request
+def enforce_locked_session():
+    if request.method == "OPTIONS":
+        return None
+
+    path = request.path.rstrip("/") or "/"
+    if path in _LOCK_EXEMPT_PATHS or not _is_lock_protected_request(path):
+        return None
+
+    actor = current_actor_from_request()
+    if not actor:
+        return None
+
+    try:
+        session_id = _request_session_id_for_lock()
+        lock = get_active_session_lock(session_id, actor=actor) if session_id else get_any_active_actor_lock(actor=actor)
+        if not lock and session_id is not None and path.startswith("/auth/admin/"):
+            lock = get_any_active_actor_lock(actor=actor)
+    except Exception as exc:
+        current_app.logger.exception("session lock check failed")
+        return jsonify({
+            "message": "lock_state_unavailable",
+            "error": "Unable to verify session lock state.",
+            "detail": str(exc),
+        }), 503
+
+    if lock:
+        return jsonify({
+            "message": "session_locked",
+            "error": "Session is locked. Unlock required.",
+            "lock": lock,
+        }), 423
+
+    return None
 
 
 def _normalize_neo4j_url(url):
