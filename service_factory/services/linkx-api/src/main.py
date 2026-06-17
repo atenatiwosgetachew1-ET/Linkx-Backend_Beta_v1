@@ -38,7 +38,7 @@ from api.STR_link_analysis import STR_link_analysis_api
 from session_config_store import create_session_config, duplicate_window_config, get_user_config, get_workspace_layout, save_user_config, save_workspace_layout
 from service_orchestration import enqueue_cleanup_run, get_active_session_lock, get_any_active_actor_lock, list_cleanup_audit, public_lock_state
 from auth.decorators import auth_required, current_actor_from_request, permission_required
-from auth.repository import bind_analysis_session_actor, can_access_analysis_session_actor
+from auth.repository import bind_analysis_session_actor, can_access_analysis_session_actor, get_postgres_connection
 from auth.routes import auth_api
 from security.payload_validation import (
     COMMON_SCHEMAS,
@@ -321,6 +321,55 @@ def _configuration_payload(data):
         for key, value in data.items()
         if key not in {"id", "session_id", "rule_name"}
     }
+
+
+def _clean_id(value):
+    raw = str(value or "").strip()
+    return "" if raw.lower() in {"", "none", "null", "undefined"} else raw
+
+
+def _source_id_from_graph_payload(data):
+    source_id = _clean_id(data.get("source_id"))
+    if source_id:
+        return source_id
+    session_id = _clean_id(data.get("session_id"))
+    window_id = _clean_id(data.get("window_id"))
+    if session_id and window_id:
+        if session_id.startswith(f"{window_id}_"):
+            return session_id
+        return f"{window_id}_{session_id}"
+    return session_id
+
+
+def _analysis_session_exists(session_id, parent_session_id=None):
+    if not session_id:
+        return False
+    with get_postgres_connection() as conn:
+        with conn.cursor() as cur:
+            if parent_session_id is None:
+                cur.execute(
+                    "SELECT 1 FROM analysis_sessions WHERE session_id = %s",
+                    (str(session_id),),
+                )
+            else:
+                cur.execute(
+                    "SELECT 1 FROM analysis_sessions WHERE session_id = %s AND parent_session_id = %s",
+                    (str(session_id), str(parent_session_id)),
+                )
+            return cur.fetchone() is not None
+
+
+def _graph_accessible_source(source_id, actor):
+    if not source_id or not actor:
+        return False
+
+    parent_id = _parent_session_id(source_id)
+    if parent_id:
+        if not _analysis_session_exists(source_id, parent_session_id=parent_id):
+            return False
+        return can_access_analysis_session_actor(source_id, actor) or can_access_analysis_session_actor(parent_id, actor)
+
+    return _analysis_session_exists(source_id) and can_access_analysis_session_actor(source_id, actor)
 
 
 @app.route('/admin/audit/cleanup', methods=['GET'])
@@ -1041,57 +1090,66 @@ def live_batch_files():
         return jsonify({'results': None, 'error': f'Invalid action: {action_id}'}), 400
 
 @app.route('/graph_link', methods=['POST'])
+@auth_required
 @validate_json_payload(COMMON_SCHEMAS["graph_link"])
 def graph_link():
     data = validated_json()
-    id = data.get('id')
-    print(1)
-    if id == "link":
-        print(2)
-        session_id = data.get('source_id')
-        session_info = _session_store.get(session_id)  # returns None if not found
-        str_report_status = globals.str_report_status_registry.get(str(session_id), {})
-        if session_info or str_report_status:
-            print(3)
-            return jsonify({'message': 'success'}), 200  # Background fetch or STR status is ready
-        else:
-            print(4)
-            return jsonify({'message': 'failed!'}), 200  # No background fetch
-    else:
-        print(5)
-        return {'results': "No action!", "error": "Invalid Request"}, 400
+    action = data.get('id')
+    actor = current_actor_from_request()
+    source_id = _source_id_from_graph_payload(data)
+    graph_window_id = _clean_id(data.get("graph_window_id")) or None
+
+    if not source_id:
+        return jsonify({"message": "validation_error", "detail": "source_id_or_session_window_required"}), 400
+    if not _graph_accessible_source(source_id, actor):
+        return jsonify({"message": "forbidden"}), 403
+
+    session_info = _session_store.get(source_id)
+    str_report_status = globals.str_report_status_registry.get(str(source_id), {})
+    linked = action == "link"
+
+    return jsonify({
+        "message": "success",
+        "results": {
+            "linked": linked,
+            "source_id": source_id,
+            "graph_session_id": source_id,
+            "graph_window_id": graph_window_id,
+            "status_available": bool(session_info or str_report_status),
+        },
+    }), 200
+
 
 @app.route('/get_graph', methods=['POST'])
+@auth_required
 @validate_json_payload(COMMON_SCHEMAS["get_graph"])
 def get_graph():
-    print("fetch_graph_called")
     data = validated_json()
-    id = data.get('id')
-    source_id = data.get('source_id','')
-    #session_id = data.get('source_id')
-    # Take everything after the first underscore
-    #session_suffix = session_id.split('_', 1)[1] if session_id and '_' in session_id else None
-    # if id == "status":
-    #     try:
-    #         informationfile=fetch_graph(id,"overview",source_id,"","json");
-    #         if informationfile is not None:
-    #             return jsonify({'results': informationfile, 'message': 'success'}), 200
-    #         else:
-    #             return jsonify({'results': "", 'message': 'failed!'}), 200
-    #     except Exception as e:
-    #         return jsonify({'exception': str(e), 'message': 'failed!'}), 200
-    if id == "relationship":
-        try:
-            print("id:",id)
-            graph = fetch_graph(id,"generate",data["source_id"],data["relationship"],"html") #Static limit is 100000
+    action = data.get('id')
+    actor = current_actor_from_request()
+    source_id = _source_id_from_graph_payload(data)
 
-            # if fetch_graph returned a tuple (Flask Response), return it directly
+    if not source_id:
+        return jsonify({"message": "validation_error", "detail": "source_id_or_session_window_required"}), 400
+    if not _graph_accessible_source(source_id, actor):
+        return jsonify({"message": "forbidden"}), 403
+
+    if action == "relationship":
+        try:
+            graph = fetch_graph(action, "generate", source_id, data["relationship"], "html")
             if isinstance(graph, tuple):
                 return graph
-            # otherwise add file info
             graph["file"] = "graphs_template"
-            return jsonify({'results': graph, 'message': 'success'}), 200
-
+            return jsonify({
+                "message": "success",
+                "results": {
+                    **graph,
+                    "source_id": source_id,
+                    "graph_session_id": source_id,
+                    "relationship": data["relationship"],
+                    "graph": graph,
+                },
+            }), 200
         except Exception as e:
             print(e)
             return jsonify({'exception': str(e), 'message': 'failed!'}), 500
