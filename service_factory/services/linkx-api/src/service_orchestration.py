@@ -219,6 +219,32 @@ def unlock_session_lock(session_id, actor=None, reason="idle_lock"):
     return _lock_row(row)
 
 
+def unlock_actor_locks(actor=None, reason="idle_lock"):
+    actor_type, actor_id = _actor_lock_ids(actor)
+    if actor_id is None:
+        raise ValueError("actor_id_required")
+    with connect(application_name="linkx-actor-unlock") as conn:
+        with conn.cursor() as cur:
+            ensure_session_lock_schema(cur)
+            cur.execute(
+                """
+                UPDATE session_locks
+                SET status = 'unlocked',
+                    reason = COALESCE(%s, reason),
+                    unlocked_at = NOW(),
+                    updated_at = NOW()
+                WHERE actor_type = %s
+                  AND actor_id = %s
+                  AND status = 'locked'
+                RETURNING id::text, session_id, actor_type, actor_id, status, reason, locked_at, unlocked_at
+                """,
+                (reason, actor_type, actor_id),
+            )
+            rows = cur.fetchall()
+        conn.commit()
+    return [_lock_row(row) for row in rows]
+
+
 def _session_lock_candidates(session_id):
     raw = str(session_id or "")
     candidates = [raw] if raw else []

@@ -183,11 +183,11 @@ COMMON_SCHEMAS = {
     },
     "unlock_session": {
         "type": "object",
-        "required": ["id", "session_id"],
+        "required": ["id"],
         "additionalProperties": False,
         "properties": {
             "id": {"type": "string", "enum": ["unlock_session"]},
-            "session_id": {"type": ["string", "integer"], "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+            "session_id": {"type": ["string", "integer", "null"], "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]*$"},
             "reason": {"type": "string", "enum": ["idle_lock"]},
         },
     },
@@ -210,6 +210,13 @@ COMMON_SCHEMAS = {
         "properties": {
             "id": {"type": "string", "enum": ["init"]},
             "existing_session": {
+                "anyOf": [
+                    {"type": "string", "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]*$"},
+                    {"type": "integer"},
+                    {"type": "null"},
+                ],
+            },
+            "session_id": {
                 "anyOf": [
                     {"type": "string", "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]*$"},
                     {"type": "integer"},

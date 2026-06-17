@@ -303,6 +303,24 @@ def _configuration_success(config, extra=None):
         "configurations": normalized,
     }), 200
 
+def _configuration_payload(data):
+    if not isinstance(data, dict):
+        return {}
+    nested = data.get("configuration") or data.get("config") or data.get("data")
+    if isinstance(nested, dict):
+        payload = dict(nested)
+        for key, value in data.items():
+            if key in {"id", "session_id", "rule_name", "configuration", "config", "data"}:
+                continue
+            payload[key] = value
+        return payload
+    return {
+        key: value
+        for key, value in data.items()
+        if key not in {"id", "session_id", "rule_name"}
+    }
+
+
 @app.route('/admin/audit/cleanup', methods=['GET'])
 @permission_required("users:manage")
 def admin_cleanup_audit():
@@ -369,13 +387,19 @@ def init():
     print("Initializing ....")
     data = validated_json()
     current_actor = current_actor_from_request()
-    old_session = data.get('existing_session')
+    old_session = data.get('existing_session') or data.get('session_id')
     if old_session:
-        if not bind_analysis_session_actor(old_session, current_actor):
-            return jsonify({'message': 'forbidden'}), 403
-        configs = load_temp_config("data", old_session)
-        if configs is not None:
-            return jsonify({'message': 'success', 'results': {'session_id': old_session, 'configuration': _normalize_configuration(configs)}, 'configurations': _normalize_configuration(configs)}), 200
+        old_session = str(old_session).strip()
+        if old_session and bind_analysis_session_actor(old_session, current_actor):
+            configs = load_temp_config("data", old_session)
+            if configs is not None:
+                normalized = _normalize_configuration(configs)
+                return jsonify({
+                    'message': 'success',
+                    'results': {'session_id': old_session, 'configuration': normalized, 'reused_existing_session': True},
+                    'configurations': normalized,
+                }), 200
+        current_app.logger.info("init existing_session unavailable; creating fresh session old_session=%s", old_session)
 
     try:
         max_value = 1000000
@@ -385,7 +409,8 @@ def init():
         if not bind_analysis_session_actor(session_id, current_actor):
             return jsonify({'message': 'failed!', 'results': 'Could not bind session to user.'}), 500
         stored_new_configs = create_session_config(session_id, current_actor, default_config=configs)
-        return jsonify({'message': 'success', 'results': {'session_id': session_id, 'configuration': _normalize_configuration(stored_new_configs)}, 'configurations': _normalize_configuration(stored_new_configs)}), 200
+        normalized = _normalize_configuration(stored_new_configs)
+        return jsonify({'message': 'success', 'results': {'session_id': session_id, 'configuration': normalized, 'reused_existing_session': False}, 'configurations': normalized}), 200
     except Exception as e:
         print(e)
         return jsonify({'results': str(e), 'message': 'failed!'}), 200
@@ -519,10 +544,9 @@ def configuration():
                     return jsonify({'results': str(e), 'message': 'failed!'}), 200
         config = load_temp_config("all", session_id)
         config_dict = config.get("data", {}) if config else {}
-        if data:
-            for key, value in data.items():
-                if key in {"id", "session_id", "rule_name"}:
-                    continue
+        incoming_config = _configuration_payload(data)
+        if incoming_config:
+            for key, value in incoming_config.items():
                 if key == "active_rule":
                     config_dict[key] = value if isinstance(value, list) else [value]
                 else:

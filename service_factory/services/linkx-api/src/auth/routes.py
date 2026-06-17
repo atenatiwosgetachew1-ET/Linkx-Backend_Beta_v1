@@ -25,7 +25,7 @@ from .tokens import create_access_token, create_service_token, verify_access_tok
 from security.payload_validation import COMMON_SCHEMAS, validate_json_payload, validated_json
 from globals import _session_store
 from batch_manager.processing.session_manager import end_session
-from service_orchestration import lock_session as persist_session_lock, request_session_cancellation, unlock_session_lock
+from service_orchestration import lock_session as persist_session_lock, request_session_cancellation, unlock_actor_locks, unlock_session_lock
 from session_config_store import get_user_preferences, save_user_preferences
 
 
@@ -107,15 +107,21 @@ def unlock_session():
     data = validated_json() or {}
     session_id = str(data.get("session_id") or "").strip()
     reason = data.get("reason") or "idle_lock"
-    lock = unlock_session_lock(session_id, actor=actor, reason=reason)
+    if session_id:
+        lock = unlock_session_lock(session_id, actor=actor, reason=reason)
+        unlocked_locks = [lock] if lock else []
+    else:
+        unlocked_locks = unlock_actor_locks(actor=actor, reason=reason)
+        lock = unlocked_locks[0] if unlocked_locks else None
     return jsonify({
         "message": "success",
         "results": {
-            "session_id": session_id,
+            "session_id": session_id or (lock or {}).get("session_id"),
             "status": "active",
             "reason": reason,
             "actor": public_actor(actor),
             "lock": lock,
+            "unlocked_locks": unlocked_locks,
             "token": None,
             "token_refreshed": False,
         },
