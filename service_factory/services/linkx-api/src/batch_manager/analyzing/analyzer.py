@@ -44,6 +44,30 @@ def neo4j_row_data_adjuster(row_dict):
         pass
     return row_dict
 
+def _parent_session_id(session_id):
+    raw = str(session_id or "")
+    if "_" not in raw:
+        return None
+    _, parent = raw.split("_", 1)
+    return parent or None
+
+
+def _graph_metadata(session_id, run_id=None, batch_id=None):
+    metadata = {
+        "session_id": str(session_id or ""),
+        "created_by": "linkx",
+        "linkx_managed": True,
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    parent_session_id = _parent_session_id(session_id)
+    if parent_session_id:
+        metadata["parent_session_id"] = parent_session_id
+    if run_id:
+        metadata["run_id"] = str(run_id)
+    if batch_id:
+        metadata["batch_id"] = str(batch_id)
+    return metadata
+
 def make_write_partition(neo4j_conf, batch_size=500):
 
     def write_partition(rows):
@@ -82,8 +106,11 @@ def set_session_status(driver, session_id, status, rule=None, run_id=None):
             SET s.status = $status,
                 s.rule = coalesce($rule, s.rule),
                 s.run_id = coalesce($run_id, s.run_id),
+                s.parent_session_id = coalesce($parent_session_id, s.parent_session_id),
+                s.created_by = 'linkx',
+                s.linkx_managed = true,
                 s.updated_at = datetime()
-        """, id=session_id, status=status, rule=rule, run_id=run_id)
+        """, id=session_id, status=status, rule=rule, run_id=run_id, parent_session_id=_parent_session_id(session_id))
 
 def check_rule_status(rule_key, rule_path):
     if not os.path.exists(rule_path):
@@ -237,8 +264,7 @@ def neo4j_row_data_injector(payload, batch_size=500):
             def prepare_store_row(row):
                 clean = _clean_neo4j_props(row)
                 clean.setdefault("NodeId", str(uuid.uuid4()))
-                clean["session_id"] = session_id
-                clean["run_id"] = run_id
+                clean.update(_graph_metadata(session_id, run_id=run_id))
                 return clean
 
             total_rows = 0
@@ -305,6 +331,7 @@ def neo4j_row_data_injector(payload, batch_size=500):
                         continue
 
                     row_dict = _relationship_node_props(_clean_neo4j_props(sanitize_props(raw_row)))
+                    row_dict.update(_graph_metadata(session_id, run_id=run_id))
                     key = (source_value, target_value)
 
                     if rel_counter[key]["weight"] == 0:
@@ -370,8 +397,7 @@ def neo4j_row_data_injector(payload, batch_size=500):
                         batch = source_rows[i:i + batch_size]
 
                         for r in batch:
-                            r["session_id"] = session_id
-                            r["run_id"] = run_id
+                            r.update(_graph_metadata(session_id, run_id=run_id))
 
                         batch_source_props = batch[0]["props"]
 
@@ -383,7 +409,7 @@ def neo4j_row_data_injector(payload, batch_size=500):
                                 run_id: $run_id,
                                 rel_type: $relationship_type
                             }})
-                            ON CREATE SET a += $source_props
+                            SET a += $source_props
                             WITH a
                             UNWIND $rows AS row
                                 MERGE (b:Entity {{
@@ -391,12 +417,18 @@ def neo4j_row_data_injector(payload, batch_size=500):
                                     node_identity: 'Target Node',
                                     session_id: row.session_id,
                                     run_id: row.run_id,
+                                    parent_session_id: row.parent_session_id,
+                                    created_by: 'linkx',
+                                    linkx_managed: true,
                                     rel_type: $relationship_type
                                 }})
                                 SET b += row.props
                                 CREATE (a)-[rel:{relationship_type} {{
                                     session_id: row.session_id,
                                     run_id: row.run_id,
+                                    parent_session_id: row.parent_session_id,
+                                    created_by: 'linkx',
+                                    linkx_managed: true,
                                     weight: row.weight
                                 }}]->(b)
                                 SET rel.bgcolor = '#750b8c',
@@ -406,6 +438,7 @@ def neo4j_row_data_injector(payload, batch_size=500):
                         source_props=batch_source_props,
                         session_id=session_id,
                         run_id=run_id,
+                        parent_session_id=_parent_session_id(session_id),
                         relationship_type=relationship_type,
                         rows=batch)
 
@@ -444,9 +477,7 @@ def neo4j_row_data_injector(payload, batch_size=500):
 
                     batch_id = f"{session_id}_{batch_number}"
                     for row in batch:
-                        row["session_id"] = session_id
-                        row["run_id"] = run_id
-                        row["batch_id"] = batch_id
+                        row.update(_graph_metadata(session_id, run_id=run_id, batch_id=batch_id))
                         row["nodes_label"] = node_label
 
                     query = f"""
@@ -619,9 +650,7 @@ def realtime_neo4j_message_ingest(payload, df, batch_number):
         for row in rows:
             clean = _clean_neo4j_props(row)
             clean.setdefault("NodeId", str(uuid.uuid4()))
-            clean["session_id"] = session_id
-            clean["run_id"] = run_id
-            clean["batch_id"] = batch_id
+            clean.update(_graph_metadata(session_id, run_id=run_id, batch_id=batch_id))
             clean_rows.append(clean)
 
         if action == "Source / Target Relationship":
@@ -646,8 +675,8 @@ def realtime_neo4j_message_ingest(payload, df, batch_number):
                         SET a += row.props
                         MERGE (b:Entity {{`{target_col}`: row.target, session_id: $session_id, run_id: $run_id, node_identity: 'Target Node'}})
                         SET b += row.props
-                        CREATE (a)-[rel:{relationship_type} {{session_id: $session_id, run_id: $run_id, batch_id: $batch_id, weight: 1}}]->(b)
-                    """, rows=relationship_rows, session_id=session_id, run_id=run_id, batch_id=batch_id)
+                        CREATE (a)-[rel:{relationship_type} {{session_id: $session_id, run_id: $run_id, parent_session_id: $parent_session_id, batch_id: $batch_id, created_by: 'linkx', linkx_managed: true, weight: 1}}]->(b)
+                    """, rows=relationship_rows, session_id=session_id, run_id=run_id, parent_session_id=_parent_session_id(session_id), batch_id=batch_id)
             log_writer(log_file, f"[{datetime.now()}] [Info] - Realtime relationship batch {batch_id} ingested ({len(relationship_rows)} rows)")
             return
 

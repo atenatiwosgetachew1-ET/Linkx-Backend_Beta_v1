@@ -30,10 +30,10 @@ def cleanup_neo4j_session(session_id, run_id=None, batch_size=10000, dry_run=Fal
         return {"neo4j": "skipped_missing_credentials", "session_id": session_id, "run_id": run_id}
     driver = create_neo4j_driver(creds)
     try:
-        clean_existing_session(driver, session_id, batch_size=batch_size, run_id=run_id)
+        result = clean_existing_session(driver, session_id, batch_size=batch_size, run_id=run_id)
     finally:
         driver.close()
-    return {"neo4j": "cleaned", "session_id": session_id, "run_id": run_id, "database": neo4j_database_name(creds)}
+    return {"neo4j": result.get("status", "cleaned"), "database": neo4j_database_name(creds), **result}
 
 
 def _split_window_session(session_id):
@@ -199,8 +199,24 @@ def _child_sessions(parent_session_id):
             return [row[0] for row in cur.fetchall()]
 
 
+def _mark_session_status(session_id, status):
+    if not session_id:
+        return 0
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE analysis_sessions SET status = %s, last_seen_at = NOW() WHERE session_id = %s",
+                (status, str(session_id)),
+            )
+            affected = cur.rowcount
+        conn.commit()
+    return affected
+
+
 def cleanup_session(session_id, run_id=None, dry_run=False, payload=None, mark_status="cleaned"):
     results = {"session_id": session_id, "run_id": run_id, "dry_run": dry_run}
+    if not dry_run:
+        results["status_before_cleanup"] = _mark_session_status(session_id, "cancelling")
     results["artifacts"] = cleanup_artifacts(session_id=session_id, dry_run=dry_run)
     results["filesystem"] = cleanup_filesystem_footprint(session_id, dry_run=dry_run)
     results["session_config"] = cleanup_session_config(session_id, dry_run=dry_run)
