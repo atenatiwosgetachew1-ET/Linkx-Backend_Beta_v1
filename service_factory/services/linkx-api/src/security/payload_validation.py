@@ -173,31 +173,37 @@ COMMON_SCHEMAS = {
     },
     "lock_session": {
         "type": "object",
-        "required": ["id", "session_id"],
+        "required": ["id"],
         "additionalProperties": False,
         "properties": {
             "id": {"type": "string", "enum": ["lock_session"]},
-            "session_id": {"type": ["string", "integer"], "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
             "reason": {"type": "string", "enum": ["idle_lock"]},
         },
     },
     "unlock_session": {
         "type": "object",
-        "required": ["id", "session_id"],
+        "required": ["id"],
         "additionalProperties": False,
         "properties": {
             "id": {"type": "string", "enum": ["unlock_session"]},
-            "session_id": {"type": ["string", "integer"], "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
             "reason": {"type": "string", "enum": ["idle_lock"]},
+        },
+    },
+    "logout": {
+        "type": "object",
+        "required": ["id"],
+        "additionalProperties": False,
+        "properties": {
+            "id": {"type": "string", "enum": ["logout"]},
+            "reason": {"type": "string", "enum": ["user_logout", "unlock_failed", "idle_timeout"]},
         },
     },
     "idle_timeout": {
         "type": "object",
-        "required": ["id", "session_id"],
+        "required": ["id"],
         "additionalProperties": False,
         "properties": {
             "id": {"type": "string", "enum": ["idle_timeout"]},
-            "session_id": {"type": ["string", "integer"], "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
             "reason": {"type": "string", "enum": ["max_idle_expired"]},
             "cleanup": {"type": "boolean"},
             "idle_ms": {"type": ["integer", "number", "null"], "minimum": 0},

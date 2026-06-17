@@ -25,7 +25,7 @@ from .tokens import create_access_token, create_service_token, verify_access_tok
 from security.payload_validation import COMMON_SCHEMAS, validate_json_payload, validated_json
 from globals import _session_store
 from batch_manager.processing.session_manager import end_session
-from service_orchestration import lock_session as persist_session_lock, request_session_cancellation, unlock_actor_locks, unlock_session_lock
+from service_orchestration import get_actor_active_session_ids, lock_actor_session, public_lock_state, request_session_cancellation, unlock_actor_locks
 from session_config_store import get_user_preferences, save_user_preferences
 
 
@@ -84,19 +84,14 @@ def session_policy():
 def lock_session_endpoint():
     actor = current_actor_from_request()
     data = validated_json() or {}
-    session_id = str(data.get("session_id") or "").strip()
-    if session_id.lower() in {"none", "null", "undefined"}:
-        session_id = ""
     reason = data.get("reason") or "idle_lock"
-    lock = persist_session_lock(session_id, actor=actor, reason=reason)
+    lock = lock_actor_session(actor=actor, reason=reason)
     return jsonify({
         "message": "success",
         "results": {
-            "session_id": session_id,
             "status": "locked",
             "reason": reason,
-            "actor": public_actor(actor),
-            "lock": lock,
+            "lock": public_lock_state(lock),
         },
     }), 200
 
@@ -107,29 +102,52 @@ def lock_session_endpoint():
 def unlock_session():
     actor = current_actor_from_request()
     data = validated_json() or {}
-    session_id = str(data.get("session_id") or "").strip()
-    if session_id.lower() in {"none", "null", "undefined"}:
-        session_id = ""
     reason = data.get("reason") or "idle_lock"
-    if session_id:
-        lock = unlock_session_lock(session_id, actor=actor, reason=reason)
-        unlocked_locks = [lock] if lock else []
-    else:
-        unlocked_locks = unlock_actor_locks(actor=actor, reason=reason)
-        lock = unlocked_locks[0] if unlocked_locks else None
+    unlocked_locks = unlock_actor_locks(actor=actor, reason=reason)
     return jsonify({
         "message": "success",
         "results": {
-            "session_id": session_id or (lock or {}).get("session_id"),
             "status": "active",
             "reason": reason,
-            "actor": public_actor(actor),
-            "lock": lock,
-            "unlocked_locks": unlocked_locks,
+            "unlocked_count": len(unlocked_locks),
             "token": None,
             "token_refreshed": False,
         },
     }), 200
+
+
+@auth_api.route("/logout", methods=["POST"])
+@auth_required
+@validate_json_payload(COMMON_SCHEMAS["logout"])
+def logout():
+    actor = current_actor_from_request()
+    data = validated_json() or {}
+    reason = data.get("reason") or "user_logout"
+    sessions = get_actor_active_session_ids(actor, limit=50)
+    stopped_sessions = []
+    cancellations = []
+    for session_id in sessions:
+        stopped_sessions.extend(_stop_api_memory_sessions(session_id, reason))
+        cancellations.append(request_session_cancellation(
+            session_id,
+            reason=reason,
+            requested_by=f"{actor.get('actor_type')}:{actor.get('id')}",
+            neo4j_credentials=None,
+        ))
+    unlocked_locks = unlock_actor_locks(actor=actor, reason=reason)
+    return jsonify({
+        "message": "success",
+        "results": {
+            "status": "logged_out",
+            "reason": reason,
+            "cleanup_requested": bool(cancellations),
+            "cancelled_sessions": len(cancellations),
+            "stopped_api_sessions": len(stopped_sessions),
+            "unlocked_count": len(unlocked_locks),
+            "token_invalidated": False,
+            "token_invalidation_detail": "access tokens are stateless JWTs in the current auth implementation",
+        },
+    }), 202
 
 
 @auth_api.route("/idle-timeout", methods=["POST"])
@@ -138,28 +156,30 @@ def unlock_session():
 def idle_timeout():
     actor = current_actor_from_request()
     data = validated_json() or {}
-    session_id = str(data.get("session_id") or "").strip()
     reason = data.get("reason") or "max_idle_expired"
     cleanup_requested = data.get("cleanup", True) is not False
-    stopped_sessions = _stop_api_memory_sessions(session_id, reason)
-
-    cancellation = None
-    if cleanup_requested:
-        cancellation = request_session_cancellation(
-            session_id,
-            reason=reason,
-            requested_by=f"{actor.get('actor_type')}:{actor.get('id')}",
-            neo4j_credentials=None,
-        )
-
+    sessions = get_actor_active_session_ids(actor, limit=50)
+    stopped_sessions = []
+    cancellations = []
+    for session_id in sessions:
+        stopped_sessions.extend(_stop_api_memory_sessions(session_id, reason))
+        if cleanup_requested:
+            cancellations.append(request_session_cancellation(
+                session_id,
+                reason=reason,
+                requested_by=f"{actor.get('actor_type')}:{actor.get('id')}",
+                neo4j_credentials=None,
+            ))
+    unlocked_locks = unlock_actor_locks(actor=actor, reason=reason)
     return jsonify({
         "message": "success",
         "results": {
-            "session_id": session_id,
+            "status": "expired",
             "reason": reason,
             "cleanup_requested": cleanup_requested,
-            "stopped_api_sessions": stopped_sessions,
-            "cleanup": cancellation,
+            "cancelled_sessions": len(cancellations),
+            "stopped_api_sessions": len(stopped_sessions),
+            "unlocked_count": len(unlocked_locks),
             "token_invalidated": False,
             "token_invalidation_detail": "access tokens are stateless JWTs in the current auth implementation",
         },

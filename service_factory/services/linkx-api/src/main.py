@@ -36,7 +36,7 @@ from logger import log_writer,log_stream_background
 from io_sockets import register_socket_handlers
 from api.STR_link_analysis import STR_link_analysis_api
 from session_config_store import create_session_config, duplicate_window_config, get_user_config, get_workspace_layout, save_user_config, save_workspace_layout
-from service_orchestration import enqueue_cleanup_run, get_active_session_lock, get_any_active_actor_lock, list_cleanup_audit
+from service_orchestration import enqueue_cleanup_run, get_active_session_lock, get_any_active_actor_lock, list_cleanup_audit, public_lock_state
 from auth.decorators import auth_required, current_actor_from_request, permission_required
 from auth.repository import bind_analysis_session_actor, can_access_analysis_session_actor
 from auth.routes import auth_api
@@ -79,6 +79,7 @@ _LOCK_EXEMPT_PATHS = {
     "/auth/lock",
     "/auth/unlock",
     "/auth/idle-timeout",
+    "/auth/logout",
     "/auth/session-policy",
     "/auth/login",
     "/auth/me",
@@ -160,9 +161,10 @@ def enforce_locked_session():
 
     try:
         session_id = _request_session_id_for_lock()
-        lock = get_active_session_lock(session_id, actor=actor) if session_id else get_any_active_actor_lock(actor=actor)
-        if not lock and session_id is not None and path.startswith("/auth/admin/"):
-            lock = get_any_active_actor_lock(actor=actor)
+        lock = get_active_session_lock(session_id, actor=actor) if session_id else None
+        actor_lock = get_any_active_actor_lock(actor=actor)
+        if not lock:
+            lock = actor_lock
     except Exception as exc:
         current_app.logger.exception("session lock check failed")
         return jsonify({
@@ -175,7 +177,7 @@ def enforce_locked_session():
         return jsonify({
             "message": "session_locked",
             "error": "Session is locked. Unlock required.",
-            "lock": lock,
+            "lock": public_lock_state(lock),
         }), 423
 
     return None

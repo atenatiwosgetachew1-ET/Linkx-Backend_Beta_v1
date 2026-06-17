@@ -153,12 +153,68 @@ def _lock_row(row):
     }
 
 
+ACTOR_LOCK_SESSION_ID = "__actor__"
+
+
 def _lock_scope_session_id(session_id):
     raw = str(session_id or "").strip()
-    if "_" in raw:
+    if "_" in raw and not raw.startswith("__"):
         _, parent = raw.split("_", 1)
         return parent or raw
     return raw
+
+
+def _actor_owner_clause(actor, alias=""):
+    actor_type, actor_id = _actor_lock_ids(actor)
+    if actor_id is None:
+        return None, []
+    prefix = f"{alias}." if alias else ""
+    if actor_type == "service":
+        return f"{prefix}owner_service_id = %s", [actor_id]
+    return f"{prefix}owner_user_id = %s", [actor_id]
+
+
+def get_actor_active_session_ids(actor=None, limit=20):
+    owner_clause, params = _actor_owner_clause(actor)
+    if not owner_clause:
+        return []
+    with connect(application_name="linkx-actor-active-sessions") as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT session_id
+                FROM analysis_sessions
+                WHERE {owner_clause}
+                  AND parent_session_id IS NULL
+                  AND status NOT IN ('cancel_requested', 'cancelling', 'cancelled', 'cleaned', 'expired')
+                  AND ended_at IS NULL
+                ORDER BY last_seen_at DESC, created_at DESC
+                LIMIT %s
+                """,
+                (*params, int(limit)),
+            )
+            rows = cur.fetchall()
+    return [str(row[0]) for row in rows]
+
+
+def get_actor_main_session_id(actor=None):
+    sessions = get_actor_active_session_ids(actor, limit=1)
+    return sessions[0] if sessions else None
+
+
+def lock_actor_session(actor=None, reason="idle_lock"):
+    session_id = get_actor_main_session_id(actor) or ACTOR_LOCK_SESSION_ID
+    return lock_session(session_id, actor=actor, reason=reason)
+
+
+def public_lock_state(lock):
+    if not lock:
+        return None
+    return {
+        "status": lock.get("status"),
+        "reason": lock.get("reason"),
+        "locked_at": lock.get("locked_at"),
+    }
 
 
 def lock_session(session_id, actor=None, reason="idle_lock"):
