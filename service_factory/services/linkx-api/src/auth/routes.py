@@ -85,6 +85,8 @@ def lock_session_endpoint():
     actor = current_actor_from_request()
     data = validated_json() or {}
     session_id = str(data.get("session_id") or "").strip()
+    if session_id.lower() in {"none", "null", "undefined"}:
+        session_id = ""
     reason = data.get("reason") or "idle_lock"
     lock = persist_session_lock(session_id, actor=actor, reason=reason)
     return jsonify({
@@ -106,6 +108,8 @@ def unlock_session():
     actor = current_actor_from_request()
     data = validated_json() or {}
     session_id = str(data.get("session_id") or "").strip()
+    if session_id.lower() in {"none", "null", "undefined"}:
+        session_id = ""
     reason = data.get("reason") or "idle_lock"
     if session_id:
         lock = unlock_session_lock(session_id, actor=actor, reason=reason)

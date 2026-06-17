@@ -471,15 +471,30 @@ def configuration():
         except PayloadValidationError as exc:
             return _validation_error_response(exc)
 
-    session_id = data.get("session_id")
-    if data.get("id") == "load":
+    session_id = data.get("session_id") or data.get("source_id")
+    session_id = str(session_id or "").strip()
+    if session_id.lower() in {"none", "null", "undefined"}:
+        session_id = ""
+    action = str(data.get("id") or "").strip().lower()
+    if "load" in action:
+        action = "load"
+    elif "save" in action or "update" in action:
+        action = "save"
+    elif "remove" in action and "rule" in action:
+        action = "remove_rule"
+
+    if action == "load":
         try:
-            config_data = load_temp_config("all", session_id)
-            # config_data is already the dict inside "value"
+            if session_id:
+                config_data = load_temp_config("all", session_id)
+            else:
+                actor = current_actor_from_request()
+                defaults = get_default_session_config(actor.get("id") if actor else "default")
+                config_data = get_user_config(actor.get("id"), default_config=defaults) if actor and actor.get("actor_type") == "user" else defaults
             return _configuration_success(config_data)
         except Exception as e:
             return jsonify({'results': str(e), 'message': 'failed!'}), 200
-    elif data.get("id") == "save":
+    elif action == "save":
         print("Form fields:", data)
         #uploaded file
         if files:
@@ -542,8 +557,13 @@ def configuration():
                 except Exception as e:
                     print(f"Failed to upload rule: {e}")
                     return jsonify({'results': str(e), 'message': 'failed!'}), 200
-        config = load_temp_config("all", session_id)
-        config_dict = config.get("data", {}) if config else {}
+        if session_id:
+            config = load_temp_config("all", session_id)
+            config_dict = config.get("data", {}) if config else {}
+        else:
+            actor = current_actor_from_request()
+            defaults = get_default_session_config(actor.get("id") if actor else "default")
+            config_dict = get_user_config(actor.get("id"), default_config=defaults) if actor and actor.get("actor_type") == "user" else defaults
         incoming_config = _configuration_payload(data)
         if incoming_config:
             for key, value in incoming_config.items():
@@ -552,9 +572,14 @@ def configuration():
                 else:
                     config_dict[key] = value
             config_dict = _normalize_configuration(config_dict)
-            save_temp_config("all", config_dict, session_id)
+            if session_id:
+                save_temp_config("all", config_dict, session_id)
+            else:
+                actor = current_actor_from_request()
+                if actor and actor.get("actor_type") == "user":
+                    save_user_config(actor.get("id"), config_dict)
         return _configuration_success(config_dict)
-    elif data.get("id") == "remove_rule":
+    elif action == "remove_rule":
         rule_name = str(data.get("rule_name") or "").strip()
         if not rule_name:
             return jsonify({'results': "No rule selected.", 'message': 'failed!'}), 400
