@@ -171,6 +171,29 @@ COMMON_SCHEMAS = {
             "token": {"type": "string", "minLength": 1, "maxLength": 8192},
         },
     },
+    "unlock_session": {
+        "type": "object",
+        "required": ["id", "session_id"],
+        "additionalProperties": False,
+        "properties": {
+            "id": {"type": "string", "enum": ["unlock_session"]},
+            "session_id": {"type": ["string", "integer"], "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+            "reason": {"type": "string", "enum": ["idle_lock"]},
+        },
+    },
+    "idle_timeout": {
+        "type": "object",
+        "required": ["id", "session_id"],
+        "additionalProperties": False,
+        "properties": {
+            "id": {"type": "string", "enum": ["idle_timeout"]},
+            "session_id": {"type": ["string", "integer"], "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+            "reason": {"type": "string", "enum": ["max_idle_expired"]},
+            "cleanup": {"type": "boolean"},
+            "idle_ms": {"type": ["integer", "number", "null"], "minimum": 0},
+            "last_activity_at": {"type": ["string", "null"], "maxLength": 64},
+        },
+    },
     "init": {
         "type": "object",
         "additionalProperties": False,

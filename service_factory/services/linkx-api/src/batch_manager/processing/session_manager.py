@@ -149,7 +149,7 @@ def end_session(payload):
 
     cancellation_result = None
     stop_reason = payload.get("reason") or "client_end_session"
-    stop_only_reasons = {"client_end_session", "socket_disconnect_abandoned"}
+    stop_only_reasons = {"client_end_session", "socket_disconnect_abandoned", "idle_lock"}
     should_preserve_session_config = stop_reason in stop_only_reasons
     if request_session_cancellation and not should_preserve_session_config:
         try:
