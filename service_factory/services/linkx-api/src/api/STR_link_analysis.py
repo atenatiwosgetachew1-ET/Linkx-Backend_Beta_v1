@@ -299,13 +299,13 @@ def _success_response(session_id, entity, frontend_session_id=None):
     summary = _analysis_summary(session_id, entity)
     status = "flagged" if summary and summary.get("flagged_nodes", 0) > 0 else "clean"
     open_payload = {
-        "message": "success!",
+        "message": "success",
         "session_id": session_id,
         "wait_for_prepare": False,
         "socket_emit": [],
     }
     metadata = {
-        "message": "success!",
+        "message": "success",
         "status": status,
     }
     if summary:

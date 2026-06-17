@@ -26,6 +26,7 @@ from security.payload_validation import COMMON_SCHEMAS, validate_json_payload, v
 from globals import _session_store
 from batch_manager.processing.session_manager import end_session
 from service_orchestration import lock_session as persist_session_lock, request_session_cancellation, unlock_session_lock
+from session_config_store import get_user_preferences, save_user_preferences
 
 
 auth_api = Blueprint("auth_api", __name__)
@@ -169,7 +170,7 @@ def login():
         return jsonify({"message": "invalid_credentials"}), 401
 
     return jsonify({
-        "message": "success!",
+        "message": "success",
         "token": create_access_token(user),
         "actor": public_actor(user),
         "user": public_actor(user),
@@ -190,7 +191,7 @@ def service_token():
         return jsonify({"message": "invalid_client_credentials"}), 401
 
     return jsonify({
-        "message": "success!",
+        "message": "success",
         "token": create_service_token(service),
         "actor": public_actor(service),
     }), 200
@@ -221,11 +222,39 @@ def parent_token():
 
     user = upsert_external_user(username, display_name=display_name, parent_roles=roles)
     return jsonify({
-        "message": "success!",
+        "message": "success",
         "token": create_access_token(user),
         "actor": public_actor(user),
         "user": public_actor(user),
     }), 200
+
+
+@auth_api.route("/preferences", methods=["GET"])
+@auth_required
+def get_preferences():
+    actor = current_actor_from_request()
+    if not actor or actor.get("actor_type") != "user":
+        return jsonify({"message": "user_required"}), 403
+    preferences = get_user_preferences(actor.get("id"))
+    return jsonify({"message": "success", "results": {"preferences": preferences}}), 200
+
+
+@auth_api.route("/preferences", methods=["PATCH"])
+@auth_required
+def patch_preferences():
+    actor = current_actor_from_request()
+    if not actor or actor.get("actor_type") != "user":
+        return jsonify({"message": "user_required"}), 403
+    data = request.get_json(silent=True)
+    if data is None or not isinstance(data, dict):
+        return jsonify({"message": "validation_error", "detail": "json_object_required"}), 400
+    preferences = data.get("preferences") if isinstance(data.get("preferences"), dict) else data
+    allowed = {"remember_layout", "enable_notifications", "enable_background_animations"}
+    unknown = sorted(set(preferences.keys()) - allowed)
+    if unknown:
+        return jsonify({"message": "validation_error", "detail": "unknown_preferences", "fields": unknown}), 400
+    saved = save_user_preferences(actor.get("id"), preferences, merge=True)
+    return jsonify({"message": "success", "results": {"preferences": saved}}), 200
 
 
 @auth_api.route("/me", methods=["GET"])
@@ -233,7 +262,7 @@ def parent_token():
 def me():
     actor = current_actor_from_request()
     payload = {
-        "message": "success!",
+        "message": "success",
         "actor": public_actor(actor),
     }
     if actor.get("actor_type") == "user":
@@ -254,7 +283,7 @@ def verify():
         actor = get_service_account_by_id(payload.get("sub")) if actor_type == "service" else get_user_by_id(payload.get("sub"))
         if not actor:
             return jsonify({"message": "unauthorized"}), 401
-        response = {"message": "success!", "actor": public_actor(actor)}
+        response = {"message": "success", "actor": public_actor(actor)}
         if actor.get("actor_type") == "user":
             response["user"] = response["actor"]
         return jsonify(response), 200
@@ -263,7 +292,7 @@ def verify():
     if not actor:
         return jsonify({"message": "unauthorized"}), 401
 
-    response = {"message": "success!", "actor": public_actor(actor)}
+    response = {"message": "success", "actor": public_actor(actor)}
     if actor.get("actor_type") == "user":
         response["user"] = response["actor"]
     return jsonify(response), 200
@@ -273,7 +302,7 @@ def verify():
 @permission_required("users:manage")
 def admin_list_service_accounts():
     return jsonify({
-        "message": "success!",
+        "message": "success",
         "results": [public_actor(service) for service in list_service_accounts()],
     }), 200
 
@@ -300,7 +329,7 @@ def admin_create_service_account():
         display_name=display_name,
     )
     return jsonify({
-        "message": "success!",
+        "message": "success",
         "result": public_actor(service),
     }), 201
 
@@ -325,7 +354,7 @@ def admin_update_service_account(service_id):
         return jsonify({"message": "not_found"}), 404
 
     return jsonify({
-        "message": "success!",
+        "message": "success",
         "result": public_actor(service),
     }), 200
 
@@ -335,14 +364,14 @@ def admin_update_service_account(service_id):
 def admin_delete_service_account(service_id):
     if not delete_service_account(service_id):
         return jsonify({"message": "not_found"}), 404
-    return jsonify({"message": "success!"}), 200
+    return jsonify({"message": "success"}), 200
 
 
 @auth_api.route("/admin/users", methods=["GET"])
 @permission_required("users:manage")
 def admin_list_users():
     return jsonify({
-        "message": "success!",
+        "message": "success",
         "results": [public_actor(user) for user in list_users()],
     }), 200
 
@@ -376,7 +405,7 @@ def admin_create_user():
         is_active=is_active,
     )
     return jsonify({
-        "message": "success!",
+        "message": "success",
         "result": public_actor(user),
     }), 201
 
@@ -406,7 +435,7 @@ def admin_update_user(user_id):
         return jsonify({"message": "not_found"}), 404
 
     return jsonify({
-        "message": "success!",
+        "message": "success",
         "result": public_actor(user),
     }), 200
 
@@ -416,4 +445,4 @@ def admin_update_user(user_id):
 def admin_delete_user(user_id):
     if not delete_user(user_id):
         return jsonify({"message": "not_found"}), 404
-    return jsonify({"message": "success!"}), 200
+    return jsonify({"message": "success"}), 200

@@ -54,6 +54,29 @@ def ensure_schema():
             )
             cur.execute("CREATE INDEX IF NOT EXISTS idx_session_configs_user ON session_configs(user_id, updated_at)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_session_configs_session ON session_configs(session_id, window_id)")
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_preferences (
+                    user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                    preferences JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS workspace_layouts (
+                    session_id TEXT NOT NULL REFERENCES analysis_sessions(session_id) ON DELETE CASCADE,
+                    user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+                    layout JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (session_id, user_id)
+                )
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_workspace_layouts_user ON workspace_layouts(user_id, updated_at)")
         conn.commit()
     return True
 
@@ -269,3 +292,104 @@ def save_session_config(session_id, config, window_id=None, merge=True):
 
 def response_config(config):
     return {"data": config or {}, "Last modified": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
+
+DEFAULT_USER_PREFERENCES = {
+    "remember_layout": True,
+    "enable_notifications": True,
+    "enable_background_animations": True,
+}
+
+DEFAULT_WORKSPACE_LAYOUT = {
+    "windows": [],
+    "orientation": "tabs",
+    "active_window_id": None,
+}
+
+
+def get_user_preferences(user_id):
+    defaults = dict(DEFAULT_USER_PREFERENCES)
+    if not user_id or not db_enabled():
+        return defaults
+    ensure_schema()
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT preferences FROM user_preferences WHERE user_id = %s", (user_id,))
+            row = cur.fetchone()
+            if row:
+                return {**defaults, **(row[0] or {})}
+            cur.execute(
+                """
+                INSERT INTO user_preferences (user_id, preferences)
+                VALUES (%s, %s::jsonb)
+                ON CONFLICT (user_id) DO NOTHING
+                RETURNING preferences
+                """,
+                (user_id, json.dumps(defaults)),
+            )
+            inserted = cur.fetchone()
+        conn.commit()
+    return {**defaults, **((inserted[0] if inserted else {}) or {})}
+
+
+def save_user_preferences(user_id, preferences, merge=True):
+    if not user_id or not db_enabled():
+        return dict(DEFAULT_USER_PREFERENCES)
+    current = get_user_preferences(user_id) if merge else dict(DEFAULT_USER_PREFERENCES)
+    incoming = {key: bool(value) for key, value in (preferences or {}).items() if key in DEFAULT_USER_PREFERENCES}
+    saved = {**current, **incoming}
+    ensure_schema()
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO user_preferences (user_id, preferences)
+                VALUES (%s, %s::jsonb)
+                ON CONFLICT (user_id) DO UPDATE
+                SET preferences = EXCLUDED.preferences,
+                    updated_at = NOW()
+                RETURNING preferences
+                """,
+                (user_id, json.dumps(saved)),
+            )
+            row = cur.fetchone()
+        conn.commit()
+    return {**dict(DEFAULT_USER_PREFERENCES), **((row[0] if row else saved) or {})}
+
+
+def get_workspace_layout(user_id, session_id):
+    defaults = dict(DEFAULT_WORKSPACE_LAYOUT)
+    if not user_id or not session_id or not db_enabled():
+        return defaults
+    ensure_schema()
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT layout FROM workspace_layouts WHERE session_id = %s AND user_id = %s",
+                (str(session_id), user_id),
+            )
+            row = cur.fetchone()
+    return {**defaults, **((row[0] if row else {}) or {})}
+
+
+def save_workspace_layout(user_id, session_id, layout):
+    if not user_id or not session_id or not db_enabled():
+        return {**dict(DEFAULT_WORKSPACE_LAYOUT), **(layout or {})}
+    saved = {**dict(DEFAULT_WORKSPACE_LAYOUT), **(layout or {})}
+    ensure_schema()
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO workspace_layouts (session_id, user_id, layout)
+                VALUES (%s, %s, %s::jsonb)
+                ON CONFLICT (session_id, user_id) DO UPDATE
+                SET layout = EXCLUDED.layout,
+                    updated_at = NOW()
+                RETURNING layout
+                """,
+                (str(session_id), user_id, json.dumps(saved)),
+            )
+            row = cur.fetchone()
+        conn.commit()
+    return {**dict(DEFAULT_WORKSPACE_LAYOUT), **((row[0] if row else saved) or {})}

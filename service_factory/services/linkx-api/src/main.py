@@ -35,10 +35,10 @@ from batch_manager.analyzing.analyzer import analyzer
 from logger import log_writer,log_stream_background
 from io_sockets import register_socket_handlers
 from api.STR_link_analysis import STR_link_analysis_api
-from session_config_store import create_session_config, duplicate_window_config, get_user_config, save_user_config
+from session_config_store import create_session_config, duplicate_window_config, get_user_config, get_workspace_layout, save_user_config, save_workspace_layout
 from service_orchestration import enqueue_cleanup_run, get_active_session_lock, get_any_active_actor_lock, list_cleanup_audit
 from auth.decorators import auth_required, current_actor_from_request, permission_required
-from auth.repository import bind_analysis_session_actor
+from auth.repository import bind_analysis_session_actor, can_access_analysis_session_actor
 from auth.routes import auth_api
 from security.payload_validation import (
     COMMON_SCHEMAS,
@@ -106,6 +106,8 @@ _LOCK_PROTECTED_PATHS = {
     "/graph_link",
     "/get_graph",
     "/admin/audit/cleanup",
+    "/auth/preferences",
+    "/workspace/layout",
 }
 
 
@@ -244,6 +246,63 @@ def _is_kafka_batch_topic(topic):
     topic_name = str(topic or "")
     return topic_name.endswith(".batches") or topic_name.endswith("batches")
 
+
+def _parse_json_object(value):
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str):
+        return value
+    stripped = value.strip()
+    if not stripped or stripped[0] not in "[{":
+        return value
+    try:
+        import json
+        parsed = json.loads(stripped)
+        return parsed
+    except (TypeError, ValueError):
+        return value
+
+
+def _normalize_configuration(config):
+    raw = config or {}
+    if isinstance(raw, dict) and isinstance(raw.get("data"), dict):
+        raw = raw.get("data") or {}
+    normalized = {}
+    for key, value in dict(raw).items():
+        normalized[key] = _parse_json_object(value)
+
+    active_tool_protocol = normalized.get("active_tool_protocol") or normalized.get("active_tool_url") or ""
+    normalized.setdefault("active_tool_url", active_tool_protocol)
+    normalized.setdefault("active_tool_protocol", active_tool_protocol)
+    normalized.setdefault("tools", [])
+    normalized.setdefault("tool_databases", [])
+    normalized.setdefault("active_tool_tables", [])
+    normalized.setdefault("active_tool_database", "")
+    normalized.setdefault("custom_tool_database", "")
+    normalized.setdefault("tool_protocol_port", "")
+    normalized.setdefault("tool_web_port", "")
+    normalized.setdefault("active_tool_username", "")
+    normalized.setdefault("active_tool_password", "")
+
+    if normalized.get("active_tool") and normalized["active_tool"] not in normalized["tools"]:
+        normalized["tools"] = [normalized["active_tool"], *[tool for tool in normalized["tools"] if tool != normalized["active_tool"]]]
+    active_db = normalized.get("active_tool_database") or normalized.get("custom_tool_database")
+    if active_db and active_db not in normalized["tool_databases"]:
+        normalized["tool_databases"] = [active_db, *[db for db in normalized["tool_databases"] if db != active_db]]
+    return normalized
+
+
+def _configuration_success(config, extra=None):
+    normalized = _normalize_configuration(config)
+    results = {"configuration": normalized}
+    if extra:
+        results.update(extra)
+    return jsonify({
+        "message": "success",
+        "results": results,
+        "configurations": normalized,
+    }), 200
+
 @app.route('/admin/audit/cleanup', methods=['GET'])
 @permission_required("users:manage")
 def admin_cleanup_audit():
@@ -271,6 +330,38 @@ def db_health():
         current_app.logger.warning("PostgreSQL health check failed: %s", e)
         return jsonify({'status': 'error'}), 500
 
+@app.route('/workspace/layout', methods=['GET'])
+@auth_required
+def workspace_layout_load():
+    actor = current_actor_from_request()
+    session_id = str(request.args.get("session_id") or "").strip()
+    if not session_id:
+        return jsonify({"message": "validation_error", "detail": "session_id_required"}), 400
+    if not can_access_analysis_session_actor(session_id, actor):
+        return jsonify({"message": "forbidden"}), 403
+    layout = get_workspace_layout(actor.get("id"), session_id)
+    return jsonify({"message": "success", "results": {"session_id": session_id, "layout": layout}}), 200
+
+
+@app.route('/workspace/layout', methods=['PUT'])
+@auth_required
+def workspace_layout_save():
+    actor = current_actor_from_request()
+    data = request.get_json(silent=True)
+    if data is None or not isinstance(data, dict):
+        return jsonify({"message": "validation_error", "detail": "json_object_required"}), 400
+    session_id = str(data.get("session_id") or "").strip()
+    layout = data.get("layout")
+    if not session_id:
+        return jsonify({"message": "validation_error", "detail": "session_id_required"}), 400
+    if not isinstance(layout, dict):
+        return jsonify({"message": "validation_error", "detail": "layout_object_required"}), 400
+    if not can_access_analysis_session_actor(session_id, actor):
+        return jsonify({"message": "forbidden"}), 403
+    saved = save_workspace_layout(actor.get("id"), session_id, layout)
+    return jsonify({"message": "success", "results": {"session_id": session_id, "layout": saved}}), 200
+
+
 @app.route('/init', methods=['POST'])
 @auth_required
 @validate_json_payload(COMMON_SCHEMAS["init"])
@@ -284,7 +375,7 @@ def init():
             return jsonify({'message': 'forbidden'}), 403
         configs = load_temp_config("data", old_session)
         if configs is not None:
-            return jsonify({'results': old_session, 'configurations': configs, 'message': 'success!'}), 200
+            return jsonify({'message': 'success', 'results': {'session_id': old_session, 'configuration': _normalize_configuration(configs)}, 'configurations': _normalize_configuration(configs)}), 200
 
     try:
         max_value = 1000000
@@ -294,7 +385,7 @@ def init():
         if not bind_analysis_session_actor(session_id, current_actor):
             return jsonify({'message': 'failed!', 'results': 'Could not bind session to user.'}), 500
         stored_new_configs = create_session_config(session_id, current_actor, default_config=configs)
-        return jsonify({'results': session_id, 'configurations': stored_new_configs, 'message': 'success!'}), 200
+        return jsonify({'message': 'success', 'results': {'session_id': session_id, 'configuration': _normalize_configuration(stored_new_configs)}, 'configurations': _normalize_configuration(stored_new_configs)}), 200
     except Exception as e:
         print(e)
         return jsonify({'results': str(e), 'message': 'failed!'}), 200
@@ -307,7 +398,7 @@ def account_configuration_load():
         return jsonify({"message": "user_required"}), 403
     defaults = get_default_session_config(actor.get("id") or "default")
     config = get_user_config(actor.get("id"), default_config=defaults)
-    return jsonify({'results': {'data': config}, 'configurations': config, 'message': 'success!'}), 200
+    return _configuration_success(config)
 
 
 @app.route('/account/configuration', methods=['POST'])
@@ -319,11 +410,12 @@ def account_configuration_save():
     raw_data = request.get_json(silent=True)
     if raw_data is None or not isinstance(raw_data, dict):
         return jsonify({'message': 'validation_error', 'detail': 'json_object_required'}), 400
-    config = raw_data.get("config") or raw_data.get("data") or raw_data
+    config = raw_data.get("configuration") or raw_data.get("config") or raw_data.get("data") or raw_data
     if not isinstance(config, dict):
         return jsonify({'message': 'validation_error', 'detail': 'config_object_required'}), 400
-    save_user_config(actor.get("id"), config)
-    return jsonify({'results': {'data': config}, 'configurations': config, 'message': 'success!'}), 200
+    normalized_config = _normalize_configuration(config)
+    save_user_config(actor.get("id"), normalized_config)
+    return _configuration_success(normalized_config)
 
 
 @app.route('/configuration', methods=['POST'])
@@ -359,7 +451,7 @@ def configuration():
         try:
             config_data = load_temp_config("all", session_id)
             # config_data is already the dict inside "value"
-            return jsonify({'results': config_data, 'message': 'success!'}), 200
+            return _configuration_success(config_data)
         except Exception as e:
             return jsonify({'results': str(e), 'message': 'failed!'}), 200
     elif data.get("id") == "save":
@@ -418,11 +510,7 @@ def configuration():
                         # Merge back into configuration
                         save_temp_config("all", config_dict, session_id)
 
-                        return jsonify({
-                            'results': "",
-                            'configurations': config_dict,
-                            'message': 'success!'
-                        }), 200
+                        return _configuration_success(config_dict)
                     else:
                         print("The rule is invalid")
                         return jsonify({'results': "Invalid rule file.", 'message': 'failed!'}), 200
@@ -439,12 +527,9 @@ def configuration():
                     config_dict[key] = value if isinstance(value, list) else [value]
                 else:
                     config_dict[key] = value
+            config_dict = _normalize_configuration(config_dict)
             save_temp_config("all", config_dict, session_id)
-        return jsonify({
-            'results': "",
-            'configurations': config_dict,
-            'message': 'success!'
-        }), 200
+        return _configuration_success(config_dict)
     elif data.get("id") == "remove_rule":
         rule_name = str(data.get("rule_name") or "").strip()
         if not rule_name:
@@ -489,11 +574,7 @@ def configuration():
                     removed_paths.append(pyc_path)
 
         save_temp_config("all", config_dict, session_id)
-        return jsonify({
-            'results': {'removed_rule': rule_name, 'removed_files': removed_paths},
-            'configurations': config_dict,
-            'message': 'success!'
-        }), 200
+        return _configuration_success(config_dict, extra={'removed_rule': rule_name, 'removed_files': removed_paths})
     else:
         print("Unknown action:", data)
         return jsonify({'results': "unknown action", 'message': 'failed!'}), 400
@@ -515,17 +596,17 @@ def init_source():
 
         copied_config = duplicate_window_config(active_session, window_id)
         if copied_config is not None:
-            return jsonify({'message': 'success!'}), 200
+            return jsonify({'message': 'success'}), 200
 
         config_folder = "public/temp_config"
         file_path = f'{config_folder}/{window_id}_{active_session}_temp_config.json'
         if os.path.isfile(file_path):
-            return jsonify({'message': 'success!'}), 200
+            return jsonify({'message': 'success'}), 200
         file_path = f'{config_folder}/{active_session}_temp_config.json'
         if os.path.isfile(file_path):
             duplicated_file = os.path.join(config_folder, f"{window_id}_{active_session}_temp_config.json")
             shutil.copyfile(file_path, duplicated_file)
-            return jsonify({'message': 'success!'}), 200
+            return jsonify({'message': 'success'}), 200
         return jsonify({'results': "Base session config not found", 'message': 'failed!'}), 404
     except Exception as e:
         print(e)
@@ -807,7 +888,7 @@ def upload_batch_files():
             return jsonify({"message": "Failed to save file"}), 500
         register_artifact(saved_path, "upload", session_id=session_id, filename=os.path.basename(saved_path))
 
-    return jsonify({"message": "success!"}), 200
+    return jsonify({"message": "success"}), 200
 
 @app.route('/live_batch_files', methods=['POST'])
 @validate_json_payload(COMMON_SCHEMAS["live_batch_files"])
@@ -888,7 +969,7 @@ def live_batch_files():
             stream = batch_data_manager(payload)
             if stream is not None:
                 print("stream:",stream)
-                return jsonify({'results': stream, 'message': 'success!'}), 200
+                return jsonify({'results': stream, 'message': 'success'}), 200
             else:
                 return jsonify({'results': stream, 'message': 'failed!'}), 400
         else:
@@ -921,7 +1002,7 @@ def graph_link():
         str_report_status = globals.str_report_status_registry.get(str(session_id), {})
         if session_info or str_report_status:
             print(3)
-            return jsonify({'message': 'success!'}), 200  # Background fetch or STR status is ready
+            return jsonify({'message': 'success'}), 200  # Background fetch or STR status is ready
         else:
             print(4)
             return jsonify({'message': 'failed!'}), 200  # No background fetch
@@ -943,7 +1024,7 @@ def get_graph():
     #     try:
     #         informationfile=fetch_graph(id,"overview",source_id,"","json");
     #         if informationfile is not None:
-    #             return jsonify({'results': informationfile, 'message': 'success!'}), 200
+    #             return jsonify({'results': informationfile, 'message': 'success'}), 200
     #         else:
     #             return jsonify({'results': "", 'message': 'failed!'}), 200
     #     except Exception as e:
@@ -958,7 +1039,7 @@ def get_graph():
                 return graph
             # otherwise add file info
             graph["file"] = "graphs_template"
-            return jsonify({'results': graph, 'message': 'success!'}), 200
+            return jsonify({'results': graph, 'message': 'success'}), 200
 
         except Exception as e:
             print(e)

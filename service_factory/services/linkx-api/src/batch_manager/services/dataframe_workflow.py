@@ -177,7 +177,7 @@ def create_dataframe_response(data, session_id):
                 "actions": ["Store data", "Source / Target Relationship", "Link Analysis"],
                 "rules": load_temp_config("rule_names", session_id),
             },
-            "message": "success!",
+            "message": "success",
         }), 200
     except Exception as e:
         print("create_DF failed:", e)
