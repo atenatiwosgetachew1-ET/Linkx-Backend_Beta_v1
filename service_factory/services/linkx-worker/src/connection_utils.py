@@ -69,7 +69,7 @@ def HDFSstorage(id, webhdfs_url,session_id):
         try:
             client = InsecureClient(address)
             #print("Attempting to list root directory...")
-            items = list(client.status('/'))   # only checks root metadata
+            items = client.status('/')   # only checks root metadata
             # print(f"Items in root: {items}")
             # print("hdfs found")
             storage = raw_url.replace("http://", "").replace("https://", "")

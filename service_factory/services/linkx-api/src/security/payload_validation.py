@@ -335,8 +335,8 @@ COMMON_SCHEMAS = {
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "addressType": {"type": ["string", "null"], "enum": ["broker", "api", None]},
-            "type": {"type": ["string", "null"], "enum": ["broker", "api", None]},
+            "addressType": {"type": ["string", "null"], "enum": ["broker", "api", "hdfs", "storage", None]},
+            "type": {"type": ["string", "null"], "enum": ["broker", "api", "hdfs", "storage", None]},
             "address": {"type": ["string", "null"], "maxLength": 2048},
             "broker": {"type": ["string", "null"], "maxLength": 512},
             "broker_url": {"type": ["string", "null"], "maxLength": 512},
