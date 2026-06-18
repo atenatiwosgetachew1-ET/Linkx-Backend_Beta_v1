@@ -41,6 +41,97 @@ def enqueue_cleanup_run(cleanup_type, session_id=None, run_id=None, reason="even
     return cleanup_id
 
 
+def enqueue_worker_job(queue_name, job_type, session_id=None, run_id=None, payload=None, priority=100, max_attempts=3):
+    job_payload = dict(payload or {})
+    if session_id is not None:
+        job_payload.setdefault("session_id", str(session_id))
+    if run_id is not None:
+        job_payload.setdefault("run_id", str(run_id))
+
+    with connect(application_name="linkx-api-enqueue-worker-job") as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO jobs (session_id, run_id, job_type, queue_name, status, priority, max_attempts, payload)
+                VALUES (%s, %s, %s, %s, 'queued', %s, %s, %s::jsonb)
+                RETURNING id::text, status, queue_name, job_type
+                """,
+                (
+                    str(session_id) if session_id is not None else None,
+                    str(run_id) if run_id is not None else None,
+                    str(job_type),
+                    str(queue_name),
+                    int(priority),
+                    int(max_attempts),
+                    json.dumps(job_payload),
+                ),
+            )
+            row = cur.fetchone()
+        conn.commit()
+    return {
+        "job_id": row[0],
+        "status": row[1],
+        "queue": row[2],
+        "job_type": row[3],
+        "session_id": str(session_id) if session_id is not None else None,
+        "run_id": str(run_id) if run_id is not None else None,
+    }
+
+
+def get_worker_job(job_id):
+    with connect(application_name="linkx-api-get-worker-job") as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id::text, session_id, run_id, job_type, queue_name, status, attempts, max_attempts,
+                       locked_by, created_at, scheduled_at, started_at, finished_at, error_message, payload
+                FROM jobs
+                WHERE id = %s
+                """,
+                (str(job_id),),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            cur.execute(
+                """
+                SELECT event_type, message, payload, created_at
+                FROM job_events
+                WHERE job_id = %s
+                ORDER BY created_at DESC
+                LIMIT 20
+                """,
+                (str(job_id),),
+            )
+            events = [
+                {
+                    "event_type": event[0],
+                    "message": event[1],
+                    "payload": event[2] or {},
+                    "created_at": event[3].isoformat() if event[3] else None,
+                }
+                for event in cur.fetchall()
+            ]
+    return {
+        "job_id": row[0],
+        "session_id": row[1],
+        "run_id": row[2],
+        "job_type": row[3],
+        "queue": row[4],
+        "status": row[5],
+        "attempts": row[6],
+        "max_attempts": row[7],
+        "locked_by": row[8],
+        "created_at": row[9].isoformat() if row[9] else None,
+        "scheduled_at": row[10].isoformat() if row[10] else None,
+        "started_at": row[11].isoformat() if row[11] else None,
+        "finished_at": row[12].isoformat() if row[12] else None,
+        "error_message": row[13],
+        "payload": row[14] or {},
+        "events": events,
+    }
+
+
 def request_session_cancellation(session_id, reason="client_requested", requested_by=None, neo4j_credentials=None):
     if not session_id:
         return {"cancel_requested": False, "message": "missing session_id"}

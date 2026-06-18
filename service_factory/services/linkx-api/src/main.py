@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 import random
 import threading
 import py_compile
+import uuid
 
 from globals import create_file,save_uploaded_file,save_temp_config,load_temp_config,_session_store
 from connection_utils import kafka_broker, rest_api, HDFSstorage, tools
@@ -37,7 +38,7 @@ from io_sockets import register_socket_handlers
 from api.STR_link_analysis import STR_link_analysis_api
 from api.ai_service import ai_service_api
 from session_config_store import create_session_config, duplicate_window_config, get_user_config, get_workspace_layout, save_user_config, save_workspace_layout
-from service_orchestration import enqueue_cleanup_run, get_active_session_lock, get_any_active_actor_lock, list_cleanup_audit, public_lock_state
+from service_orchestration import enqueue_cleanup_run, enqueue_worker_job, get_active_session_lock, get_any_active_actor_lock, get_worker_job, list_cleanup_audit, public_lock_state, request_session_cancellation
 from auth.decorators import auth_required, current_actor_from_request, permission_required
 from auth.repository import bind_analysis_session_actor, can_access_analysis_session_actor, get_postgres_connection
 from auth.routes import auth_api
@@ -68,6 +69,15 @@ app.register_blueprint(auth_api, url_prefix="/auth")
 app.register_blueprint(STR_link_analysis_api, url_prefix="/api")
 app.register_blueprint(ai_service_api, url_prefix="/ai")
 
+
+
+def _async_worker_jobs_enabled():
+    return str(os.getenv("LINKX_ASYNC_WORKER_JOBS", "true")).lower() not in {"0", "false", "no"}
+
+
+def _new_session_log_file(session_id):
+    current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    return f"logfile_{session_id}_[{current_time}].log"
 
 
 def _validation_error_response(exc):
@@ -372,6 +382,21 @@ def _graph_accessible_source(source_id, actor):
         return can_access_analysis_session_actor(source_id, actor) or can_access_analysis_session_actor(parent_id, actor)
 
     return _analysis_session_exists(source_id) and can_access_analysis_session_actor(source_id, actor)
+
+
+
+@app.route('/jobs/<job_id>', methods=['GET'])
+@auth_required
+@permission_required("session:read")
+def worker_job_status(job_id):
+    actor = current_actor_from_request()
+    job = get_worker_job(job_id)
+    if not job:
+        return jsonify({"message": "not_found"}), 404
+    session_id = job.get("session_id")
+    if session_id and not can_access_analysis_session_actor(session_id, actor):
+        return jsonify({"message": "forbidden"}), 403
+    return jsonify({"message": "success", "results": job}), 200
 
 
 @app.route('/admin/audit/cleanup', methods=['GET'])
@@ -1061,26 +1086,61 @@ def live_batch_files():
             values.setdefault("listen_realtime", True)
         if data.get("use_dataframe") is True:
             values.setdefault("use_dataframe", True)
-        #Create the session instance
+
+        if _async_worker_jobs_enabled():
+            run_id = uuid.uuid4().hex
+            log_file = _new_session_log_file(session_id)
+            payload = dict(values)
+            payload.update({
+                "id": "start_session",
+                "session_id": session_id,
+                "run_id": run_id,
+                "log_file": log_file,
+                "run_inline": True,
+            })
+            job = enqueue_worker_job(
+                "analysis",
+                "start_session",
+                session_id=session_id,
+                run_id=run_id,
+                payload=payload,
+                priority=50,
+                max_attempts=1,
+            )
+            print("stream queued:", job)
+            return jsonify({
+                'results': log_file,
+                'message': 'success',
+                'job': job,
+                'job_id': job['job_id'],
+                'status': 'queued',
+                'queued': True,
+            }), 202
+
+        # Legacy fallback: run inside API memory when explicitly disabled.
         payload = {"id": "create_session", "session_id": session_id}
         session = batch_data_manager(payload)
-        #Start the session
         if session is True:
-            values["id"]="start_session"
-            payload=values
-            stream = batch_data_manager(payload)
+            values["id"] = "start_session"
+            stream = batch_data_manager(values)
             if stream is not None:
-                print("stream:",stream)
+                print("stream:", stream)
                 return jsonify({'results': stream, 'message': 'success'}), 200
-            else:
-                return jsonify({'results': stream, 'message': 'failed!'}), 400
-        else:
-            return jsonify({'results': session, 'message': 'failed!'}), 400
+            return jsonify({'results': stream, 'message': 'failed!'}), 400
+        return jsonify({'results': session, 'message': 'failed!'}), 400
 
     # -----------------------------
     # END SESSION
     # -----------------------------
     elif action_id == "end_session":
+        if _async_worker_jobs_enabled():
+            result = request_session_cancellation(
+                session_id,
+                reason="client_end_session",
+                requested_by="api:live_batch_files",
+                neo4j_credentials=load_temp_config("tool_credentials", session_id),
+            )
+            return jsonify({"status": "success", "message": "cancellation_requested", "orchestration": result}), 202
         payload = {"id": "end_session", "session_id": session_id}
         result = batch_data_manager(payload)
         return jsonify(result), 200

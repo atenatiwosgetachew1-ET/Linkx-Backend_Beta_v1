@@ -109,17 +109,34 @@ def start_session(payload):
     log_dir = ensure_artifact_dir("logs")
     os.makedirs(log_dir, exist_ok=True)
 
-    log_file = f"logfile_{session_id}_[{current_time}].log"
+    log_file = payload.get("log_file") or f"logfile_{session_id}_[{current_time}].log"
     full_path = os.path.join(log_dir, log_file)
-    with open(full_path, "w") as f:
-        f.write(f"New session started at {current_time}\n")
+    if not os.path.exists(full_path):
+        with open(full_path, "w") as f:
+            f.write(f"New session started at {current_time}\n")
     register_artifact(full_path, "log", session_id=session_id, filename=log_file)
 
-    run_id = uuid.uuid4().hex
+    run_id = payload.get("run_id") or uuid.uuid4().hex
     payload["log_file"] = log_file
     payload["run_id"] = run_id
-    stop_event = threading.Event()
+    stop_event = payload.get("stop_event") or threading.Event()
     payload["stop_event"] = stop_event
+
+    if payload.get("run_inline") is True:
+        _session_store[session_id].update({
+            "thread": None,
+            "stop_event": stop_event,
+            "log_file": log_file,
+            "run_id": run_id,
+            "tool_credentials": payload.get("tool_credentials"),
+        })
+        try:
+            result = analyzer(payload)
+            return {"status": "success" if result is True else "finished", "log_file": log_file, "run_id": run_id, "result": result}
+        except Exception as e:
+            print(f"[ERROR] Inline worker session failed: {e}")
+            return {"status": "failed", "log_file": log_file, "run_id": run_id, "error": str(e)}
+
     try:
         # Start thread normally
         thread = threading.Thread(target=analyzer, args=(payload,), daemon=True)
