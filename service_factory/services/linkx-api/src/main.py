@@ -35,6 +35,7 @@ from batch_manager.analyzing.analyzer import analyzer
 from logger import log_writer,log_stream_background
 from io_sockets import register_socket_handlers
 from api.STR_link_analysis import STR_link_analysis_api
+from api.ai_service import ai_service_api
 from session_config_store import create_session_config, duplicate_window_config, get_user_config, get_workspace_layout, save_user_config, save_workspace_layout
 from service_orchestration import enqueue_cleanup_run, get_active_session_lock, get_any_active_actor_lock, list_cleanup_audit, public_lock_state
 from auth.decorators import auth_required, current_actor_from_request, permission_required
@@ -65,6 +66,7 @@ register_socket_handlers(socketio)
 app.register_blueprint(auth_api, url_prefix="/auth")
 # Register external API blueprint
 app.register_blueprint(STR_link_analysis_api, url_prefix="/api")
+app.register_blueprint(ai_service_api, url_prefix="/ai")
 
 
 

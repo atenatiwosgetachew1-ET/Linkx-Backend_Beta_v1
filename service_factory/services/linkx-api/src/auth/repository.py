@@ -85,6 +85,12 @@ DEFAULT_SERVICE_PERMISSIONS = {
         "graph:read",
         "reports:read",
     ],
+    "ai": [
+        "ai:read",
+        "session:read",
+        "graph:read",
+        "reports:read",
+    ],
 }
 
 
