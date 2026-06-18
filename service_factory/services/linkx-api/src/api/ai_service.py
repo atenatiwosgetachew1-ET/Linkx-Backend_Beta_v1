@@ -1,5 +1,4 @@
 import json
-import re
 from datetime import date, datetime
 
 from flask import Blueprint, jsonify, request
@@ -234,59 +233,5 @@ def graph_metadata(session_id):
             "nodes": counts["nodes"] if counts else 0,
             "relationships": counts["relationships"] if counts else 0,
             "relationship_types": counts["relationship_types"] if counts else [],
-        },
-    }), 200
-
-
-@ai_service_api.route("/sessions/<session_id>/graph/relationships", methods=["POST"])
-@permission_required("ai:read")
-def graph_relationships(session_id):
-    if not _session_exists(session_id):
-        return jsonify({"message": "not_found"}), 404
-    data = request.get_json(silent=True) or {}
-    relationship = str(data.get("relationship") or "").strip()
-    if relationship and not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", relationship):
-        return jsonify({"message": "validation_error", "detail": "invalid_relationship"}), 400
-    try:
-        limit = int(data.get("limit") or 1000)
-    except (TypeError, ValueError):
-        limit = 1000
-    limit = max(1, min(limit, 5000))
-
-    driver, error = _neo4j_driver_for_session(session_id)
-    if error:
-        return jsonify({"message": error}), 404
-    session_ids = _graph_session_ids(session_id)
-    rel_match = f"[r:{relationship}]" if relationship else "[r]"
-    query = f"""
-        MATCH (a)-{rel_match}->(b)
-        WHERE r.session_id IN $session_ids OR r.parent_session_id IN $session_ids OR r.batch_id IN $session_ids
-        RETURN a, r, b
-        LIMIT $limit
-    """
-    nodes = {}
-    edges = []
-    try:
-        with driver.session() as session:
-            for record in session.run(query, session_ids=session_ids, limit=limit):
-                a = record["a"]
-                b = record["b"]
-                r = record["r"]
-                a_id = getattr(a, "element_id", None) or str(a.id)
-                b_id = getattr(b, "element_id", None) or str(b.id)
-                r_id = getattr(r, "element_id", None) or str(r.id)
-                nodes[a_id] = {"id": a_id, "label": a.get("NodeId") or a.get("account_number") or str(a_id), **dict(a)}
-                nodes[b_id] = {"id": b_id, "label": b.get("NodeId") or b.get("account_number") or str(b_id), **dict(b)}
-                edges.append({"id": r_id, "from": a_id, "to": b_id, "label": r.type, **dict(r)})
-    finally:
-        driver.close()
-    return jsonify({
-        "message": "success",
-        "results": {
-            "session_id": str(session_id),
-            "relationship": relationship or None,
-            "limit": limit,
-            "nodes": list(nodes.values()),
-            "edges": edges,
         },
     }), 200

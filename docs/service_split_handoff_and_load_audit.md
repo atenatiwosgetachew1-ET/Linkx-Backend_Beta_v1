@@ -137,7 +137,6 @@ sudo systemctl restart linkx-cleanup-scheduler
 | `GET /ai/sessions/<session_id>/artifacts` | AI artifact list |
 | `GET /ai/cleanup-runs?session_id=<session_id>` | AI cleanup/audit read |
 | `GET /ai/sessions/<session_id>/graph/metadata` | AI graph summary from Neo4j |
-| `POST /ai/sessions/<session_id>/graph/relationships` | AI graph relationship fetch |
 
 ### Frontend/Core Analysis
 
