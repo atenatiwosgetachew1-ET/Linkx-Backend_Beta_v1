@@ -29,7 +29,7 @@ def _host_without_port(value):
 
 
 def _join_url(base_url, endpoint):
-    return f"{str(base_url).rstrip('/')}/{str(endpoint).strip('/')}/"
+    return f"{str(base_url).rstrip('/')}/{str(endpoint).strip('/')}"
 
 
 def _storage_host(session_id, fallback=None):
