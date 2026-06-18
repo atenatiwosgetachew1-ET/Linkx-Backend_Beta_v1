@@ -261,6 +261,19 @@ After this audit, the first load-distribution change was implemented locally:
 
 Deployment touches Server 1 API and Server 3 worker. No database migration is required because the existing `jobs` table is used.
 
+## Implemented Second Migration Slice: Dataframe Creation To Worker
+
+The second load-distribution change was implemented locally after streaming moved to the worker:
+
+- `batch_manager/services/dataframe_workflow.py` now exposes `create_dataframe_result(...)`, which returns a plain JSON-able `(body, status)` tuple.
+- `create_dataframe_response(...)` remains as the Flask wrapper for legacy synchronous API mode.
+- Server 3 worker `linkx_worker.handlers` now supports job types `create_DF`, `create_dataframe`, and `dataframe`.
+- `POST /live_batch_files` with `id=create_DF` now queues a `create_DF` job on the `dataframe` queue when `LINKX_ASYNC_WORKER_JOBS` is enabled, which is the default.
+- The API returns `202 Accepted` with `message: accepted`, `results.job_id`, `results.status: queued`, and `results.queue: dataframe`.
+- Frontend should poll `GET /jobs/<job_id>` or subscribe to job progress before assuming the dataframe is ready.
+
+Deployment touches Server 1 API and Server 3 worker. No database migration is required.
+
 ## Notes For A New Chat
 
 - The active deployment is the service-factory split, not the root monolith.

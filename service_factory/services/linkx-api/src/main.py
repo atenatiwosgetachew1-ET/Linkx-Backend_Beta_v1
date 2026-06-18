@@ -1069,8 +1069,30 @@ def live_batch_files():
     # CREATE DATAFRAME / LOAD FILES
     # -----------------------------
     if action_id == "create_DF":
-        print("data",data)
+        print("data", data)
         print("kindkindkind:", data.get("kind", ""))
+        if _async_worker_jobs_enabled():
+            payload = dict(data)
+            payload.setdefault("id", "create_DF")
+            payload["session_id"] = session_id
+            job = enqueue_worker_job(
+                "dataframe",
+                "create_DF",
+                session_id=session_id,
+                payload=payload,
+                priority=60,
+                max_attempts=1,
+            )
+            return jsonify({
+                "message": "accepted",
+                "results": {
+                    "status": "queued",
+                    "job_id": job["job_id"],
+                    "job": job,
+                    "session_id": session_id,
+                    "queue": "dataframe",
+                },
+            }), 202
         return create_dataframe_response(data, session_id)
     # -----------------------------
     # START SESSION

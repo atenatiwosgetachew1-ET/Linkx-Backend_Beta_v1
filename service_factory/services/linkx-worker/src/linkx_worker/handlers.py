@@ -3,6 +3,7 @@ import traceback
 
 from batch_manager.batch_data_manager import batch_data_manager
 from batch_manager.analyzing.analyzer import analyzer
+from batch_manager.services.dataframe_workflow import create_dataframe_result
 from linkx_worker.cancellation import DatabaseCancellationEvent
 
 
@@ -39,6 +40,13 @@ def run_job(job_type, payload):
         if "id" not in payload and job_type != "batch_data_manager":
             payload["id"] = job_type
         return batch_data_manager(payload)
+
+    if job_type in {"create_DF", "create_dataframe", "dataframe"}:
+        result, status = create_dataframe_result(payload, session_id)
+        if status >= 400:
+            result = dict(result)
+            result.setdefault("status", "failed")
+        return result
 
     if job_type in {"analyzer", "analysis", "run_analysis", "realtime_data"}:
         return analyzer(payload)

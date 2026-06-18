@@ -114,10 +114,10 @@ def load_dataframes_for_create_df(data, session_id):
     return dfs
 
 
-def create_dataframe_response(data, session_id):
+def create_dataframe_result(data, session_id):
     dfs = load_dataframes_for_create_df(data, session_id)
     if not dfs:
-        return jsonify({"results": "", "message": "No valid dataframes loaded"}), 400
+        return {"results": "", "message": "No valid dataframes loaded", "status": "failed"}, 400
 
     try:
         all_columns = set()
@@ -142,7 +142,7 @@ def create_dataframe_response(data, session_id):
         if pandas_dfs:
             merged_pandas = merge_pandas_and_save(pandas_dfs, path_to_save, session_id)
             if merged_pandas is None:
-                return jsonify({"results": "", "message": "Failed to merge pandas DFs!"}), 400
+                return {"results": "", "message": "Failed to merge pandas DFs!", "status": "failed"}, 400
             num_rows_pandas = len(merged_pandas)
             columns_pandas = list(merged_pandas.columns)
         else:
@@ -152,7 +152,7 @@ def create_dataframe_response(data, session_id):
         if spark_dfs:
             merged_spark = merge_spark_and_save(spark_dfs, path_to_save, session_id)
             if merged_spark is None:
-                return jsonify({"results": "", "message": "Failed to merge Spark DFs!"}), 400
+                return {"results": "", "message": "Failed to merge Spark DFs!", "status": "failed"}, 400
             num_rows_spark = merged_spark.count()
             columns_spark = merged_spark.columns
         else:
@@ -166,7 +166,7 @@ def create_dataframe_response(data, session_id):
         save_temp_config("dataframe_ready", True, session_id)
         save_temp_config("active_dataframe_kind", data.get("kind"), session_id)
 
-        return jsonify({
+        return {
             "results": {
                 "columns": final_columns,
                 "num_columns": len(final_columns),
@@ -178,7 +178,15 @@ def create_dataframe_response(data, session_id):
                 "rules": load_temp_config("rule_names", session_id),
             },
             "message": "success",
-        }), 200
+            "status": "success",
+        }, 200
     except Exception as e:
         print("create_DF failed:", e)
-        return jsonify({"results": None, "message": str(e)}), 500
+        return {"results": None, "message": str(e), "status": "failed"}, 500
+
+
+def create_dataframe_response(data, session_id):
+    body, status = create_dataframe_result(data, session_id)
+    response_body = dict(body)
+    response_body.pop("status", None)
+    return jsonify(response_body), status
