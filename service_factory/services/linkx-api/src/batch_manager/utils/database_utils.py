@@ -1,5 +1,21 @@
+import os
 import time
 from globals import _session_store
+
+
+def _env_float(name, default):
+    try:
+        return max(0.1, float(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _env_int(name, default):
+    try:
+        return max(1, int(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return int(default)
+
 
 def get_graph_metadata(driver, session_id, tool_credentials=None):
     with driver.session() as session:
@@ -64,7 +80,9 @@ def get_graph_metadata(driver, session_id, tool_credentials=None):
     }
 
 
-def _fetch_relationship_graph(driver, session_id, relationship_type=None, limit=300000):
+def _fetch_relationship_graph(driver, session_id, relationship_type=None, limit=None):
+    if limit is None:
+        limit = _env_int("LINKX_GRAPH_STATUS_GRAPH_LIMIT", 5000)
     rel_filter = "AND type(r) = $relationship_type" if relationship_type else ""
     query = f"""
         MATCH (a)-[r]->(b)
@@ -109,26 +127,31 @@ def _fetch_relationship_graph(driver, session_id, relationship_type=None, limit=
 
 def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=None, primary_rel_type=None):
     """
-    Stream metadata every 5 seconds and relationships/graph payloads when changed.
+    Stream graph metadata and lightweight relationship updates without competing too hard with ingestion.
     """
+
+    metadata_interval = _env_float("LINKX_GRAPH_STATUS_METADATA_INTERVAL", 2)
+    relationships_active_interval = _env_float("LINKX_GRAPH_STATUS_RELATIONSHIPS_ACTIVE_INTERVAL", 3)
+    relationships_idle_interval = _env_float("LINKX_GRAPH_STATUS_RELATIONSHIPS_IDLE_INTERVAL", 10)
+    relationships_idle_after_cycles = _env_int("LINKX_GRAPH_STATUS_RELATIONSHIPS_IDLE_AFTER_CYCLES", 2)
 
     stop_event = registry_entry["stop_event"]
     driver = registry_entry["driver"]
     tool_credentials = registry_entry["tool_credentials"]
     registry_entry["latest_relationships"] = []
+    registry_entry["metadata_complete"] = False
     last_rel_hash = None
-    last_graph_hash = None
+    unchanged_relationship_cycles = 0
 
     # -------------------------
-    # Metadata loop (every 5s)
+    # Metadata loop
     # -------------------------
     def emit_metadata():
-        while not stop_event.is_set():
+        while not stop_event.is_set() and not registry_entry.get("metadata_complete"):
             try:
-                # ALWAYS fetch fresh metadata
                 metadata = get_graph_metadata(driver, session_id, tool_credentials)
-                registry_entry["static_infos"] = metadata  # optional caching if needed
-                if stop_event.is_set():
+                registry_entry["static_infos"] = metadata
+                if stop_event.is_set() or registry_entry.get("metadata_complete"):
                     break
                 socketio.emit(
                     "status",
@@ -149,13 +172,13 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
                     },
                     to=sid
                 )
-            socketio.sleep(5)  # emits every 5 seconds
+            socketio.sleep(metadata_interval)
 
     # -------------------------
     # Relationships loop (on change)
     # -------------------------
     def emit_relationships():
-        nonlocal last_rel_hash
+        nonlocal last_rel_hash, unchanged_relationship_cycles
         while not stop_event.is_set():
             try:
                 with driver.session() as session:
@@ -189,10 +212,14 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
 
                 # only emit if changed
                 new_hash = hash(tuple((r["id"], r["type"], r["color"], r["bgcolor"]) for r in relationships))
+                if relationships:
+                    registry_entry["metadata_complete"] = True
+
                 if new_hash != last_rel_hash:
                     if stop_event.is_set():
                         break
                     last_rel_hash = new_hash
+                    unchanged_relationship_cycles = 0
                     registry_entry["latest_relationships"] = relationships
                     socketio.emit(
                         "status",
@@ -203,6 +230,8 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
                         },
                         to=sid
                     )
+                else:
+                    unchanged_relationship_cycles += 1
 
             except Exception as e:
                 socketio.emit(
@@ -215,51 +244,13 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
                     to=sid
                 )
 
-            socketio.sleep(2)  # check every 2 seconds for updates
-
-    # -------------------------
-    # Relationship graph loop (on change)
-    # -------------------------
-    def emit_relationship_graph():
-        nonlocal last_graph_hash
-        while not stop_event.is_set():
-            try:
-                session_info = _session_store.get(session_id, {})
-                relationship_type = primary_rel_type or session_info.get("primary_rel_type")
-                graph = _fetch_relationship_graph(driver, session_id, relationship_type=relationship_type)
-                new_hash = hash((
-                    tuple(sorted(node.get("id") for node in graph["nodes"])),
-                    tuple(sorted(edge.get("id") for edge in graph["edges"])),
-                ))
-                if new_hash != last_graph_hash:
-                    if stop_event.is_set():
-                        break
-                    last_graph_hash = new_hash
-                    socketio.emit(
-                        "status",
-                        {
-                            "type": "relationship_graph",
-                            "data": graph,
-                            "relationship": relationship_type,
-                            "session_id": session_id,
-                        },
-                        to=sid,
-                    )
-            except Exception as e:
-                socketio.emit(
-                    "status",
-                    {
-                        "type": "error",
-                        "error": f"Relationship graph error: {e}",
-                        "session_id": session_id,
-                    },
-                    to=sid,
-                )
-            socketio.sleep(3)
+            if unchanged_relationship_cycles >= relationships_idle_after_cycles:
+                socketio.sleep(relationships_idle_interval)
+            else:
+                socketio.sleep(relationships_active_interval)
 
     # -------------------------
     # Start loops as background tasks
     # -------------------------
     socketio.start_background_task(emit_metadata)
     socketio.start_background_task(emit_relationships)
-    socketio.start_background_task(emit_relationship_graph)

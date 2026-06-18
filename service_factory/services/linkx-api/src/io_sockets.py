@@ -332,11 +332,12 @@ def register_socket_handlers(socketio: SocketIO):
             return
 
         driver = tools(tool.lower(), "check", {"session_id": session_id})
-        session_info = _session_store.get(session_id)
+        session_info = _session_store.get(session_id) or {}
         if not session_info:
-            if replayed_status_count == 0:
-                socketio.emit("status", {"type": "waiting", "session_id": session_id}, to=sid)
-            return
+            print(
+                "[str_report_socket] graph status using persisted graph state "
+                f"for session {session_id}; API stream registry is not present"
+            )
 
         stop_event = threading.Event()
         tool_credentials = load_temp_config("tool_credentials", session_id)
