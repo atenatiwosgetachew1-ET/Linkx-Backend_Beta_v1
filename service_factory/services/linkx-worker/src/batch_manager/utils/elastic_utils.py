@@ -6,7 +6,7 @@ import pandas as pd
 from batch_manager.utils.hive_utils import hive_keyword_search
 from batch_manager.utils.spark_utils import ensure_spark_df
 
-def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_column, date=None, fetch_columns=None, timeout=30):
+def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_column, date=None, fetch_columns=None, timeout=30, limit=None, offset=0):
     if not search_column:
         print(-2,"search_column1:",search_column)
         return None
@@ -23,6 +23,16 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
         used_payload = None
         for column in search_columns:
             payload = {column: keyword}
+            if id == "search":
+                try:
+                    request_limit = int(limit) if limit is not None else 50
+                except (TypeError, ValueError):
+                    request_limit = 50
+                try:
+                    request_offset = int(offset or 0)
+                except (TypeError, ValueError):
+                    request_offset = 0
+                payload.update({"limit": request_limit, "offset": request_offset, "size": request_limit, "from": request_offset})
             print("DF payload ES:",payload)
             response = requests.post(API_URL, json=payload, timeout=timeout)
             response.raise_for_status()
@@ -117,6 +127,27 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
 
         return None
 
+    except requests.exceptions.HTTPError as e:
+        status_code = e.response.status_code if e.response is not None else None
+        response_text = e.response.text[:500] if e.response is not None else ""
+        print("Elastic error:", str(e), response_text)
+        if id == "search" and not strict_mood and status_code and status_code >= 500:
+            column = search_columns[0] if search_columns else search_column
+            return {
+                "results": [{
+                    "name": f"Large fuzzy results found for '{keyword}'",
+                    "keyword": keyword,
+                    "size": 100000,
+                    "strict": strict_mood,
+                    "type": "hive",
+                    "column": column,
+                }],
+                "has_more": 1,
+                "offset": 0,
+                "limit": 0,
+                "message": "Elastic fuzzy search was too broad; use Hive fetch",
+            }
+        return None
     except Exception as e:
         print("Elastic error:", str(e))
         return None

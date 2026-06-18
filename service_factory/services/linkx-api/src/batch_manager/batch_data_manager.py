@@ -456,7 +456,7 @@ def batch_data_manager(payload):
             hive_payload=[storage_address, keyword, search_columns_hive, strict, hive_port, tables, date_column, date] #For further hive searchings
             #--------------------------------------------------------------------------            
             #print("search params:","keyword:",keyword,"date:",date,"offset:",offset,"limit:",limit,"hybrid:",hybrid,"strict:",strict,"api_search_endpoint:",api_search_endpoint,"search_columns_elastic:",search_columns_elastic,"search_columns_hive:",search_columns_hive)
-            response = es_keyword_search(action_id, API_URL, keyword, search_columns_elastic, strict, date_column, date) #Overrides to hive (Result out of bound)        
+            response = es_keyword_search(action_id, API_URL, keyword, search_columns_elastic, strict, date_column, date, limit=limit, offset=offset) #Overrides to hive (Result out of bound)        
             print("es_response:",response)
         else:#Staric Row files search
             normalized_keyword = str(keyword or "").strip()
