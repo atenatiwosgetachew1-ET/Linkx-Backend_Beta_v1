@@ -1,5 +1,6 @@
 # connection_utils.py
 from flask import Flask, session
+import os
 import requests
 from kafka import KafkaConsumer
 from hdfs import InsecureClient
@@ -62,7 +63,8 @@ def kafka_broker(id,broker_url,session_id, topic=None):
         return True
 def HDFSstorage(id, webhdfs_url,session_id):
     if id == "check":
-        address="http://"+webhdfs_url
+        raw_url = str(webhdfs_url or "").strip()
+        address = raw_url if raw_url.startswith(("http://", "https://")) else "http://" + raw_url
         # print(f"Connecting to WebHDFS at: {address}")
         try:
             client = InsecureClient(address)
@@ -70,8 +72,15 @@ def HDFSstorage(id, webhdfs_url,session_id):
             items = list(client.status('/'))   # only checks root metadata
             # print(f"Items in root: {items}")
             # print("hdfs found")
-            storage=webhdfs_url
-            save_temp_config("active_storage_address",storage,session_id)
+            storage = raw_url.replace("http://", "").replace("https://", "")
+            storage_host = storage.split(":", 1)[0]
+            webhdfs_port = storage.split(":", 1)[1] if ":" in storage else os.getenv("LINKX_STORAGE_WEBHDFS_PORT", "9870")
+            hdfs_rpc_port = os.getenv("LINKX_HDFS_RPC_PORT", os.getenv("LINKX_HADOOP_RCP_PORT", "8020"))
+            save_temp_config("active_storage_address", storage, session_id)
+            save_temp_config("active_storage_host", storage_host, session_id)
+            save_temp_config("storage_webhdfs_url", f"http://{storage_host}:{webhdfs_port}", session_id)
+            if not load_temp_config("storage_hdfs_uri", session_id):
+                save_temp_config("storage_hdfs_uri", f"hdfs://{storage_host}:{hdfs_rpc_port}", session_id)
             return True
         except Exception as e:
             print(f"Error: {e}")

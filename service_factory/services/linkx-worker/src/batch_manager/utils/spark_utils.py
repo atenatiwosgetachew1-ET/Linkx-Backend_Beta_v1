@@ -4,30 +4,40 @@ from threading import Lock
 _spark = None
 _spark_lock = Lock()
 
-def get_spark_session(hdfs_addr=None, spark_port=9000, thrift_port=None, app_name="linkx_spark_session"):
+def get_spark_session(
+    hdfs_addr=None,
+    spark_port=9000,
+    thrift_port=None,
+    app_name="linkx_spark_session",
+    hdfs_uri=None,
+    hdfs_rpc_port=None,
+    hive_metastore_uri=None,
+):
     global _spark
 
+    def strip_scheme(addr):
+        return str(addr or "").replace("hdfs://", "").replace("http://", "").replace("https://", "")
+
     def normalize_hdfs_addr(addr):
+        if hdfs_uri:
+            return hdfs_uri if str(hdfs_uri).startswith("hdfs://") else f"hdfs://{hdfs_uri}"
         if not addr:
             return None
-        addr = addr.replace("hdfs://", "").replace("http://", "").replace("https://", "")
+        rpc_port = hdfs_rpc_port or "8020"
+        addr = strip_scheme(addr)
         if ":9870" in addr:
-            addr = addr.replace(":9870", f":{spark_port}")
-        if ":" not in addr:
-            addr = f"{addr}:{spark_port}"
+            addr = addr.replace(":9870", f":{rpc_port}")
+        elif ":" not in addr:
+            addr = f"{addr}:{rpc_port}"
         return f"hdfs://{addr}"
 
     def normalize_thrift_addr(addr):
-        if not addr:
+        if hive_metastore_uri:
+            return hive_metastore_uri if str(hive_metastore_uri).startswith("thrift://") else f"thrift://{hive_metastore_uri}"
+        if not addr or not thrift_port:
             return None
-        addr = addr.replace("hdfs://", "").replace("http://", "").replace("https://", "")
-        if ":9870" in addr and thrift_port:
-            addr = addr.replace(":9870", f":{thrift_port}")
-        if ":4040" in addr and thrift_port:
-            addr = addr.replace(":4040", f":{thrift_port}")
-        if ":" not in addr and thrift_port:
-            addr = f"{addr}:{thrift_port}"
-        return f"thrift://{addr}"
+        host = strip_scheme(addr).split(":", 1)[0]
+        return f"thrift://{host}:{thrift_port}"
 
     hdfs_addr = normalize_hdfs_addr(hdfs_addr)
 
@@ -48,8 +58,8 @@ def get_spark_session(hdfs_addr=None, spark_port=9000, thrift_port=None, app_nam
             )
             if hdfs_addr:
                 builder = builder.config("spark.hadoop.fs.defaultFS", hdfs_addr)
-            if thrift_port:
-                thrift_addr = normalize_thrift_addr(hdfs_addr)
+            thrift_addr = normalize_thrift_addr(hdfs_addr)
+            if thrift_addr:
                 builder = builder.config("spark.hadoop.hive.metastore.uris", thrift_addr)
             _spark = builder.getOrCreate()
 

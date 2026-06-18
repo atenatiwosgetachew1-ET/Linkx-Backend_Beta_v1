@@ -772,13 +772,13 @@ def connect_to_source():
         return jsonify({'status': 'error', 'message': 'Connection failed!'}), 200
 
     elif storage:
+        webhdfs_port = str(load_temp_config("storage_webhdfs_port", session_id) or load_temp_config("hadoop_web_port", session_id) or "9870")
         if ":" in storage:
             source_port = storage.split(":", 1)[1]
-            if source_port != "9870":
-                return jsonify({'status': 'Warning', 'message': 'Connection failed! No storage found.'}), 200
+            if source_port != webhdfs_port:
+                return jsonify({'status': 'Warning', 'message': f'Connection failed! WebHDFS must use port {webhdfs_port}.'}), 200
         else:
-            hdfs_port = load_temp_config("hadoop_rcp_port", session_id)
-            storage = f"{storage}:{hdfs_port}"
+            storage = f"{storage}:{webhdfs_port}"
 
         if HDFSstorage("check", storage, session_id) is True:
             return jsonify({'status': 'success', 'message': 'Connection established!'}), 200

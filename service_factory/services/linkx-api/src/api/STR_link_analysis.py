@@ -357,17 +357,20 @@ def STR_link_analysis():
             date_column = _config_value(session_id, "date_column")
             date = data.get("date")
 
-            storage_address = _config_value(session_id, "active_storage_address")
+            storage_address = _config_value(session_id, "active_storage_host") or _config_value(session_id, "active_storage_address")
             if ":" in storage_address:
                 storage_address = storage_address.split(":", 1)[0]
 
             api_port = _config_value(session_id, "api_port")
-            api_search_endpoint = _config_value(session_id, "search_api_endpoint_es_strict")
-            api_search_endpoint = str(api_search_endpoint).strip("/")
+            api_search_endpoint = str(_config_value(session_id, "search_api_endpoint_es_strict")).strip("/")
             API_URL = os.getenv("LINKX_PUBLIC_ES_API_URL") or os.getenv("LINKX_STR_ELASTIC_API_URL")
 
             if not API_URL:
-                API_URL = f"http://{storage_address}:{api_port}/{api_search_endpoint}"
+                elastic_base_url = _config_value(session_id, "elastic_api_base_url")
+                if elastic_base_url:
+                    API_URL = f"{str(elastic_base_url).rstrip('/')}/{api_search_endpoint}"
+                else:
+                    API_URL = f"http://{storage_address}:{api_port}/{api_search_endpoint}"
 
             print("STR link analysis request received")
             print("session_id:", session_id)

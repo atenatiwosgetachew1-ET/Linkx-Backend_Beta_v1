@@ -23,10 +23,54 @@ def _is_kafka_batch_topic(topic):
     return topic_name.endswith(".batches") or topic_name.endswith("batches")
 
 
+def _host_without_port(value):
+    value = str(value or "").replace("http://", "").replace("https://", "").replace("hdfs://", "")
+    return value.split(":", 1)[0]
+
+
+def _join_url(base_url, endpoint):
+    return f"{str(base_url).rstrip('/')}/{str(endpoint).strip('/')}/"
+
+
+def _storage_host(session_id, fallback=None):
+    return load_temp_config("active_storage_host", session_id) or _host_without_port(fallback or load_temp_config("active_storage_address", session_id))
+
+
+def _storage_hdfs_uri(session_id, fallback=None):
+    configured = load_temp_config("storage_hdfs_uri", session_id)
+    if configured:
+        return configured
+    host = _storage_host(session_id, fallback)
+    if not host:
+        return fallback
+    rpc_port = load_temp_config("hdfs_rpc_port", session_id) or load_temp_config("hadoop_rcp_port", session_id) or "8020"
+    return f"hdfs://{host}:{rpc_port}"
+
+
+def _hive_metastore_uri(session_id, fallback=None):
+    configured = load_temp_config("hive_metastore_uri", session_id)
+    if configured:
+        return configured
+    host = load_temp_config("hive_server_host", session_id) or _storage_host(session_id, fallback)
+    thrift_port = load_temp_config("thrift_port", session_id) or "9083"
+    return f"thrift://{host}:{thrift_port}" if host else None
+
+
+def _elastic_api_url(session_id, endpoint, fallback_storage=None):
+    base_url = load_temp_config("elastic_api_base_url", session_id)
+    if not base_url:
+        host = _storage_host(session_id, fallback_storage)
+        api_port = load_temp_config("api_port", session_id) or "5000"
+        base_url = f"http://{host}:{api_port}" if host else ""
+    return _join_url(base_url, endpoint) if base_url else ""
+
+
 def batch_data_manager(payload):
     action_id = payload.get("id")
     session_id = payload.get("session_id")
     storage_ip = load_temp_config("active_storage_address", session_id)
+    storage_hdfs_uri = _storage_hdfs_uri(session_id, storage_ip)
+    hive_metastore_uri = _hive_metastore_uri(session_id, storage_ip)
     # -----------------------------
     # SESSION MANAGEMENT
     # -----------------------------
@@ -281,7 +325,7 @@ def batch_data_manager(payload):
             # ---------------------------------------------------------------- Raw HDFS files
             if len(hdfs_categories) > 0: #Consists an elastic datas
                 spark_port = load_temp_config("spark_port", session_id)
-                spark = get_spark_session(storage_ip, spark_port)            
+                spark = get_spark_session(storage_ip, spark_port, hdfs_uri=storage_hdfs_uri)            
                 print("Consists hdfs file values",hdfs_categories)                               
                 try:
                     df = load_hdfs_files(spark,hdfs_categories)
@@ -306,7 +350,7 @@ def batch_data_manager(payload):
                         print("not strictttt")
                         endpoint = es_search_endpoint_fuzzy   
                     #trigger a fetching logic (call a function that returns the df)                                 
-                    API_URL = f"http://{storage_address}:{api_port}/{endpoint}"
+                    API_URL = _elastic_api_url(session_id, endpoint, storage_address)
                     try:
                         df = es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_column, date, fetch_columns)
                         if df is not None:
@@ -318,7 +362,7 @@ def batch_data_manager(payload):
                 hive_port = load_temp_config("hive_port", session_id)
                 spark_port = load_temp_config("spark_port", session_id)
                 thrift_port = load_temp_config("thrift_port",session_id)
-                spark = get_spark_session(storage_ip, spark_port, thrift_port)            
+                spark = get_spark_session(storage_ip, spark_port, thrift_port, hdfs_uri=storage_hdfs_uri, hive_metastore_uri=hive_metastore_uri)            
                 storage_database= load_temp_config("active_storage_database",session_id)
                 storage_tables = load_temp_config("active_storage_tables",session_id) or []
                 limit = load_temp_config("dataframes_limit",session_id)
@@ -400,7 +444,7 @@ def batch_data_manager(payload):
                 api_search_endpoint = load_temp_config("search_api_endpoint_es_fuzzy",session_id) 
                 search_columns_hive = load_temp_config("search_columns_fuzzy",session_id) 
             #--------------------------------------------------------------------------            
-            API_URL = f"http://{storage_address}:{api_port}/{str(api_search_endpoint).strip('/')}/"
+            API_URL = _elastic_api_url(session_id, api_search_endpoint, storage_address)
             #--------------------------------------------------------------------------            
             #Hive payloads
             storage_database= load_temp_config("active_storage_database",session_id)
