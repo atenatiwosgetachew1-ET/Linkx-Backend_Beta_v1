@@ -65,6 +65,15 @@ def _elastic_api_url(session_id, endpoint, fallback_storage=None):
     return _join_url(base_url, endpoint) if base_url else ""
 
 
+def _truthy_config(value):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+
 def batch_data_manager(payload):
     action_id = payload.get("id")
     session_id = payload.get("session_id")
@@ -309,7 +318,7 @@ def batch_data_manager(payload):
             es_search_endpoint_fuzzy = load_temp_config("search_api_endpoint_es_fuzzy", session_id)   
             dfs = []
             large_search_backend = str(load_temp_config("large_search_backend", session_id) or "hive").strip().lower()
-            elastic_scroll_enabled = bool(load_temp_config("elastic_scroll_enabled", session_id))
+            elastic_scroll_enabled = _truthy_config(load_temp_config("elastic_scroll_enabled", session_id))
             use_elastic_for_large_search = large_search_backend in {"elastic", "elastic_scroll", "scroll"} or elastic_scroll_enabled
             print("large_search_backend:", large_search_backend, "elastic_scroll_enabled:", elastic_scroll_enabled)
             # ---------------------------------------------------------------- Categorize datas with identity (elastic,hive)

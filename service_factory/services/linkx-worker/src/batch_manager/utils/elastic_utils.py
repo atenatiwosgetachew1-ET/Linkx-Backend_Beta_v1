@@ -23,11 +23,11 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
         used_payload = None
         for column in search_columns:
             payload = {column: keyword}
-            if id == "search":
+            if id in {"search", "fetch"}:
                 try:
-                    request_limit = int(limit) if limit is not None else 50
+                    request_limit = int(limit) if limit is not None else (50 if id == "search" else 100000)
                 except (TypeError, ValueError):
-                    request_limit = 50
+                    request_limit = 50 if id == "search" else 100000
                 try:
                     request_offset = int(offset or 0)
                 except (TypeError, ValueError):
@@ -105,8 +105,15 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
                     
         if id == "fetch":
             print("fetching...")
-            records = [r.get("_source", {}) for r in results if "_source" in r]
+            records = []
+            for r in results:
+                if isinstance(r, dict) and "_source" in r:
+                    records.append(r.get("_source") or {})
+                elif isinstance(r, dict):
+                    records.append(r)
+            records = [record for record in records if record]
             if not records:
+                print("Elastic fetch returned no row dictionaries")
                 return None
 
             df = pd.DataFrame(records)
