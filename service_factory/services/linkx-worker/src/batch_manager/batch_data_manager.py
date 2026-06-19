@@ -308,6 +308,10 @@ def batch_data_manager(payload):
             es_search_endpoint_strict = load_temp_config("search_api_endpoint_es_strict", session_id)   
             es_search_endpoint_fuzzy = load_temp_config("search_api_endpoint_es_fuzzy", session_id)   
             dfs = []
+            large_search_backend = str(load_temp_config("large_search_backend", session_id) or "hive").strip().lower()
+            elastic_scroll_enabled = bool(load_temp_config("elastic_scroll_enabled", session_id))
+            use_elastic_for_large_search = large_search_backend in {"elastic", "elastic_scroll", "scroll"} or elastic_scroll_enabled
+            print("large_search_backend:", large_search_backend, "elastic_scroll_enabled:", elastic_scroll_enabled)
             # ---------------------------------------------------------------- Categorize datas with identity (elastic,hive)
             hdfs_categories = []
             elastic_categories = []
@@ -319,7 +323,13 @@ def batch_data_manager(payload):
                 elif file['type'] == 'elastic':
                     elastic_categories.append(file)
                 elif file['type'] == 'hive':
-                    hive_categories.append(file) 
+                    if use_elastic_for_large_search:
+                        elastic_file = dict(file)
+                        elastic_file["type"] = "elastic"
+                        elastic_file["large_result_backend"] = "elastic_scroll"
+                        elastic_categories.append(elastic_file)
+                    else:
+                        hive_categories.append(file) 
                 else:
                     print("Error on file type:",file['type'])           
             # ---------------------------------------------------------------- Raw HDFS files
@@ -352,7 +362,10 @@ def batch_data_manager(payload):
                     #trigger a fetching logic (call a function that returns the df)                                 
                     API_URL = _elastic_api_url(session_id, endpoint, storage_address)
                     try:
-                        df = es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_column, date, fetch_columns)
+                        fetch_limit = None
+                        if file.get("large_result_backend") == "elastic_scroll":
+                            fetch_limit = load_temp_config("elastic_scroll_limit", session_id) or load_temp_config("dataframes_limit", session_id)
+                        df = es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_column, date, fetch_columns, limit=fetch_limit)
                         if df is not None:
                             dfs.append(df)
                     except Exception as e:
