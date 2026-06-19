@@ -1072,6 +1072,9 @@ def live_batch_files():
         print("data", data)
         print("kindkindkind:", data.get("kind", ""))
         if _async_worker_jobs_enabled():
+            reactivation = reactivate_analysis_session(session_id)
+            if reactivation.get("reactivated"):
+                print("create_DF session reactivated:", reactivation)
             payload = dict(data)
             payload.setdefault("id", "create_DF")
             payload["session_id"] = session_id
