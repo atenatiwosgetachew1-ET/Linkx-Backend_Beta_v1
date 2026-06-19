@@ -6,6 +6,8 @@ from py4j.java_gateway import java_import
 from globals import create_file
 from datetime import datetime
 import json
+from urllib.parse import quote
+import requests
 
 def list_files_recursively_hdfs(fs, path, keyword):
     """
@@ -80,85 +82,121 @@ def categorize_sources(file_list):
     return file_results, keyword_results    
 
 def stream_hdfs_metadata(storage_ip, base_path, keyword="", date=None, offset=0, limit=50):
-    spark = get_spark_session(hdfs_addr=storage_ip)
-    sc = spark.sparkContext
-    jvm = sc._jvm
-    java_import(jvm, "org.apache.hadoop.fs.Path")
+    """List raw HDFS files through WebHDFS without starting Spark on the API server."""
+    host = str(storage_ip or "").replace("http://", "").replace("https://", "").replace("hdfs://", "").strip("/")
+    if not host:
+        return {
+            "results": [],
+            "has_more": False,
+            "offset": offset,
+            "limit": limit,
+            "date": date,
+            "base_path": base_path,
+            "storage": storage_ip,
+            "errors": ["missing storage address"],
+            "message": "Missing HDFS storage address.",
+        }
+    if ":" in host:
+        host, webhdfs_port = host.split(":", 1)
+    else:
+        webhdfs_port = "9870"
+    hdfs_uri_prefix = f"hdfs://{host}:8020"
 
-    fs = jvm.org.apache.hadoop.fs.FileSystem.get(sc._jsc.hadoopConfiguration())
+    try:
+        offset = max(0, int(offset or 0))
+    except (TypeError, ValueError):
+        offset = 0
+    try:
+        limit = max(1, int(limit or 50))
+    except (TypeError, ValueError):
+        limit = 50
 
-    # 🔹 Parse requested date (YYYY-MM-DD)
     requested_date = None
     if date:
-        requested_date = datetime.strptime(date, "%Y-%m-%d").date()
+        try:
+            requested_date = datetime.strptime(str(date), "%Y-%m-%d").date()
+        except ValueError:
+            return {
+                "results": [],
+                "has_more": False,
+                "offset": offset,
+                "limit": limit,
+                "date": date,
+                "base_path": base_path,
+                "storage": storage_ip,
+                "errors": ["date must be YYYY-MM-DD"],
+                "message": "Invalid date format for raw file search.",
+            }
+
+    def normalize_path(value):
+        value = "/" + str(value or "").strip("/")
+        return value.replace("//", "/")
+
+    def list_status(hdfs_path):
+        encoded = quote(normalize_path(hdfs_path), safe="/")
+        url = f"http://{host}:{webhdfs_port}/webhdfs/v1{encoded}?op=LISTSTATUS"
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        return response.json().get("FileStatuses", {}).get("FileStatus", [])
 
     dirs_to_scan = ["individual", "entity"]
+    keyword = str(keyword or "").lower()
+    base_path = normalize_path(base_path)
     results = []
     errors = []
     collected = 0
     lookahead = offset + limit + 1
-    MAX_SCAN = lookahead + 1000
-
-    keyword = keyword.lower()
+    max_scan = lookahead + 1000
 
     for sub in dirs_to_scan:
-        stack = [jvm.Path(f"{base_path}/{sub}")]
-
+        stack = [normalize_path(f"{base_path}/{sub}")]
         while stack:
             current = stack.pop()
-
             try:
-                statuses = fs.listStatus(current)
-            except Exception as e:
+                statuses = list_status(current)
+            except Exception as exc:
                 if len(errors) < 5:
-                    errors.append(f"{current}: {e}")
+                    errors.append(f"{current}: {exc}")
                 continue
 
-            for st in statuses:
-                if st.isDirectory():
-                    stack.append(st.getPath())
+            for status in statuses:
+                suffix = status.get("pathSuffix") or ""
+                child_path = normalize_path(f"{current}/{suffix}")
+                if status.get("type") == "DIRECTORY":
+                    stack.append(child_path)
                     continue
 
-                path_str = st.getPath().toString()
-
-                # 🔹 Keyword filter
-                if keyword and keyword not in path_str.lower():
+                path_for_filter = child_path.lower()
+                if keyword and keyword not in path_for_filter:
                     continue
 
-                # 🔹 Date filter (LAST MODIFIED)
-                mod_time_ms = st.getModificationTime()
-                mod_date = datetime.fromtimestamp(
-                    mod_time_ms / 1000
-                ).date()
-
-                # Only files modified on requested date
+                mod_time_ms = status.get("modificationTime") or 0
+                mod_date = datetime.fromtimestamp(mod_time_ms / 1000).date() if mod_time_ms else None
                 if requested_date and mod_date != requested_date:
                     continue
 
                 collected += 1
-
                 if collected > offset and len(results) < lookahead:
+                    hdfs_path = f"{hdfs_uri_prefix}{child_path}"
                     results.append({
-                        "name": os.path.basename(path_str),
-                        "path": path_str,
-                        "size": round(st.getLen() / 1024, 2),
-                        "date": mod_date.isoformat(),
+                        "name": os.path.basename(child_path),
+                        "path": hdfs_path,
+                        "size": round((status.get("length") or 0) / 1024, 2),
+                        "date": mod_date.isoformat() if mod_date else None,
                         "strict": "",
-                        "type":"raw"
+                        "type": "raw",
                     })
 
-                if len(results) >= lookahead or collected >= MAX_SCAN:
+                if len(results) >= lookahead or collected >= max_scan:
                     break
-
-            if len(results) >= lookahead or collected >= MAX_SCAN:
+            if len(results) >= lookahead or collected >= max_scan:
                 break
-
-        if len(results) >= lookahead or collected >= MAX_SCAN:
+        if len(results) >= lookahead or collected >= max_scan:
             break
 
     message = ""
     if not results and errors:
-        message = "No files returned; HDFS listing failed for scanned paths."
+        message = "No files returned; WebHDFS listing failed for scanned paths."
     elif not results:
         message = "No files matched the raw search filters."
 
@@ -169,7 +207,8 @@ def stream_hdfs_metadata(storage_ip, base_path, keyword="", date=None, offset=0,
         "limit": limit,
         "date": requested_date.isoformat() if requested_date else None,
         "base_path": base_path,
-        "storage": storage_ip,
+        "storage": host,
         "errors": errors,
         "message": message,
     }
+
