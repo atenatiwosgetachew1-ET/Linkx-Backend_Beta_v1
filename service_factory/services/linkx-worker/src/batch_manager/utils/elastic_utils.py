@@ -34,15 +34,16 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
                 )
             else:
                 payload = {column: keyword}
-                try:
-                    request_limit = int(limit) if limit is not None else 50
-                except (TypeError, ValueError):
-                    request_limit = 50
-                try:
-                    request_offset = int(offset or 0)
-                except (TypeError, ValueError):
-                    request_offset = 0
-                payload.update({"limit": request_limit, "offset": request_offset, "size": request_limit, "from": request_offset})
+                if not strict_mood:
+                    try:
+                        request_limit = int(limit) if limit is not None else 50
+                    except (TypeError, ValueError):
+                        request_limit = 50
+                    try:
+                        request_offset = int(offset or 0)
+                    except (TypeError, ValueError):
+                        request_offset = 0
+                    payload.update({"limit": request_limit, "offset": request_offset, "size": request_limit, "from": request_offset})
                 print("DF payload ES:", payload)
                 response = requests.post(API_URL, json=payload, timeout=timeout)
                 response.raise_for_status()
