@@ -287,7 +287,7 @@ def scan_neo4j_residue(payload=None, dry_run=False):
                 SELECT session_id
                 FROM analysis_sessions
                 WHERE status IN ('cleaned', 'cancelled', 'expired', 'failed')
-                ORDER BY COALESCE(ended_at, updated_at, created_at) DESC
+                ORDER BY COALESCE(ended_at, last_seen_at, created_at) DESC
                 LIMIT %s
                 """,
                 (int(payload.get("cleaned_session_limit", 500)),),
