@@ -81,7 +81,7 @@ def categorize_sources(file_list):
 
     return file_results, keyword_results    
 
-def stream_hdfs_metadata(storage_ip, base_path, keyword="", date=None, offset=0, limit=50):
+def stream_hdfs_metadata(storage_ip, base_path, keyword="", date=None, offset=0, limit=50, hdfs_uri=None):
     """List raw HDFS files through WebHDFS without starting Spark on the API server."""
     host = str(storage_ip or "").replace("http://", "").replace("https://", "").replace("hdfs://", "").strip("/")
     if not host:
@@ -100,7 +100,7 @@ def stream_hdfs_metadata(storage_ip, base_path, keyword="", date=None, offset=0,
         host, webhdfs_port = host.split(":", 1)
     else:
         webhdfs_port = "9870"
-    hdfs_uri_prefix = f"hdfs://{host}:8020"
+    hdfs_uri_prefix = (str(hdfs_uri).rstrip("/") if hdfs_uri else f"hdfs://{host}:8020")
 
     try:
         offset = max(0, int(offset or 0))

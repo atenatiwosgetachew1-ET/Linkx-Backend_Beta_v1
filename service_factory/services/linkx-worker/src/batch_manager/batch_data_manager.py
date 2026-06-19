@@ -72,6 +72,23 @@ def _truthy_config(value):
         return False
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
+def _normalize_raw_hdfs_paths(files, hdfs_uri):
+    if not hdfs_uri:
+        return files
+    normalized = []
+    prefix = str(hdfs_uri).rstrip("/")
+    for item in files:
+        copy = dict(item)
+        path = str(copy.get("path") or "")
+        if path.startswith("hdfs://"):
+            without_scheme = path[len("hdfs://"):]
+            slash_index = without_scheme.find("/")
+            if slash_index >= 0:
+                copy["path"] = f"{prefix}{without_scheme[slash_index:]}"
+        normalized.append(copy)
+    return normalized
+
+
 
 
 def batch_data_manager(payload):
@@ -345,6 +362,7 @@ def batch_data_manager(payload):
             if len(hdfs_categories) > 0: #Consists an elastic datas
                 spark_port = load_temp_config("spark_port", session_id)
                 spark = get_spark_session(storage_ip, spark_port, hdfs_uri=storage_hdfs_uri)            
+                hdfs_categories = _normalize_raw_hdfs_paths(hdfs_categories, storage_hdfs_uri)
                 print("Consists hdfs file values",hdfs_categories)                               
                 try:
                     df = load_hdfs_files(spark,hdfs_categories)
@@ -505,7 +523,7 @@ def batch_data_manager(payload):
                 }
             storage_path = load_temp_config("storage_path",session_id)
             base_path = f"/{storage_path}"
-            response = stream_hdfs_metadata(storage_ip, base_path, keyword, date, offset, limit)
+            response = stream_hdfs_metadata(storage_ip, base_path, keyword, date, offset, limit, hdfs_uri=storage_hdfs_uri)
 
         return response
 
