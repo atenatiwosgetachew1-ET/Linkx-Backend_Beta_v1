@@ -272,6 +272,119 @@ def cleanup_abandoned(retention_minutes=360, dry_run=False, payload=None):
     }
 
 
+def scan_neo4j_residue(payload=None, dry_run=False):
+    payload = payload or {}
+    limit = int(payload.get("sample_limit", 25))
+    include_unmanaged = str(payload.get("include_unmanaged", "true")).lower() in {"1", "true", "yes", "on"}
+    creds = _neo4j_credentials(payload)
+    if not creds["url"] or not creds["username"] or not creds["password"]:
+        return {"neo4j": "skipped_missing_credentials", "dry_run": dry_run}
+
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT session_id
+                FROM analysis_sessions
+                WHERE status IN ('cleaned', 'cancelled', 'expired', 'failed')
+                ORDER BY COALESCE(ended_at, updated_at, created_at) DESC
+                LIMIT %s
+                """,
+                (int(payload.get("cleaned_session_limit", 500)),),
+            )
+            inactive_sessions = [row[0] for row in cur.fetchall()]
+
+    driver = create_neo4j_driver(creds)
+    try:
+        with driver.session(database=neo4j_database_name(creds)) as session:
+            unmanaged_nodes = session.run(
+                """
+                MATCH (n)
+                WHERE coalesce(n.linkx_managed, false) = false
+                  AND n.session_id IS NULL
+                  AND n.parent_session_id IS NULL
+                  AND n.run_id IS NULL
+                  AND n.batch_id IS NULL
+                  AND NOT n:Session
+                RETURN count(n) AS count
+                """
+            ).single()["count"] if include_unmanaged else 0
+            unmanaged_relationships = session.run(
+                """
+                MATCH ()-[r]->()
+                WHERE coalesce(r.linkx_managed, false) = false
+                  AND r.session_id IS NULL
+                  AND r.parent_session_id IS NULL
+                  AND r.run_id IS NULL
+                  AND r.batch_id IS NULL
+                RETURN count(r) AS count
+                """
+            ).single()["count"] if include_unmanaged else 0
+            active_residue_nodes = session.run(
+                """
+                MATCH (n)
+                WHERE coalesce(n.linkx_managed, false) = true
+                  AND n.session_id IN $inactive_sessions
+                RETURN count(n) AS count
+                """,
+                inactive_sessions=inactive_sessions,
+            ).single()["count"] if inactive_sessions else 0
+            active_residue_relationships = session.run(
+                """
+                MATCH ()-[r]->()
+                WHERE coalesce(r.linkx_managed, false) = true
+                  AND r.session_id IN $inactive_sessions
+                RETURN count(r) AS count
+                """,
+                inactive_sessions=inactive_sessions,
+            ).single()["count"] if inactive_sessions else 0
+            unmanaged_node_samples = session.run(
+                """
+                MATCH (n)
+                WHERE coalesce(n.linkx_managed, false) = false
+                  AND n.session_id IS NULL
+                  AND n.parent_session_id IS NULL
+                  AND n.run_id IS NULL
+                  AND n.batch_id IS NULL
+                  AND NOT n:Session
+                RETURN labels(n) AS labels, properties(n) AS properties
+                LIMIT $limit
+                """,
+                limit=limit,
+            ).data() if include_unmanaged and limit > 0 else []
+            inactive_session_samples = session.run(
+                """
+                MATCH (n)
+                WHERE coalesce(n.linkx_managed, false) = true
+                  AND n.session_id IN $inactive_sessions
+                RETURN n.session_id AS session_id, labels(n) AS labels, properties(n) AS properties
+                LIMIT $limit
+                """,
+                inactive_sessions=inactive_sessions,
+                limit=limit,
+            ).data() if inactive_sessions and limit > 0 else []
+    finally:
+        driver.close()
+
+    return {
+        "dry_run": dry_run,
+        "database": neo4j_database_name(creds),
+        "inactive_sessions_checked": len(inactive_sessions),
+        "inactive_sessions": inactive_sessions[:limit],
+        "unmanaged": {
+            "nodes": int(unmanaged_nodes),
+            "relationships": int(unmanaged_relationships),
+            "samples": unmanaged_node_samples,
+        },
+        "inactive_session_residue": {
+            "nodes": int(active_residue_nodes),
+            "relationships": int(active_residue_relationships),
+            "samples": inactive_session_samples,
+        },
+        "status": "residue_detected" if any([unmanaged_nodes, unmanaged_relationships, active_residue_nodes, active_residue_relationships]) else "clean",
+    }
+
+
 def run_cleanup(cleanup_type, payload=None, dry_run=False):
     payload = payload or {}
     if cleanup_type in {"session", "window"}:
@@ -290,4 +403,6 @@ def run_cleanup(cleanup_type, payload=None, dry_run=False):
         return cleanup_neo4j_session(payload.get("session_id"), run_id=payload.get("run_id"), batch_size=int(payload.get("batch_size", 10000)), dry_run=dry_run, payload=payload)
     if cleanup_type == "metadata_prune":
         return prune_cleaned_metadata(retention_days=int(payload.get("retention_days", 30)), dry_run=dry_run)
+    if cleanup_type == "neo4j_residue_scan":
+        return scan_neo4j_residue(payload=payload, dry_run=dry_run)
     raise ValueError(f"unsupported_cleanup_type:{cleanup_type}")

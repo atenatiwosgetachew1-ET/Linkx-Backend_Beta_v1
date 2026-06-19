@@ -36,6 +36,17 @@ def schedule_once(dry_run=False):
         },
         dry_run=dry_run,
     ))
+    if os.getenv("LINKX_NEO4J_RESIDUE_SCAN_ENABLED", "true").lower() in {"1", "true", "yes", "on"}:
+        ids.append(enqueue_cleanup(
+            "neo4j_residue_scan",
+            {
+                "sample_limit": int(os.getenv("LINKX_NEO4J_RESIDUE_SAMPLE_LIMIT", "25")),
+                "cleaned_session_limit": int(os.getenv("LINKX_NEO4J_RESIDUE_SESSION_LIMIT", "500")),
+                "include_unmanaged": os.getenv("LINKX_NEO4J_RESIDUE_INCLUDE_UNMANAGED", "true"),
+                "reason": "scheduled_neo4j_residue_scan",
+            },
+            dry_run=True,
+        ))
     return ids
 
 
