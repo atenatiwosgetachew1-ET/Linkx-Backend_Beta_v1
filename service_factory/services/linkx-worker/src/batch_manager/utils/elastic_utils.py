@@ -23,15 +23,23 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
         used_payload = None
         for column in search_columns:
             if id == "fetch":
-                candidate_results, used_payload, result = _fetch_es_pages(
-                    API_URL,
-                    column,
-                    keyword,
-                    limit=limit,
-                    offset=offset,
-                    batch_size=batch_size,
-                    timeout=timeout,
-                )
+                if strict_mood:
+                    used_payload = {column: keyword}
+                    print("DF payload ES:", used_payload)
+                    response = requests.post(API_URL, json=used_payload, timeout=timeout)
+                    response.raise_for_status()
+                    result = response.json()
+                    candidate_results = _extract_results(result)
+                else:
+                    candidate_results, used_payload, result = _fetch_es_pages(
+                        API_URL,
+                        column,
+                        keyword,
+                        limit=limit,
+                        offset=offset,
+                        batch_size=batch_size,
+                        timeout=timeout,
+                    )
             else:
                 payload = {column: keyword}
                 if not strict_mood:
