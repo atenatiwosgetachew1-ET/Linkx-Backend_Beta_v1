@@ -1,6 +1,6 @@
 # LinkX Service Split Handoff And Load Audit
 
-Last updated: 2026-06-18
+Last updated: 2026-06-19
 
 This document is a handoff summary for a new chat/session. It captures the current four-server LinkX backend split, how the services communicate, how deployments are updated, and what work is still running on each server. The goal of the split is to keep the current working system stable while gradually moving heavy analysis and ingestion work out of the API server and into worker/maintenance services.
 
@@ -295,3 +295,269 @@ Deployment touches Server 1 API and Server 3 worker. No database migration is re
 - Config is increasingly Postgres-backed via `session_configs` and `user_configs`; old `public/temp_config` should be considered legacy fallback only.
 - Cleanup is event-driven plus scheduled. Explicit window close, source disconnect, tool disconnect, idle timeout, abandoned sessions, and cleanup scheduler should remove Neo4j/session/artifact footprints.
 - AI access is now controlled through `/ai/...`, not through database credentials.
+
+
+## 2026-06-19 Operations Update
+
+This section captures the latest state after the shared-storage, Hadoop/HDFS, dataframe, cleanup, and Neo4j hardening work.
+
+### Shared Artifact Storage Is Now Mandatory
+
+`/mnt/linkx-artifacts` is no longer just a same-name local folder. It must be the same mounted filesystem across the services that create, consume, or clean artifacts.
+
+| Server | Mount State | Why It Matters |
+|---|---|---|
+| Server 1 API `172.27.23.95` | NFS export host for `/mnt/linkx-artifacts` | API writes uploads, logs, rules, configs, and request-side artifacts |
+| Server 3 Worker `172.27.23.18` | NFS client mounted at `/mnt/linkx-artifacts` | Worker reads uploads and writes dataframe parts |
+| Server 4 Graph/Cleanup `172.27.23.85` | NFS client mounted at `/mnt/linkx-artifacts` | Cleanup removes the same files created by API/worker |
+
+Verification commands:
+
+```bash
+findmnt /mnt/linkx-artifacts
+df -h /mnt/linkx-artifacts
+sudo find /mnt/linkx-artifacts/uploads -maxdepth 3 -type f | tail -20
+```
+
+Expected source on server 3 and server 4:
+
+```text
+172.27.23.95:/mnt/linkx-artifacts
+```
+
+The old worker-local backup may exist at:
+
+```text
+/mnt/linkx-artifacts.local-backup
+```
+
+Keep it briefly after the NFS migration, then remove it once upload/dataframe/cleanup behavior is verified.
+
+### Hadoop And Search Configuration
+
+The active Hadoop/data-processing host is:
+
+```text
+172.27.23.43
+```
+
+Important endpoint split:
+
+| Purpose | Endpoint / Port | Notes |
+|---|---|---|
+| WebHDFS metadata/listing | `http://172.27.23.43:9870` | Used for raw HDFS file search/listing without Spark |
+| HDFS RPC for Spark reads | `hdfs://172.27.23.43:9000` | Required by worker dataframe creation from selected HDFS files |
+| Elastic/data-processing API | `http://172.27.23.43:5000` | Used for strict/fuzzy/hybrid search |
+| Hive Metastore | `thrift://172.27.23.43:9083` | Used only if large-search backend is Hive |
+
+Required `.env` values on Server 1 and Server 3:
+
+```env
+LINKX_ACTIVE_STORAGE_ADDRESS=172.27.23.43
+LINKX_ACTIVE_STORAGE_HOST=172.27.23.43
+LINKX_STORAGE_WEBHDFS_PORT=9870
+LINKX_STORAGE_WEBHDFS_URL=http://172.27.23.43:9870
+LINKX_HDFS_RPC_PORT=9000
+LINKX_STORAGE_HDFS_URI=hdfs://172.27.23.43:9000
+LINKX_HIVE_SERVER_HOST=172.27.23.43
+LINKX_THRIFT_PORT=9083
+LINKX_HIVE_METASTORE_URI=thrift://172.27.23.43:9083
+LINKX_ELASTIC_API_BASE_URL=http://172.27.23.43:5000
+```
+
+Why `9000` matters: server 3 confirmed `172.27.23.43:8020` is refused, while `172.27.23.43:9000` accepts TCP. Existing `session_configs` created before this fix may still contain `hdfs://172.27.23.43:8020`; update those rows or create a fresh session.
+
+### Search And Dataframe Status
+
+The following source/dataframe paths are now working:
+
+| Flow | Status | Notes |
+|---|---|---|
+| Realtime Kafka broker ingestion | Working | Runs from worker-side flow |
+| Batch Kafka dataframe creation | Working | Worker creates parquet under shared `dfparts` |
+| Batch API dataframe creation | Working | Uses configured API source path |
+| Raw HDFS file search | Working | API lists through WebHDFS, no Spark on API |
+| Dataframe from selected raw HDFS files | Working | Worker reads through `hdfs://172.27.23.43:9000` |
+| Strict Elastic search | Working | Strict search sends clean payload without pagination keys |
+| Fuzzy Elastic search | Working subject to data-processing API behavior | Large results can route to Elastic scroll or Hive based on config |
+| Dataframe from strict/fuzzy/fused search results | Working after batch-size and endpoint fixes | Large Elastic batches capped at `10000` per request |
+| Local file upload dataframe creation | Working after NFS mount | API writes uploads, worker reads same shared files |
+
+Raw HDFS file search request shape:
+
+```json
+{
+  "id": "search",
+  "session_id": "1_815493",
+  "value": {
+    "keyword": "part-00001",
+    "date": null,
+    "hybrid": false,
+    "offset": 0,
+    "limit": 50
+  }
+}
+```
+
+Strict Elastic search request shape:
+
+```json
+{
+  "id": "search",
+  "session_id": "1_815493",
+  "value": {
+    "keyword": "1000558269034",
+    "date": null,
+    "hybrid": true,
+    "offset": 0,
+    "limit": 50,
+    "strict_mood": true,
+    "search_column": "accountno"
+  }
+}
+```
+
+Large fuzzy result behavior is configurable per user/session:
+
+```json
+{
+  "large_search_backend": "elastic_scroll",
+  "elastic_scroll_enabled": true,
+  "elastic_scroll_limit": 1000000,
+  "elastic_scroll_batch_size": 10000
+}
+```
+
+`10000` is intentional because the downstream Elasticsearch/data-processing API rejects scroll/result-window batch sizes above the index limit.
+
+### Cleanup Service Status
+
+Server 4 cleanup services are active:
+
+```text
+linkx-cleanup-worker
+linkx-cleanup-scheduler
+```
+
+The scheduler queues these cleanup types periodically:
+
+| Cleanup Type | Mode | Purpose |
+|---|---|---|
+| `artifacts_expired` | destructive | Deletes expired filesystem artifacts registered in Postgres |
+| `metadata_prune` | destructive metadata prune | Removes old deleted artifact metadata and old finished jobs |
+| `abandoned_sessions` | destructive session cleanup | Cleans sessions inactive beyond `LINKX_ABANDONED_SESSION_MINUTES` |
+| `neo4j_residue_scan` | dry-run/report-only | Reports unmanaged Neo4j data and inactive-session residue |
+
+Cleanup verification query on server 2:
+
+```bash
+sudo docker exec -it linkx-postgres psql -U linkx -d linkx -c "
+select cleanup_type, status, dry_run, summary, error_message, created_at, finished_at
+from cleanup_runs
+order by created_at desc
+limit 10;
+"
+```
+
+Current residue scanner result was clean:
+
+```json
+{
+  "status": "clean",
+  "unmanaged": {"nodes": 0, "relationships": 0},
+  "inactive_session_residue": {"nodes": 0, "relationships": 0}
+}
+```
+
+### Neo4j Ownership Hardening
+
+Graph writes now stamp ownership metadata so cleanup can reliably identify LinkX-created data.
+
+Required properties on managed graph records:
+
+```text
+created_by = linkx
+linkx_managed = true
+session_id
+parent_session_id when session is window-scoped, e.g. 1_815493 -> 815493
+run_id when available
+batch_id when available
+created_at or ownership_stamped_at
+```
+
+The analyzer now performs a post-write ownership stamping pass for both batch and realtime Neo4j writes. Logs to look for:
+
+```text
+Ownership metadata stamped
+Realtime ownership metadata stamped
+```
+
+Cleanup is reliable when ingestion follows the LinkX flow and carries at least `session_id`, `parent_session_id`, `run_id`, or `batch_id`. The only true zombie risk is graph data inserted without ownership metadata. The report-only residue scanner exists to detect that condition before destructive cleanup is considered.
+
+### NFS Export/Mount Commands Used
+
+Server 1 exports the artifact root:
+
+```bash
+sudo mkdir -p /mnt/linkx-artifacts/{uploads,dfparts,logs,rules,graphs,reports,configs}
+sudo chmod -R 775 /mnt/linkx-artifacts
+sudo mkdir -p /etc/exports.d
+echo "/mnt/linkx-artifacts 172.27.23.18(rw,sync,no_subtree_check,no_root_squash) 172.27.23.85(rw,sync,no_subtree_check,no_root_squash)" | sudo tee /etc/exports.d/linkx-artifacts.exports
+sudo exportfs -ra
+sudo exportfs -v
+sudo systemctl enable --now nfs-kernel-server
+```
+
+Server 3 and Server 4 mount it:
+
+```bash
+sudo apt install -y nfs-common
+sudo mkdir -p /mnt/linkx-artifacts
+sudo mount -t nfs 172.27.23.95:/mnt/linkx-artifacts /mnt/linkx-artifacts
+grep -q '172.27.23.95:/mnt/linkx-artifacts' /etc/fstab || \
+echo "172.27.23.95:/mnt/linkx-artifacts /mnt/linkx-artifacts nfs defaults,_netdev,nofail 0 0" | sudo tee -a /etc/fstab
+sudo systemctl daemon-reload
+```
+
+### Latest Mandatory Remaining Work
+
+| Priority | Item | Reason |
+|---|---|---|
+| 1 | End-to-end cleanup test after NFS | Prove uploads, dfparts, logs, and Neo4j data disappear after session/window cleanup |
+| 2 | Reboot persistence test for server 3 and server 4 NFS mounts | Ensure worker/cleanup still see shared artifacts after restart/reboot |
+| 3 | Continue moving heavy API routes to worker jobs | API should remain orchestration/auth/socket layer only |
+| 4 | Keep `neo4j_residue_scan` report-only until reviewed over time | Avoid deleting non-LinkX data accidentally |
+| 5 | Eventually add an admin cleanup/audit UI endpoint for manual session cleanup and residue review | Makes operations safer for admins |
+
+### Quick Health Checklist
+
+Server 1:
+
+```bash
+curl -i http://127.0.0.1:8000/db/health
+sudo systemctl status linkx-api --no-pager
+```
+
+Server 2:
+
+```bash
+sudo docker compose -f /opt/linkx-control-data/docker-compose.yml ps
+sudo docker exec -it linkx-postgres pg_isready -U linkx -d linkx
+```
+
+Server 3:
+
+```bash
+findmnt /mnt/linkx-artifacts
+sudo systemctl status linkx-worker --no-pager
+```
+
+Server 4:
+
+```bash
+findmnt /mnt/linkx-artifacts
+sudo systemctl status linkx-cleanup-worker --no-pager
+sudo systemctl status linkx-cleanup-scheduler --no-pager
+cd /opt/linkx-neo4j && sudo docker compose ps
+```
+
