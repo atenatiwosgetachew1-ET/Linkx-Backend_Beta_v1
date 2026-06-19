@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from datetime import datetime, timezone
 
 from batch_manager.utils.neo4j_cleanup import clean_existing_session
@@ -22,13 +23,34 @@ def _neo4j_credentials(payload=None):
     }
 
 
+def _create_neo4j_driver_with_retry(creds, payload=None):
+    payload = payload or {}
+    attempts = int(payload.get("neo4j_retry_attempts") or os.getenv("LINKX_NEO4J_RETRY_ATTEMPTS", "6"))
+    delay = float(payload.get("neo4j_retry_delay_seconds") or os.getenv("LINKX_NEO4J_RETRY_DELAY_SECONDS", "5"))
+    last_error = None
+    for attempt in range(1, max(1, attempts) + 1):
+        driver = create_neo4j_driver(creds)
+        try:
+            with driver.session(database=neo4j_database_name(creds)) as session:
+                session.run("RETURN 1 AS ok").single()
+            return driver
+        except Exception as exc:
+            last_error = exc
+            driver.close()
+            if attempt >= attempts:
+                break
+            print(f"[cleanup] Neo4j not ready attempt={attempt}/{attempts}: {exc}", flush=True)
+            time.sleep(delay)
+    raise last_error
+
+
 def cleanup_neo4j_session(session_id, run_id=None, batch_size=10000, dry_run=False, payload=None):
     if dry_run:
         return {"neo4j": "dry_run", "session_id": session_id, "run_id": run_id}
     creds = _neo4j_credentials(payload)
     if not creds["url"] or not creds["username"] or not creds["password"]:
         return {"neo4j": "skipped_missing_credentials", "session_id": session_id, "run_id": run_id}
-    driver = create_neo4j_driver(creds)
+    driver = _create_neo4j_driver_with_retry(creds, payload=payload)
     try:
         result = clean_existing_session(driver, session_id, batch_size=batch_size, run_id=run_id)
     finally:
@@ -294,7 +316,7 @@ def scan_neo4j_residue(payload=None, dry_run=False):
             )
             inactive_sessions = [row[0] for row in cur.fetchall()]
 
-    driver = create_neo4j_driver(creds)
+    driver = _create_neo4j_driver_with_retry(creds, payload=payload)
     try:
         with driver.session(database=neo4j_database_name(creds)) as session:
             unmanaged_nodes = session.run(
