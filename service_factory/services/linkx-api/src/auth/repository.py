@@ -93,10 +93,18 @@ DEFAULT_SERVICE_PERMISSIONS = {
     ],
 }
 
+_AUTH_SCHEMA_READY = False
+
 
 def ensure_auth_schema():
+    global _AUTH_SCHEMA_READY
+    if _AUTH_SCHEMA_READY:
+        return
+
     with get_postgres_connection() as conn:
         with conn.cursor() as cur:
+            cur.execute("SET LOCAL lock_timeout = '2s'")
+            cur.execute("SET LOCAL statement_timeout = '15s'")
             cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id BIGSERIAL PRIMARY KEY,
@@ -170,19 +178,60 @@ def ensure_auth_schema():
             _bootstrap_admin(cur)
             _bootstrap_service_accounts(cur)
         conn.commit()
+    _AUTH_SCHEMA_READY = True
 
 
 def _migrate_analysis_sessions(cur):
-    cur.execute("ALTER TABLE analysis_sessions ALTER COLUMN owner_user_id DROP NOT NULL")
-    cur.execute("ALTER TABLE analysis_sessions ADD COLUMN IF NOT EXISTS owner_service_id BIGINT REFERENCES service_accounts(id) ON DELETE CASCADE")
-    cur.execute("ALTER TABLE analysis_sessions ADD COLUMN IF NOT EXISTS created_by_type TEXT")
-    cur.execute("ALTER TABLE analysis_sessions ADD COLUMN IF NOT EXISTS created_by_id BIGINT")
-    cur.execute("ALTER TABLE analysis_sessions ADD COLUMN IF NOT EXISTS parent_session_id TEXT")
-    cur.execute("ALTER TABLE analysis_sessions ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'")
-    cur.execute("ALTER TABLE analysis_sessions ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ")
-    cur.execute("ALTER TABLE analysis_sessions ADD COLUMN IF NOT EXISTS cancellation_requested_at TIMESTAMPTZ")
-    cur.execute("ALTER TABLE analysis_sessions ADD COLUMN IF NOT EXISTS cancellation_reason TEXT")
-    cur.execute("ALTER TABLE analysis_sessions ADD COLUMN IF NOT EXISTS cancel_requested_by TEXT")
+    if _column_is_not_nullable(cur, "analysis_sessions", "owner_user_id"):
+        cur.execute("ALTER TABLE analysis_sessions ALTER COLUMN owner_user_id DROP NOT NULL")
+
+    _add_column_if_missing(
+        cur,
+        "analysis_sessions",
+        "owner_service_id",
+        "owner_service_id BIGINT REFERENCES service_accounts(id) ON DELETE CASCADE",
+    )
+    _add_column_if_missing(cur, "analysis_sessions", "created_by_type", "created_by_type TEXT")
+    _add_column_if_missing(cur, "analysis_sessions", "created_by_id", "created_by_id BIGINT")
+    _add_column_if_missing(cur, "analysis_sessions", "parent_session_id", "parent_session_id TEXT")
+    _add_column_if_missing(cur, "analysis_sessions", "status", "status TEXT NOT NULL DEFAULT 'active'")
+    _add_column_if_missing(cur, "analysis_sessions", "ended_at", "ended_at TIMESTAMPTZ")
+    _add_column_if_missing(
+        cur,
+        "analysis_sessions",
+        "cancellation_requested_at",
+        "cancellation_requested_at TIMESTAMPTZ",
+    )
+    _add_column_if_missing(cur, "analysis_sessions", "cancellation_reason", "cancellation_reason TEXT")
+    _add_column_if_missing(cur, "analysis_sessions", "cancel_requested_by", "cancel_requested_by TEXT")
+
+
+def _column_exists(cur, table_name, column_name):
+    cur.execute("""
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = %s
+      AND column_name = %s
+    """, (table_name, column_name))
+    return cur.fetchone() is not None
+
+
+def _column_is_not_nullable(cur, table_name, column_name):
+    cur.execute("""
+    SELECT is_nullable
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = %s
+      AND column_name = %s
+    """, (table_name, column_name))
+    row = cur.fetchone()
+    return bool(row and row[0] == "NO")
+
+
+def _add_column_if_missing(cur, table_name, column_name, column_ddl):
+    if not _column_exists(cur, table_name, column_name):
+        cur.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_ddl}")
 
 
 def _seed_roles_permissions(cur):
