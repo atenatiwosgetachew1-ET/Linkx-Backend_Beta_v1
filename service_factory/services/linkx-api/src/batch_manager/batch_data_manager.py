@@ -372,9 +372,22 @@ def batch_data_manager(payload):
                     API_URL = _elastic_api_url(session_id, endpoint, storage_address)
                     try:
                         fetch_limit = None
+                        fetch_batch_size = None
                         if file.get("large_result_backend") == "elastic_scroll":
                             fetch_limit = load_temp_config("elastic_scroll_limit", session_id) or load_temp_config("dataframes_limit", session_id)
-                        df = es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_column, date, fetch_columns, limit=fetch_limit)
+                            fetch_batch_size = load_temp_config("elastic_scroll_batch_size", session_id) or 10000
+                        df = es_keyword_search(
+                            id,
+                            API_URL,
+                            keyword,
+                            search_column,
+                            strict_mood,
+                            date_column,
+                            date,
+                            fetch_columns,
+                            limit=fetch_limit,
+                            batch_size=fetch_batch_size,
+                        )
                         if df is not None:
                             dfs.append(df)
                     except Exception as e:

@@ -300,6 +300,7 @@ def _normalize_configuration(config):
     normalized.setdefault("large_search_backend", "hive")
     normalized.setdefault("elastic_scroll_enabled", False)
     normalized.setdefault("elastic_scroll_limit", normalized.get("dataframes_limit", 1000000))
+    normalized.setdefault("elastic_scroll_batch_size", 10000)
 
     if normalized.get("active_tool") and normalized["active_tool"] not in normalized["tools"]:
         normalized["tools"] = [normalized["active_tool"], *[tool for tool in normalized["tools"] if tool != normalized["active_tool"]]]

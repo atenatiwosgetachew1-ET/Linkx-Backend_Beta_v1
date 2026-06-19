@@ -61,6 +61,7 @@ def get_default_session_config(session_id):
         "large_search_backend": os.getenv("LINKX_LARGE_SEARCH_BACKEND", "hive"),
         "elastic_scroll_enabled": os.getenv("LINKX_ELASTIC_SCROLL_ENABLED", "false").lower() in {"1", "true", "yes", "on"},
         "elastic_scroll_limit": int(os.getenv("LINKX_ELASTIC_SCROLL_LIMIT", os.getenv("LINKX_DATAFRAMES_LIMIT", "1000000"))),
+        "elastic_scroll_batch_size": int(os.getenv("LINKX_ELASTIC_SCROLL_BATCH_SIZE", "10000")),
         "tools": _env_list("LINKX_TOOLS", ["neo4j"]),
         "active_tool": os.getenv("LINKX_ACTIVE_TOOL", "neo4j"),
         "active_tool_protocol": os.getenv("LINKX_ACTIVE_TOOL_PROTOCOL", "neo4j://172.21.22.88"),

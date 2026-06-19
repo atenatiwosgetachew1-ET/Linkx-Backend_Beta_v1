@@ -6,9 +6,9 @@ import pandas as pd
 from batch_manager.utils.hive_utils import hive_keyword_search
 from batch_manager.utils.spark_utils import ensure_spark_df
 
-def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_column, date=None, fetch_columns=None, timeout=30, limit=None, offset=0):
+def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_column, date=None, fetch_columns=None, timeout=30, limit=None, offset=0, batch_size=None):
     if not search_column:
-        print(-2,"search_column1:",search_column)
+        print(-2, "search_column1:", search_column)
         return None
 
     if isinstance(search_column, (list, tuple, set)):
@@ -22,48 +22,53 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
         used_column = None
         used_payload = None
         for column in search_columns:
-            payload = {column: keyword}
-            if id in {"search", "fetch"}:
+            if id == "fetch":
+                candidate_results, used_payload, result = _fetch_es_pages(
+                    API_URL,
+                    column,
+                    keyword,
+                    limit=limit,
+                    offset=offset,
+                    batch_size=batch_size,
+                    timeout=timeout,
+                )
+            else:
+                payload = {column: keyword}
                 try:
-                    request_limit = int(limit) if limit is not None else (50 if id == "search" else 100000)
+                    request_limit = int(limit) if limit is not None else 50
                 except (TypeError, ValueError):
-                    request_limit = 50 if id == "search" else 100000
+                    request_limit = 50
                 try:
                     request_offset = int(offset or 0)
                 except (TypeError, ValueError):
                     request_offset = 0
                 payload.update({"limit": request_limit, "offset": request_offset, "size": request_limit, "from": request_offset})
-            print("DF payload ES:",payload)
-            response = requests.post(API_URL, json=payload, timeout=timeout)
-            response.raise_for_status()
-            result = response.json()
-            candidate_results = result.get("results")
-            if candidate_results is None:
-                print("result not found")
-                candidate_results = result.get("hits", {}).get("hits", [])
+                print("DF payload ES:", payload)
+                response = requests.post(API_URL, json=payload, timeout=timeout)
+                response.raise_for_status()
+                result = response.json()
+                candidate_results = _extract_results(result)
+                used_payload = payload
+
             if candidate_results:
                 results = candidate_results
                 used_column = column
-                used_payload = payload
                 break
             if used_column is None:
                 used_column = column
-                used_payload = payload
                 results = candidate_results
 
         search_column = used_column
         payload = used_payload
 
-        # Date filter        
         if date and date_column:
             results = [
-                r for r in results
-                if r.get("_source", {}).get(date_column, "").startswith(date)
+                r for r in (results or [])
+                if _row_value(r, date_column).startswith(str(date))
             ]
 
-
         if not results:
-            print("result not found1:",API_URL,payload,timeout,response,result,results)
+            print("result not found1:", API_URL, payload, timeout, result, results)
             return None
 
         if len(results) >= 100000:
@@ -83,18 +88,17 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
                     "limit": 0,
                     "message": f"{len(results)}+ results found; use Hive fetch",
                 }
-            return None
+            # Fetch mode may legitimately collect large batches via scroll/pages.
 
         if id == "search":
-            filtered_results=[]
-            filtered_results.append({
+            filtered_results = [{
                 "name": f"Results found for '{keyword}'",
-                "keyword": keyword,                        
+                "keyword": keyword,
                 "size": len(results),
                 "strict": strict_mood,
                 "type": "elastic",
                 "column": search_column,
-            })
+            }]
             return {
                 "results": filtered_results,
                 "has_more": 0,
@@ -102,15 +106,10 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
                 "limit": 0,
                 "message": f"{len(results)} results found"
             }
-                    
+
         if id == "fetch":
             print("fetching...")
-            records = []
-            for r in results:
-                if isinstance(r, dict) and "_source" in r:
-                    records.append(r.get("_source") or {})
-                elif isinstance(r, dict):
-                    records.append(r)
+            records = [_record_from_result(r) for r in results]
             records = [record for record in records if record]
             if not records:
                 print("Elastic fetch returned no row dictionaries")
@@ -158,6 +157,87 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
     except Exception as e:
         print("Elastic error:", str(e))
         return None
+
+
+def _extract_results(result):
+    if not isinstance(result, dict):
+        return []
+    candidate_results = result.get("results")
+    if candidate_results is None:
+        candidate_results = result.get("hits", {}).get("hits", [])
+    return candidate_results or []
+
+
+def _fetch_es_pages(API_URL, column, keyword, limit=None, offset=0, batch_size=None, timeout=30):
+    try:
+        total_limit = int(limit) if limit is not None else 100000
+    except (TypeError, ValueError):
+        total_limit = 100000
+    try:
+        page_size = int(batch_size) if batch_size is not None else 10000
+    except (TypeError, ValueError):
+        page_size = 10000
+    page_size = max(1, min(page_size, 10000))
+    try:
+        current_offset = int(offset or 0)
+    except (TypeError, ValueError):
+        current_offset = 0
+
+    collected = []
+    result = None
+    last_payload = None
+    scroll_id = None
+
+    while len(collected) < total_limit:
+        request_limit = min(page_size, total_limit - len(collected))
+        payload = {
+            column: keyword,
+            "limit": request_limit,
+            "offset": current_offset,
+            "size": request_limit,
+            "from": current_offset,
+        }
+        if scroll_id:
+            payload["scroll_id"] = scroll_id
+        print("DF payload ES:", payload)
+        response = requests.post(API_URL, json=payload, timeout=timeout)
+        response.raise_for_status()
+        result = response.json()
+        page = _extract_results(result)
+        last_payload = payload
+        scroll_id = result.get("scroll_id") if isinstance(result, dict) else None
+
+        if not page:
+            break
+        collected.extend(page)
+
+        has_more = bool(result.get("has_more")) if isinstance(result, dict) else False
+        total = result.get("total") if isinstance(result, dict) else None
+        current_offset += len(page)
+        if len(page) < request_limit and not has_more and not scroll_id:
+            break
+        if total is not None:
+            try:
+                if current_offset >= int(total):
+                    break
+            except (TypeError, ValueError):
+                pass
+
+    print(f"Elastic fetch collected {len(collected)} rows")
+    return collected, last_payload, result
+
+
+def _record_from_result(row):
+    if isinstance(row, dict) and "_source" in row:
+        return row.get("_source") or {}
+    if isinstance(row, dict):
+        return row
+    return {}
+
+
+def _row_value(row, key):
+    record = _record_from_result(row)
+    return str(record.get(key, ""))
 
 
 def load_elastic_rows(API_URL, keyword, search_column, fetch_columns, date=None, timeout=30):
