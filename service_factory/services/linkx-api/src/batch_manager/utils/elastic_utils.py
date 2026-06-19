@@ -196,6 +196,9 @@ def _fetch_es_pages(API_URL, column, keyword, limit=None, offset=0, batch_size=N
             "offset": current_offset,
             "size": request_limit,
             "from": current_offset,
+            "batch_size": request_limit,
+            "page_size": request_limit,
+            "scroll_size": request_limit,
         }
         if scroll_id:
             payload["scroll_id"] = scroll_id
