@@ -156,7 +156,13 @@ def run_loop(queues, poll_interval, once=False):
                         return
                     time.sleep(poll_interval)
                     continue
+                with conn.cursor() as cur:
+                    emit_event(cur, job, "job_progress", f"Running {job['job_type']} on worker", {"queue": job.get("queue_name")})
+                    conn.commit()
                 ok, result, error = run_job_safely(job["job_type"], job["payload"])
+                with conn.cursor() as cur:
+                    emit_event(cur, job, "job_progress", f"Finished execution ok={ok}", {"ok": ok})
+                    conn.commit()
                 if is_cancel_requested(conn, session_id=job.get("session_id"), job_id=job.get("id")):
                     mark_job_cancelled(conn, job, "Job cancelled during execution")
                     enqueue_session_cleanup(

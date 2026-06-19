@@ -68,11 +68,15 @@ def load_kafka_batch_messages(
 
 def read_kafka_batch_messages(broker_url, topic, max_messages=1000, timeout_ms=10000, from_beginning=False):
     max_messages = max(1, int(max_messages or 1000))
+    timeout_ms = max(1000, int(timeout_ms or 10000))
+    print(f"[kafka_batch] connecting broker={broker_url} topic={topic} max_messages={max_messages} timeout_ms={timeout_ms}", flush=True)
     consumer = KafkaConsumer(
         bootstrap_servers=[broker_url],
         enable_auto_commit=False,
         consumer_timeout_ms=timeout_ms,
-        request_timeout_ms=max(timeout_ms, 3000),
+        request_timeout_ms=max(timeout_ms + 5000, 10000),
+        api_version_auto_timeout_ms=5000,
+        metadata_max_age_ms=5000,
         value_deserializer=_deserialize_value,
     )
     try:
@@ -81,12 +85,15 @@ def read_kafka_batch_messages(broker_url, topic, max_messages=1000, timeout_ms=1
             consumer.topics()
             partitions = consumer.partitions_for_topic(topic)
         if not partitions:
+            print(f"[kafka_batch] no partitions found for topic={topic}", flush=True)
             return []
+        print(f"[kafka_batch] partitions={sorted(partitions)}", flush=True)
 
         topic_partitions = [TopicPartition(topic, partition) for partition in partitions]
         consumer.assign(topic_partitions)
-        beginning_offsets = consumer.beginning_offsets(topic_partitions)
-        end_offsets = consumer.end_offsets(topic_partitions)
+        beginning_offsets = consumer.beginning_offsets(topic_partitions, timeout_ms=timeout_ms)
+        end_offsets = consumer.end_offsets(topic_partitions, timeout_ms=timeout_ms)
+        print(f"[kafka_batch] beginning_offsets={beginning_offsets} end_offsets={end_offsets}", flush=True)
 
         for topic_partition in topic_partitions:
             beginning = beginning_offsets.get(topic_partition, 0)
@@ -107,6 +114,7 @@ def read_kafka_batch_messages(broker_url, topic, max_messages=1000, timeout_ms=1
                     break
 
         collected.sort(key=lambda record: (record.timestamp or 0, record.partition, record.offset))
+        print(f"[kafka_batch] collected={len(collected)}", flush=True)
         return [record.value for record in collected[-max_messages:]]
     finally:
         consumer.close()
