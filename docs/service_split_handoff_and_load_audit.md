@@ -274,6 +274,18 @@ The second load-distribution change was implemented locally after streaming move
 
 Deployment touches Server 1 API and Server 3 worker. No database migration is required.
 
+## Implemented Third Migration Slice: STR Link Analysis To Worker
+
+The third load-distribution change was implemented locally:
+
+- `POST /api/STR_link_analysis` now validates/authenticates on Server 1, then queues `str_link_analysis` on the `analysis` queue when `LINKX_ASYNC_WORKER_JOBS` is enabled, which is the default.
+- A new worker module `batch_manager/services/str_link_analysis_workflow.py` performs the old heavy sequence on Server 3: strict ES search, dataframe creation, Link Analysis ingestion, Source/Target relationship ingestion, and Neo4j summary.
+- Server 3 worker `linkx_worker.handlers` now supports `str_link_analysis` / `STR_link_analysis` job types.
+- API returns `202 Accepted` with `message: accepted`, `session_id`, `wait_for_prepare: true`, and `results.job_id`.
+- Frontend/consumer should poll `GET /jobs/<job_id>` to collect the worker result instead of expecting the full STR analysis result synchronously.
+
+Deployment touches Server 1 API and Server 3 worker. No database migration is required.
+
 ## Notes For A New Chat
 
 - The active deployment is the service-factory split, not the root monolith.

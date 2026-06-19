@@ -13,9 +13,14 @@ from batch_manager.utils.notification_utils import emit_status_payload, emit_str
 from globals import create_file, load_temp_config, save_temp_config
 from batch_manager.utils.artifact_utils import ensure_artifact_dir
 from security.payload_validation import COMMON_SCHEMAS, validate_json_payload, validated_json
+from service_orchestration import enqueue_worker_job
 
 
 STR_link_analysis_api = Blueprint("STR_link_analysis_api", __name__)
+
+
+def _async_worker_jobs_enabled():
+    return str(os.getenv("LINKX_ASYNC_WORKER_JOBS", "true")).lower() not in {"0", "false", "no"}
 
 
 def _bank_source_target_relationship(session_id):
@@ -344,6 +349,34 @@ def STR_link_analysis():
 
     if not entity or not type or not value:
         return jsonify({'message': 'failed!'}), 400
+
+    if _async_worker_jobs_enabled():
+        payload = dict(data)
+        payload["entity"] = entity
+        payload["type"] = type
+        payload["value"] = value
+        payload["session_id"] = session_id
+        payload.setdefault("str_id", session_id)
+        job = enqueue_worker_job(
+            "analysis",
+            "str_link_analysis",
+            session_id=session_id,
+            payload=payload,
+            priority=55,
+            max_attempts=1,
+        )
+        return jsonify({
+            "message": "accepted",
+            "session_id": session_id,
+            "wait_for_prepare": True,
+            "results": {
+                "status": "queued",
+                "job_id": job["job_id"],
+                "job": job,
+                "session_id": session_id,
+                "queue": "analysis",
+            },
+        }), 202
 
     if entity == "bank":
         if type == "account_number":
