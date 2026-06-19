@@ -38,7 +38,7 @@ from io_sockets import register_socket_handlers
 from api.STR_link_analysis import STR_link_analysis_api
 from api.ai_service import ai_service_api
 from session_config_store import create_session_config, duplicate_window_config, get_user_config, get_workspace_layout, save_user_config, save_workspace_layout
-from service_orchestration import enqueue_cleanup_run, enqueue_worker_job, get_active_session_lock, get_any_active_actor_lock, get_worker_job, list_cleanup_audit, public_lock_state, request_session_cancellation
+from service_orchestration import enqueue_cleanup_run, enqueue_worker_job, get_active_session_lock, get_any_active_actor_lock, get_worker_job, list_cleanup_audit, public_lock_state, reactivate_analysis_session, request_session_cancellation
 from auth.decorators import auth_required, current_actor_from_request, permission_required
 from auth.repository import bind_analysis_session_actor, can_access_analysis_session_actor, get_postgres_connection
 from auth.routes import auth_api
@@ -1112,6 +1112,9 @@ def live_batch_files():
             values.setdefault("use_dataframe", True)
 
         if _async_worker_jobs_enabled():
+            reactivation = reactivate_analysis_session(session_id)
+            if reactivation.get("reactivated"):
+                print("stream session reactivated:", reactivation)
             run_id = uuid.uuid4().hex
             log_file = _new_session_log_file(session_id)
             payload = dict(values)
@@ -1163,8 +1166,18 @@ def live_batch_files():
                 reason="client_end_session",
                 requested_by="api:live_batch_files",
                 neo4j_credentials=load_temp_config("tool_credentials", session_id),
+                cancel_session=False,
             )
-            return jsonify({"status": "success", "message": "cancellation_requested", "orchestration": result}), 202
+            return jsonify({
+                "message": "success",
+                "results": {
+                    "status": "stopping" if result.get("jobs") else "not_running",
+                    "session_id": session_id,
+                    "cancellation_requested": bool(result.get("jobs")),
+                    "preserve_session": True,
+                    "orchestration": result,
+                },
+            }), 202
         payload = {"id": "end_session", "session_id": session_id}
         result = batch_data_manager(payload)
         return jsonify(result), 200

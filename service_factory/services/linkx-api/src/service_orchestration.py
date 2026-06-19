@@ -144,30 +144,68 @@ def _extract_job_result(events):
     return None
 
 
-def request_session_cancellation(session_id, reason="client_requested", requested_by=None, neo4j_credentials=None):
+def reactivate_analysis_session(session_id):
+    if not session_id:
+        return {"reactivated": False, "message": "missing session_id"}
+
+    with connect(application_name="linkx-api-reactivate-session") as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE analysis_sessions
+                SET status = 'active',
+                    cancellation_requested_at = NULL,
+                    cancellation_reason = NULL,
+                    cancel_requested_by = NULL,
+                    ended_at = NULL,
+                    last_seen_at = NOW()
+                WHERE session_id = %s
+                  AND status IN ('cancel_requested', 'cancelling', 'cancelled')
+                RETURNING session_id
+                """,
+                (str(session_id),),
+            )
+            row = cur.fetchone()
+        conn.commit()
+    return {"reactivated": bool(row), "session_id": str(session_id)}
+
+
+def request_session_cancellation(session_id, reason="client_requested", requested_by=None, neo4j_credentials=None, cancel_session=True):
     if not session_id:
         return {"cancel_requested": False, "message": "missing session_id"}
 
     with connect() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE analysis_sessions
-                SET status = CASE
-                        WHEN status IN ('cleaned', 'cancelled') THEN status
-                        ELSE 'cancel_requested'
-                    END,
-                    cancellation_requested_at = COALESCE(cancellation_requested_at, NOW()),
-                    cancellation_reason = COALESCE(cancellation_reason, %s),
-                    cancel_requested_by = COALESCE(cancel_requested_by, %s),
-                    ended_at = COALESCE(ended_at, NOW()),
-                    last_seen_at = NOW()
-                WHERE session_id = %s
-                RETURNING session_id
-                """,
-                (reason, requested_by, str(session_id)),
-            )
-            session_row = cur.fetchone()
+            session_row = None
+            if cancel_session:
+                cur.execute(
+                    """
+                    UPDATE analysis_sessions
+                    SET status = CASE
+                            WHEN status IN ('cleaned', 'cancelled') THEN status
+                            ELSE 'cancel_requested'
+                        END,
+                        cancellation_requested_at = COALESCE(cancellation_requested_at, NOW()),
+                        cancellation_reason = COALESCE(cancellation_reason, %s),
+                        cancel_requested_by = COALESCE(cancel_requested_by, %s),
+                        ended_at = COALESCE(ended_at, NOW()),
+                        last_seen_at = NOW()
+                    WHERE session_id = %s
+                    RETURNING session_id
+                    """,
+                    (reason, requested_by, str(session_id)),
+                )
+                session_row = cur.fetchone()
+            else:
+                cur.execute(
+                    """
+                    SELECT session_id
+                    FROM analysis_sessions
+                    WHERE session_id = %s
+                    """,
+                    (str(session_id),),
+                )
+                session_row = cur.fetchone()
             cur.execute(
                 """
                 UPDATE jobs
@@ -184,16 +222,22 @@ def request_session_cancellation(session_id, reason="client_requested", requeste
                     END
                 WHERE session_id = %s
                   AND status NOT IN ('succeeded', 'failed', 'cancelled')
-                RETURNING id::text, status
+                RETURNING id::text, status, run_id
                 """,
                 (reason, str(session_id)),
             )
-            jobs = [{"id": row[0], "status": row[1]} for row in cur.fetchall()]
+            jobs = [{"id": row[0], "status": row[1], "run_id": row[2]} for row in cur.fetchall()]
             cleanup_id = None
             if session_row:
                 cleanup_summary = {"session_id": str(session_id), "reason": reason}
                 cleanup_summary.update(credentials_for_cleanup(neo4j_credentials))
-                cleanup_type = "window" if "_" in str(session_id) else "session_tree"
+                run_ids = [job.get("run_id") for job in jobs if job.get("run_id")]
+                if not cancel_session and run_ids:
+                    cleanup_summary["run_id"] = str(run_ids[0])
+                    cleanup_summary["preserve_session_config"] = True
+                    cleanup_type = "run"
+                else:
+                    cleanup_type = "window" if "_" in str(session_id) else "session_tree"
                 cur.execute(
                     """
                     INSERT INTO cleanup_runs (cleanup_type, status, session_id, dry_run, summary)
