@@ -1013,13 +1013,20 @@ def upload_batch_files():
     # Save session path in config (assuming you have this function)
     save_temp_config("files_storage_path", upload_folder, session_id)
 
-    for file, _filename, _ext in safe_files:
+    saved_files = []
+    for file, filename, _ext in safe_files:
         saved_path = save_uploaded_file(file, upload_folder, filename_prefix=session_id, session_id=session_id)
         if not saved_path:
             return jsonify({"message": "Failed to save file"}), 500
-        register_artifact(saved_path, "upload", session_id=session_id, filename=os.path.basename(saved_path))
+        saved_name = os.path.basename(saved_path)
+        register_artifact(saved_path, "upload", session_id=session_id, filename=saved_name)
+        saved_files.append({
+            "original_name": filename,
+            "saved_name": saved_name,
+            "path": saved_path,
+        })
 
-    return jsonify({"message": "success"}), 200
+    return jsonify({"message": "success", "results": {"session_id": session_id, "files": saved_files}}), 200
 
 @app.route('/live_batch_files', methods=['POST'])
 @validate_json_payload(COMMON_SCHEMAS["live_batch_files"])

@@ -234,30 +234,46 @@ def batch_data_manager(payload):
                     except Exception:
                         safe_name = filename
 
-                    local_path = os.path.join(ensure_artifact_dir("uploads", session_id), f"{session_id}_{safe_name}")
-                    # If exact path doesn't exist, try to find a matching file
-                    if not os.path.exists(local_path):
-                        uploads_dir = ensure_artifact_dir("uploads", session_id)
+                    def normalize_name(name):
+                        return re.sub(r"[^0-9a-zA-Z.]", "", str(name or "")).lower()
+
+                    session_candidates = [session_id]
+                    if "_" in str(session_id):
+                        session_candidates.append(str(session_id).split("_", 1)[1])
+
+                    upload_dirs = []
+                    for candidate_session in session_candidates:
+                        configured_dir = load_temp_config("files_storage_path", candidate_session)
+                        if configured_dir:
+                            upload_dirs.append((candidate_session, configured_dir))
+                        upload_dirs.append((candidate_session, ensure_artifact_dir("uploads", candidate_session)))
+
+                    local_path = None
+                    target_norm = normalize_name(safe_name)
+                    for candidate_session, uploads_dir in upload_dirs:
+                        exact_path = os.path.join(uploads_dir, f"{candidate_session}_{safe_name}")
+                        if os.path.exists(exact_path):
+                            local_path = exact_path
+                            break
+                        if not os.path.isdir(uploads_dir):
+                            continue
                         candidates = []
-                        def normalize_name(name):
-                            # keep only alphanumeric and dot, convert to lower
-                            return re.sub(r"[^0-9a-zA-Z.]", "", name).lower()
-
-                        target_norm = normalize_name(safe_name)
                         for f in os.listdir(uploads_dir):
-                            if not f.startswith(f"{session_id}_"):
+                            if not f.startswith(f"{candidate_session}_"):
                                 continue
-                            # strip session prefix
-                            suffix = f[len(session_id) + 1:]
-                            if normalize_name(suffix) == target_norm or target_norm in normalize_name(suffix):
+                            suffix = f[len(candidate_session) + 1:]
+                            suffix_norm = normalize_name(suffix)
+                            if suffix_norm == target_norm or target_norm in suffix_norm:
                                 candidates.append(f)
-
                         if candidates:
-                            chosen = candidates[0]
-                            local_path = os.path.join(uploads_dir, chosen)
+                            local_path = os.path.join(uploads_dir, candidates[0])
                             print("Fallback: matched upload file:", local_path)
-                        else:
-                            print("No matching uploaded file found for:", local_path)
+                            break
+
+                    if not local_path:
+                        attempted = [os.path.join(d, f"{s}_{safe_name}") for s, d in upload_dirs]
+                        print("No matching uploaded file found. Checked:", attempted)
+                        return None
 
                     df = load_file(local_path, session_id, use_spark)
                     return df
