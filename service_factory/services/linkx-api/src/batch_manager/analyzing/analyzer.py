@@ -68,6 +68,58 @@ def _graph_metadata(session_id, run_id=None, batch_id=None):
         metadata["batch_id"] = str(batch_id)
     return metadata
 
+def _stamp_graph_ownership(driver, session_id, run_id=None, batch_id=None):
+    if not driver or not session_id:
+        return {"nodes": 0, "relationships": 0}
+    parent_session_id = _parent_session_id(session_id)
+    batch_prefix = f"{session_id}_"
+    with driver.session() as session:
+        node_record = session.run(
+            """
+            MATCH (n)
+            WHERE n.session_id = $session_id
+               OR n.parent_session_id = $parent_session_id
+               OR ($batch_id IS NOT NULL AND n.batch_id = $batch_id)
+               OR coalesce(n.batch_id, '') STARTS WITH $batch_prefix
+            SET n.created_by = coalesce(n.created_by, 'linkx'),
+                n.linkx_managed = coalesce(n.linkx_managed, true),
+                n.parent_session_id = coalesce(n.parent_session_id, $parent_session_id),
+                n.run_id = coalesce(n.run_id, $run_id),
+                n.ownership_stamped_at = datetime()
+            RETURN count(n) AS count
+            """,
+            session_id=str(session_id),
+            parent_session_id=parent_session_id,
+            run_id=str(run_id) if run_id else None,
+            batch_id=str(batch_id) if batch_id else None,
+            batch_prefix=batch_prefix,
+        ).single()
+        rel_record = session.run(
+            """
+            MATCH ()-[r]->()
+            WHERE r.session_id = $session_id
+               OR r.parent_session_id = $parent_session_id
+               OR ($batch_id IS NOT NULL AND r.batch_id = $batch_id)
+               OR coalesce(r.batch_id, '') STARTS WITH $batch_prefix
+            SET r.created_by = coalesce(r.created_by, 'linkx'),
+                r.linkx_managed = coalesce(r.linkx_managed, true),
+                r.parent_session_id = coalesce(r.parent_session_id, $parent_session_id),
+                r.run_id = coalesce(r.run_id, $run_id),
+                r.ownership_stamped_at = datetime()
+            RETURN count(r) AS count
+            """,
+            session_id=str(session_id),
+            parent_session_id=parent_session_id,
+            run_id=str(run_id) if run_id else None,
+            batch_id=str(batch_id) if batch_id else None,
+            batch_prefix=batch_prefix,
+        ).single()
+    return {
+        "nodes": int((node_record or {}).get("count") or 0),
+        "relationships": int((rel_record or {}).get("count") or 0),
+    }
+
+
 def make_write_partition(neo4j_conf, batch_size=500):
 
     def write_partition(rows):
@@ -554,6 +606,11 @@ def neo4j_row_data_injector(payload, batch_size=500):
             set_session_status(driver, session_id, "ANALYZED", run_id=run_id)
             log_writer(log_file, f"[{datetime.now()}] [Info] - Full-graph recomputation finished for rule '{rule}'")
     finally:
+        try:
+            ownership = _stamp_graph_ownership(driver, session_id, run_id=run_id)
+            log_writer(log_file, f"[{datetime.now()}] [Info] - Ownership metadata stamped: {ownership}")
+        except Exception as exc:
+            log_writer(log_file, f"[{datetime.now()}] [Warning] - Ownership metadata stamp failed: {exc}")
         driver.close()
         log_writer(log_file, f"[{datetime.now()}] [Info] - Injection finished for action '{action}'")
 
@@ -722,6 +779,11 @@ def realtime_neo4j_message_ingest(payload, df, batch_number):
         else:
             log_writer(log_file, f"[{datetime.now()}] [Warning] - {rule_status}")
     finally:
+        try:
+            ownership = _stamp_graph_ownership(driver, session_id, run_id=run_id, batch_id=batch_id)
+            log_writer(log_file, f"[{datetime.now()}] [Info] - Realtime ownership metadata stamped: {ownership}")
+        except Exception as exc:
+            log_writer(log_file, f"[{datetime.now()}] [Warning] - Realtime ownership metadata stamp failed: {exc}")
         driver.close()
 
 
