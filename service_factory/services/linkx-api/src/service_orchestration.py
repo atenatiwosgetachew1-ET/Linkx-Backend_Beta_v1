@@ -112,6 +112,7 @@ def get_worker_job(job_id):
                 }
                 for event in cur.fetchall()
             ]
+    result = _extract_job_result(events)
     return {
         "job_id": row[0],
         "session_id": row[1],
@@ -128,8 +129,19 @@ def get_worker_job(job_id):
         "finished_at": row[12].isoformat() if row[12] else None,
         "error_message": row[13],
         "payload": row[14] or {},
+        "result": result,
         "events": events,
     }
+
+
+def _extract_job_result(events):
+    for event in events:
+        if event.get("event_type") != "job_succeeded":
+            continue
+        payload = event.get("payload") or {}
+        if isinstance(payload, dict) and "result" in payload:
+            return payload.get("result")
+    return None
 
 
 def request_session_cancellation(session_id, reason="client_requested", requested_by=None, neo4j_credentials=None):

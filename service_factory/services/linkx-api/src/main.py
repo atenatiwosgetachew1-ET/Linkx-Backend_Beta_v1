@@ -1084,13 +1084,15 @@ def live_batch_files():
                 max_attempts=1,
             )
             return jsonify({
-                "message": "accepted",
+                "message": "success",
                 "results": {
+                    "accepted": True,
                     "status": "queued",
                     "job_id": job["job_id"],
                     "job": job,
                     "session_id": session_id,
                     "queue": "dataframe",
+                    "poll_url": f"/jobs/{job['job_id']}",
                 },
             }), 202
         return create_dataframe_response(data, session_id)
