@@ -140,7 +140,7 @@ def run_loop(queues, poll_interval, once=False):
                         conn,
                         job.get("session_id"),
                         job_id=job.get("id"),
-                        payload={"reason": "cancelled_before_execution", **credentials_for_cleanup(job["payload"].get("tool_credentials"))},
+                        payload={"reason": "cancelled_before_execution", "run_id": job.get("run_id"), **credentials_for_cleanup(job["payload"].get("tool_credentials"))},
                     )
                     print(f"[worker] cancelled job_id={job['id']} before execution", flush=True)
                     if once:
@@ -160,7 +160,7 @@ def run_loop(queues, poll_interval, once=False):
                         conn,
                         job.get("session_id"),
                         job_id=job.get("id"),
-                        payload={"reason": "cancelled_during_execution", **credentials_for_cleanup(job["payload"].get("tool_credentials"))},
+                        payload={"reason": "cancelled_during_execution", "run_id": job.get("run_id"), **credentials_for_cleanup(job["payload"].get("tool_credentials"))},
                     )
                     print(f"[worker] cancelled job_id={job['id']} during execution", flush=True)
                 else:

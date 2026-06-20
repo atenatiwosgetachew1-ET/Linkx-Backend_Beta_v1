@@ -121,14 +121,19 @@ def enqueue_session_cleanup(conn, session_id, job_id=None, payload=None, dry_run
     if job_id:
         cleanup_payload.setdefault("job_id", str(job_id))
 
+    # Job cancellation is not the same as final source-window/session cleanup.
+    # Preserve dfparts, uploads, rules, and session config so the same source can re-ingest.
+    cleanup_type = "run" if cleanup_payload.get("run_id") else "neo4j_session"
+    cleanup_payload.setdefault("preserve_session_config", True)
+
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO cleanup_runs (cleanup_type, status, session_id, job_id, dry_run, summary)
-            VALUES ('session', 'created', %s, %s, %s, %s::jsonb)
+            VALUES (%s, 'created', %s, %s, %s, %s::jsonb)
             RETURNING id::text
             """,
-            (str(session_id), job_id, bool(dry_run), json.dumps(cleanup_payload)),
+            (cleanup_type, str(session_id), job_id, bool(dry_run), json.dumps(cleanup_payload)),
         )
         cleanup_id = cur.fetchone()[0]
     conn.commit()
