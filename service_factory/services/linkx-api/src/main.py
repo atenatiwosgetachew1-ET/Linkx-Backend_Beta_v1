@@ -1115,7 +1115,7 @@ def live_batch_files():
         }
         if _async_search_jobs_enabled():
             job = enqueue_worker_job(
-                "dataframe",
+                "search",
                 "search",
                 session_id=session_id,
                 payload=payload,
@@ -1130,7 +1130,7 @@ def live_batch_files():
                     "job_id": job["job_id"],
                     "job": job,
                     "session_id": session_id,
-                    "queue": "dataframe",
+                    "queue": "search",
                     "poll_url": f"/jobs/{job['job_id']}",
                 },
             }), 202
