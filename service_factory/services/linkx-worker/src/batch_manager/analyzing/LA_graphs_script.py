@@ -75,8 +75,10 @@ def fetch_graph(id,action,source_id,value,batch):
     if id == "relationship":
         driver = None
         try:
-            tool = load_temp_config("tool", source_id)
-            driver = tools(tool.lower(), "check", {"session_id": source_id})
+            tool = load_temp_config("tool", source_id) or load_temp_config("active_tool", source_id) or "neo4j"
+            driver = tools(str(tool).lower(), "check", {"session_id": source_id})
+            if not driver:
+                return {"nodes": [], "edges": [], "error": "Neo4j credentials not found for graph session"}
 
             nodes = {}
             edges = []
