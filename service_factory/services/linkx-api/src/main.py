@@ -75,6 +75,10 @@ def _async_worker_jobs_enabled():
     return str(os.getenv("LINKX_ASYNC_WORKER_JOBS", "true")).lower() not in {"0", "false", "no"}
 
 
+def _async_search_jobs_enabled():
+    return _async_worker_jobs_enabled() and str(os.getenv("LINKX_ASYNC_SEARCH_JOBS", "false")).lower() in {"1", "true", "yes"}
+
+
 def _new_session_log_file(session_id):
     current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     return f"logfile_{session_id}_[{current_time}].log"
@@ -1056,6 +1060,28 @@ def live_batch_files():
             "storage": storage_ip,
             "session_id": data.get("session_id"),
         }
+        if _async_search_jobs_enabled():
+            job = enqueue_worker_job(
+                "dataframe",
+                "search",
+                session_id=session_id,
+                payload=payload,
+                priority=70,
+                max_attempts=1,
+            )
+            return jsonify({
+                "message": "success",
+                "results": {
+                    "accepted": True,
+                    "status": "queued",
+                    "job_id": job["job_id"],
+                    "job": job,
+                    "session_id": session_id,
+                    "queue": "dataframe",
+                    "poll_url": f"/jobs/{job['job_id']}",
+                },
+            }), 202
+
         # delegate working logic to batch_data_manager
         result = batch_data_manager(payload)
         if result is None:
