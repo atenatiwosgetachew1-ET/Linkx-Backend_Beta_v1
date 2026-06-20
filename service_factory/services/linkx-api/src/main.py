@@ -425,6 +425,59 @@ def admin_cleanup_audit():
         return jsonify({"message": "audit_query_failed", "detail": str(exc)}), 500
 
 
+@app.route('/admin/cleanup/session', methods=['POST'])
+@permission_required("users:manage")
+@validate_json_payload(COMMON_SCHEMAS["admin_cleanup_session"])
+def admin_cleanup_session():
+    data = validated_json()
+    session_id = str(data.get("session_id") or "").strip()
+    run_id = data.get("run_id")
+    reason = data.get("reason") or "admin_manual_cleanup"
+    dry_run = bool(data.get("dry_run", False))
+    cleanup_type = data.get("cleanup_type")
+
+    if not cleanup_type:
+        if run_id:
+            cleanup_type = "run"
+        elif "_" in session_id:
+            cleanup_type = "window"
+        else:
+            cleanup_type = "session_tree"
+
+    payload = {
+        "event": "admin_manual_cleanup",
+        "cleanup_targets": ["neo4j", "artifacts"],
+        "preserve_session_config": bool(data.get("preserve_session_config", cleanup_type in {"window", "run"})),
+    }
+
+    try:
+        cleanup_id = enqueue_cleanup_run(
+            cleanup_type,
+            session_id=session_id,
+            run_id=run_id,
+            reason=reason,
+            neo4j_credentials=load_temp_config("tool_credentials", session_id),
+            payload=payload,
+            dry_run=dry_run,
+        )
+    except Exception as exc:
+        current_app.logger.warning("admin cleanup enqueue failed: %s", exc)
+        return jsonify({"message": "cleanup_enqueue_failed", "detail": str(exc)}), 500
+
+    return jsonify({
+        "message": "success",
+        "results": {
+            "cleanup_id": cleanup_id,
+            "cleanup_type": cleanup_type,
+            "session_id": session_id,
+            "run_id": str(run_id) if run_id is not None else None,
+            "status": "queued",
+            "dry_run": dry_run,
+            "reason": reason,
+        },
+    }), 202
+
+
 @app.route('/db/health', methods=['GET'])
 def db_health():
     try:

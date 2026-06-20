@@ -430,6 +430,20 @@ COMMON_SCHEMAS = {
             {"required": ["session_id"]}
         ],
     },
+    "admin_cleanup_session": {
+        "type": "object",
+        "required": ["id", "session_id"],
+        "additionalProperties": False,
+        "properties": {
+            "id": {"type": "string", "enum": ["cleanup_session"]},
+            "session_id": {"type": ["string", "integer"], "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+            "run_id": {"type": ["string", "integer", "null"], "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]*$"},
+            "cleanup_type": {"type": ["string", "null"], "enum": ["session", "session_tree", "window", "run", "neo4j_session", null]},
+            "reason": {"type": ["string", "null"], "maxLength": 255},
+            "dry_run": {"type": "boolean"},
+            "preserve_session_config": {"type": "boolean"},
+        },
+    },
     "get_graph": {
         "type": "object",
         "required": ["id", "relationship"],
