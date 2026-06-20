@@ -1,4 +1,5 @@
 from datetime import datetime
+import time
 
 from logger import log_writer
 
@@ -83,26 +84,53 @@ def clean_existing_session(driver, session_id, log_file=None, batch_size=10000, 
                 )
         return total_deleted
 
-    deleted_relationships = delete_in_batches(
-        f"""
+    rel_delete_query = f"""
         MATCH (a)-[r]->(b)
         WHERE {rel_filter}
         WITH r LIMIT $limit
         DELETE r
         RETURN count(r) AS count
-        """,
-        "relationships",
-    )
-    deleted_nodes = delete_in_batches(
-        f"""
+        """
+    node_delete_query = f"""
         MATCH (n)
         WHERE {node_filter}
         WITH n LIMIT $limit
         DETACH DELETE n
         RETURN count(n) AS count
-        """,
-        "nodes",
-    )
+        """
+    rel_count_query = f"""
+        MATCH (a)-[r]->(b)
+        WHERE {rel_filter}
+        RETURN count(r) AS count
+        """
+    node_count_query = f"""
+        MATCH (n)
+        WHERE {node_filter}
+        RETURN count(n) AS count
+        """
+
+    deleted_relationships = 0
+    deleted_nodes = 0
+    cleanup_passes = 0
+    max_passes = 4
+    while True:
+        cleanup_passes += 1
+        deleted_relationships += delete_in_batches(rel_delete_query, "relationships")
+        deleted_nodes += delete_in_batches(node_delete_query, "nodes")
+
+        remaining_relationships = run_count(rel_count_query)
+        remaining_nodes = run_count(node_count_query)
+        if remaining_relationships == 0 and remaining_nodes == 0:
+            break
+        if cleanup_passes >= max_passes:
+            break
+        if log_file:
+            log_writer(
+                log_file,
+                f"[{datetime.now()}] [Info] - Cleanup pass {cleanup_passes} left "
+                f"{remaining_relationships} relationships and {remaining_nodes} nodes for {scope}; retrying",
+            )
+        time.sleep(1)
 
     with driver.session() as session:
         session.run(
@@ -116,21 +144,6 @@ def clean_existing_session(driver, session_id, log_file=None, batch_size=10000, 
             run_id=run_id,
         )
 
-    remaining_relationships = run_count(
-        f"""
-        MATCH (a)-[r]->(b)
-        WHERE {rel_filter}
-        RETURN count(r) AS count
-        """
-    )
-    remaining_nodes = run_count(
-        f"""
-        MATCH (n)
-        WHERE {node_filter}
-        RETURN count(n) AS count
-        """
-    )
-
     result = {
         "status": "cleaned" if remaining_nodes == 0 and remaining_relationships == 0 else "residue_detected",
         "session_id": str(session_id),
@@ -140,6 +153,7 @@ def clean_existing_session(driver, session_id, log_file=None, batch_size=10000, 
         "deleted_nodes": deleted_nodes,
         "remaining_relationships": remaining_relationships,
         "remaining_nodes": remaining_nodes,
+        "cleanup_passes": cleanup_passes,
     }
 
     if log_file:
