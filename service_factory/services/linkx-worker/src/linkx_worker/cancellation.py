@@ -26,20 +26,16 @@ def is_cancel_requested(conn, session_id=None, job_id=None):
                 """
                 SELECT 1
                 FROM jobs j
-                LEFT JOIN analysis_sessions s ON s.session_id = j.session_id
                 WHERE j.id = %s
                   AND (
                     j.status IN ('cancel_requested', 'cancelling', 'cancelled')
                     OR j.cancellation_requested_at IS NOT NULL
-                    OR s.status IN ('cancel_requested', 'cancelling', 'cancelled')
-                    OR s.cancellation_requested_at IS NOT NULL
                   )
                 LIMIT 1
                 """,
                 (job_id,),
             )
-            if cur.fetchone():
-                return True
+            return cur.fetchone() is not None
 
         if session_id:
             cur.execute(

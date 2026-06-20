@@ -119,9 +119,14 @@ def request_session_cancellation(session_id, reason="client_requested", requeste
                     END
                 WHERE session_id = %s
                   AND status NOT IN ('succeeded', 'failed', 'cancelled')
+                  AND (
+                      %s
+                      OR queue_name IN ('analysis', 'ingestion')
+                      OR job_type IN ('start_session', 'analyzer', 'analysis', 'run_analysis', 'realtime_data')
+                  )
                 RETURNING id::text, status, run_id
                 """,
-                (reason, str(session_id)),
+                (reason, str(session_id), bool(cancel_session)),
             )
             jobs = [{"id": row[0], "status": row[1], "run_id": row[2]} for row in cur.fetchall()]
             cleanup_id = None
