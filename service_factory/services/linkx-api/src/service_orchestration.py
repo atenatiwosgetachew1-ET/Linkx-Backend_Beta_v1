@@ -264,10 +264,8 @@ def request_session_cancellation(session_id, reason="client_requested", requeste
                     cleanup_summary["preserve_session_config"] = True
                     if run_ids:
                         cleanup_summary["run_id"] = str(run_ids[0])
-                        cleanup_type = "run"
-                    else:
-                        cleanup_summary["reason_detail"] = "non_final_stop_without_active_run_id"
-                        cleanup_type = "neo4j_session"
+                    cleanup_summary["reason_detail"] = "non_final_stop_cleans_graph_session_scope"
+                    cleanup_type = "neo4j_session"
                 else:
                     cleanup_type = "window" if "_" in str(session_id) else "session_tree"
                 cur.execute(

@@ -123,7 +123,7 @@ def enqueue_session_cleanup(conn, session_id, job_id=None, payload=None, dry_run
 
     # Job cancellation is not the same as final source-window/session cleanup.
     # Preserve dfparts, uploads, rules, and session config so the same source can re-ingest.
-    cleanup_type = "run" if cleanup_payload.get("run_id") else "neo4j_session"
+    cleanup_type = "neo4j_session"
     cleanup_payload.setdefault("preserve_session_config", True)
 
     with conn.cursor() as cur:
