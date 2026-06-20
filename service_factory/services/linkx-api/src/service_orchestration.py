@@ -160,7 +160,12 @@ def reactivate_analysis_session(session_id):
                     ended_at = NULL,
                     last_seen_at = NOW()
                 WHERE session_id = %s
-                  AND status IN ('cancel_requested', 'cancelling', 'cancelled')
+                  AND (
+                      status IN ('cancel_requested', 'cancelling', 'cancelled')
+                      OR cancellation_requested_at IS NOT NULL
+                      OR ended_at IS NOT NULL
+                  )
+                  AND status NOT IN ('expired')
                 RETURNING session_id
                 """,
                 (str(session_id),),
@@ -237,10 +242,14 @@ def request_session_cancellation(session_id, reason="client_requested", requeste
                 cleanup_summary = {"session_id": str(session_id), "reason": reason}
                 cleanup_summary.update(credentials_for_cleanup(neo4j_credentials))
                 run_ids = [job.get("run_id") for job in jobs if job.get("run_id")]
-                if not cancel_session and run_ids:
-                    cleanup_summary["run_id"] = str(run_ids[0])
+                if not cancel_session:
                     cleanup_summary["preserve_session_config"] = True
-                    cleanup_type = "run"
+                    if run_ids:
+                        cleanup_summary["run_id"] = str(run_ids[0])
+                        cleanup_type = "run"
+                    else:
+                        cleanup_summary["reason_detail"] = "non_final_stop_without_active_run_id"
+                        cleanup_type = "neo4j_session"
                 else:
                     cleanup_type = "window" if "_" in str(session_id) else "session_tree"
                 cur.execute(
