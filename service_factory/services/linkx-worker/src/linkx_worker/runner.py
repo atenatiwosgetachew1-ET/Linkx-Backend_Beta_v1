@@ -51,15 +51,6 @@ def claim_job(conn, queues, worker_name):
                 WHERE j.status IN ('created', 'queued', 'retry')
                   AND j.queue_name = ANY(%s)
                   AND j.scheduled_at <= NOW()
-                  AND NOT EXISTS (
-                    SELECT 1
-                    FROM analysis_sessions s
-                    WHERE s.session_id = j.session_id
-                      AND (
-                        s.status IN ('cancel_requested', 'cancelling', 'cancelled')
-                        OR s.cancellation_requested_at IS NOT NULL
-                      )
-                  )
                 ORDER BY j.priority ASC, j.scheduled_at ASC, j.created_at ASC
                 FOR UPDATE SKIP LOCKED
                 LIMIT 1
