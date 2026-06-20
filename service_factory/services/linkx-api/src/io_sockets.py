@@ -16,6 +16,7 @@ from batch_manager.utils.notification_utils import (
 from globals import load_temp_config,get_or_create_socket_entry,sockets_registry,_session_store
 from connection_utils import tools
 from batch_manager.processing.session_manager import end_session
+from service_orchestration import request_session_cancellation
 from auth.repository import get_service_account_by_id, get_user_by_id, public_actor
 from auth.tokens import verify_access_token
 
@@ -117,15 +118,26 @@ def register_socket_handlers(socketio: SocketIO):
         if _has_live_socket_for_session(session_key):
             print(f"[str_report_socket] session {session_key} reconnected before abandonment grace")
             return
-        if session_key not in _session_store:
-            return
         print(f"[str_report_socket] stopping abandoned API session {session_key}")
         _queue_session_lost_notification(session_key)
+        if session_key in _session_store:
+            try:
+                result = end_session({"session_id": session_key, "reason": "socket_disconnect_abandoned"})
+                print(f"[str_report_socket] abandoned session stop result session_id={session_key}: {result}")
+                return
+            except Exception as exc:
+                print(f"[str_report_socket] failed to stop abandoned API session {session_key}: {exc}")
         try:
-            result = end_session({"session_id": session_key, "reason": "socket_disconnect_abandoned"})
-            print(f"[str_report_socket] abandoned session stop result session_id={session_key}: {result}")
+            result = request_session_cancellation(
+                session_key,
+                reason="socket_disconnect_abandoned",
+                requested_by="api_socket_guard",
+                neo4j_credentials=load_temp_config("tool_credentials", session_key),
+                cancel_session=False,
+            )
+            print(f"[str_report_socket] abandoned worker session stop result session_id={session_key}: {result}")
         except Exception as exc:
-            print(f"[str_report_socket] failed to stop abandoned API session {session_key}: {exc}")
+            print(f"[str_report_socket] failed to stop abandoned worker session {session_key}: {exc}")
 
     @socketio.on("connect")
     def handle_connect(auth=None):
