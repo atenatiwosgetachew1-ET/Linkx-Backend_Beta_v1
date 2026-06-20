@@ -422,7 +422,10 @@ def run_cleanup(cleanup_type, payload=None, dry_run=False):
     if cleanup_type == "artifacts_session":
         return cleanup_artifacts(session_id=payload.get("session_id"), dry_run=dry_run, limit=int(payload.get("limit", 500)))
     if cleanup_type == "neo4j_session":
-        return cleanup_neo4j_session(payload.get("session_id"), run_id=payload.get("run_id"), batch_size=int(payload.get("batch_size", 10000)), dry_run=dry_run, payload=payload)
+        # Session-scoped graph cleanup must ignore run_id. Non-final terminate/cancel
+        # uses this path to remove Store Data, Source/Target, and Link Analysis
+        # graph residue while preserving dfparts/uploads/session config.
+        return cleanup_neo4j_session(payload.get("session_id"), run_id=None, batch_size=int(payload.get("batch_size", 10000)), dry_run=dry_run, payload=payload)
     if cleanup_type == "metadata_prune":
         return prune_cleaned_metadata(retention_days=int(payload.get("retention_days", 30)), dry_run=dry_run)
     if cleanup_type == "neo4j_residue_scan":
