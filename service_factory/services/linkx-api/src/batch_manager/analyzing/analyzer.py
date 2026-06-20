@@ -12,6 +12,7 @@ from connection_utils import tools
 from logger import log_writer
 from batch_manager.processing.file_source_loader import load_file
 from batch_manager.utils.neo4j_utils import create_neo4j_driver
+from batch_manager.utils.neo4j_cleanup import clean_existing_session
 from batch_manager.utils.artifact_utils import ensure_artifact_dir
 from batch_manager.processing.realtime_source_loader import records_to_dataframe, iter_kafka_messages, iter_api_messages
 from batch_manager.processing.rules_compiler import normalize_rule_key
@@ -31,6 +32,79 @@ def json_serializer(obj):
     if isinstance(obj, datetime):
         return obj.isoformat()  # Convert datetime to ISO string
     raise TypeError(f"Type {type(obj)} not serializable")
+
+def _is_retryable_neo4j_error(exc):
+    code = getattr(exc, "code", None) or getattr(exc, "neo4j_code", None)
+    text = f"{code or ''} {exc}"
+    retry_markers = (
+        "Neo.TransientError",
+        "DeadlockDetected",
+        "LockClientStopped",
+        "DatabaseUnavailable",
+        "NotALeader",
+        "ForsetiClient",
+    )
+    return any(marker in text for marker in retry_markers)
+
+
+def _neo4j_retry_delay(attempt):
+    return min(10.0, 0.75 * (2 ** max(0, attempt - 1)))
+
+
+def _stop_aware_sleep(stop_event, seconds):
+    deadline = time.time() + max(0.0, float(seconds or 0))
+    while time.time() < deadline:
+        if stop_event and stop_event.is_set():
+            return True
+        time.sleep(min(0.25, deadline - time.time()))
+    return bool(stop_event and stop_event.is_set())
+
+
+def _cleanup_retry_run(params, exc):
+    run_id = params.get("run_id")
+    session_id = params.get("session_id")
+    credentials = params.get("neo4j_conf")
+    if not run_id or not credentials:
+        return None
+    driver = None
+    try:
+        driver = create_neo4j_driver(credentials)
+        return clean_existing_session(driver, session_id, run_id=run_id)
+    except Exception as cleanup_exc:
+        return {"status": "cleanup_failed", "error": str(cleanup_exc), "trigger_error": str(exc)}
+    finally:
+        if driver:
+            driver.close()
+
+
+def _neo4j_inject_with_retry(params, max_attempts=4):
+    log_file = params.get("log_file")
+    session_id = params.get("session_id")
+    stop_event = params.get("stop_event")
+    attempt = 1
+    while True:
+        if stop_event and stop_event.is_set():
+            return False
+        try:
+            neo4j_row_data_injector(params)
+            return True
+        except Exception as exc:
+            if not _is_retryable_neo4j_error(exc) or attempt >= max_attempts:
+                raise
+            delay = _neo4j_retry_delay(attempt)
+            cleanup_result = _cleanup_retry_run(params, exc)
+            message = (
+                f"[{datetime.now()}] [Warning] - Neo4j transient write error for session {session_id}; "
+                f"cleaned partial run result={cleanup_result}; "
+                f"retrying attempt {attempt + 1}/{max_attempts} after {delay:.1f}s: {exc}"
+            )
+            print(message)
+            if log_file:
+                log_writer(log_file, message)
+            if _stop_aware_sleep(stop_event, delay):
+                return False
+            attempt += 1
+
 
 def neo4j_row_data_adjuster(row_dict):
     # Time adjustment
@@ -910,7 +984,9 @@ def analyzer(payload):
                     "log_file": payload.get("log_file"),
                     "stop_event": stop_event
                 }
-                neo4j_row_data_injector(params)
+                if not _neo4j_inject_with_retry(params):
+                    print(f"[{session_id}] Batch analysis cancelled before completion.")
+                    return False
                 print(f"[{session_id}] Batch analysis completed successfully.")
                 return True
             except Exception as e:
