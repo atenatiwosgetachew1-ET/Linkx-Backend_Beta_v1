@@ -129,12 +129,30 @@ def enqueue_session_cleanup(conn, session_id, job_id=None, payload=None, dry_run
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO cleanup_runs (cleanup_type, status, session_id, job_id, dry_run, summary)
-            VALUES (%s, 'created', %s, %s, %s, %s::jsonb)
-            RETURNING id::text
+            SELECT id::text
+            FROM cleanup_runs
+            WHERE cleanup_type = %s
+              AND session_id IS NOT DISTINCT FROM %s
+              AND dry_run = %s
+              AND status IN ('created', 'queued', 'running', 'retry')
+              AND (summary->>'run_id') IS NOT DISTINCT FROM %s
+            ORDER BY created_at ASC
+            LIMIT 1
             """,
-            (cleanup_type, str(session_id), job_id, bool(dry_run), json.dumps(cleanup_payload)),
+            (cleanup_type, str(session_id), bool(dry_run), str(cleanup_payload.get("run_id")) if cleanup_payload.get("run_id") else None),
         )
-        cleanup_id = cur.fetchone()[0]
+        row = cur.fetchone()
+        if row:
+            cleanup_id = row[0]
+        else:
+            cur.execute(
+                """
+                INSERT INTO cleanup_runs (cleanup_type, status, session_id, job_id, dry_run, summary)
+                VALUES (%s, 'created', %s, %s, %s, %s::jsonb)
+                RETURNING id::text
+                """,
+                (cleanup_type, str(session_id), job_id, bool(dry_run), json.dumps(cleanup_payload)),
+            )
+            cleanup_id = cur.fetchone()[0]
     conn.commit()
     return cleanup_id

@@ -12,13 +12,30 @@ def enqueue_cleanup(cleanup_type, payload=None, dry_run=False):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO cleanup_runs (cleanup_type, status, dry_run, session_id, summary)
-                VALUES (%s, 'queued', %s, %s, %s::jsonb)
-                RETURNING id::text
+                SELECT id::text
+                FROM cleanup_runs
+                WHERE cleanup_type = %s
+                  AND session_id IS NOT DISTINCT FROM %s
+                  AND dry_run = %s
+                  AND status IN ('created', 'queued', 'running', 'retry')
+                ORDER BY created_at ASC
+                LIMIT 1
                 """,
-                (cleanup_type, dry_run, payload.get("session_id"), json.dumps(payload)),
+                (cleanup_type, payload.get("session_id"), dry_run),
             )
-            cleanup_id = cur.fetchone()[0]
+            row = cur.fetchone()
+            if row:
+                cleanup_id = row[0]
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO cleanup_runs (cleanup_type, status, dry_run, session_id, summary)
+                    VALUES (%s, 'queued', %s, %s, %s::jsonb)
+                    RETURNING id::text
+                    """,
+                    (cleanup_type, dry_run, payload.get("session_id"), json.dumps(payload)),
+                )
+                cleanup_id = cur.fetchone()[0]
         conn.commit()
     return cleanup_id
 
