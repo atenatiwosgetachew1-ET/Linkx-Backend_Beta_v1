@@ -131,6 +131,7 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
     """
 
     metadata_interval = _env_float("LINKX_GRAPH_STATUS_METADATA_INTERVAL", 2)
+    metadata_max_cycles = _env_int("LINKX_GRAPH_STATUS_METADATA_MAX_CYCLES", 2)
     relationships_active_interval = _env_float("LINKX_GRAPH_STATUS_RELATIONSHIPS_ACTIVE_INTERVAL", 3)
     relationships_idle_interval = _env_float("LINKX_GRAPH_STATUS_RELATIONSHIPS_IDLE_INTERVAL", 10)
     relationships_idle_after_cycles = _env_int("LINKX_GRAPH_STATUS_RELATIONSHIPS_IDLE_AFTER_CYCLES", 2)
@@ -147,7 +148,12 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
     # Metadata loop
     # -------------------------
     def emit_metadata():
-        while not stop_event.is_set() and not registry_entry.get("metadata_complete"):
+        metadata_cycles = 0
+        while (
+            not stop_event.is_set()
+            and not registry_entry.get("metadata_complete")
+            and metadata_cycles < metadata_max_cycles
+        ):
             try:
                 metadata = get_graph_metadata(driver, session_id, tool_credentials)
                 registry_entry["static_infos"] = metadata
@@ -172,7 +178,9 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
                     },
                     to=sid
                 )
+            metadata_cycles += 1
             socketio.sleep(metadata_interval)
+        registry_entry["metadata_complete"] = True
 
     # -------------------------
     # Relationships loop (on change)

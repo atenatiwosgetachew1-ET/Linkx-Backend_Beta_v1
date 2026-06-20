@@ -55,6 +55,20 @@ def register_socket_handlers(socketio: SocketIO):
         log_stream = entry.get("log_stream")
         return isinstance(log_stream, dict) and str(log_stream.get("session_id")) == session_key
 
+
+    def _close_graph_entry(graph_entry):
+        if not isinstance(graph_entry, dict):
+            return
+        stop_event = graph_entry.get("stop_event")
+        if stop_event:
+            stop_event.set()
+        driver = graph_entry.get("driver")
+        if driver:
+            try:
+                driver.close()
+            except Exception as exc:
+                print(f"[str_report_socket] graph driver close failed: {exc}")
+
     def _has_live_socket_for_session(session_id):
         session_key = str(session_id)
         for sid, entry in list(sockets_registry.items()):
@@ -374,7 +388,7 @@ def register_socket_handlers(socketio: SocketIO):
         if session_id:
             graph_entry = entry.get("graph_statuses", {}).get(session_id)
             if graph_entry:
-                graph_entry["stop_event"].set()
+                _close_graph_entry(graph_entry)
                 entry["graph_statuses"].pop(session_id, None)
 
     # --------------------------
@@ -398,10 +412,7 @@ def register_socket_handlers(socketio: SocketIO):
                 watched_sessions.add(str(log_stream.get("session_id")))
 
         for graph_entry in entry.get("graph_statuses", {}).values():
-            if isinstance(graph_entry, dict):
-                stop_event = graph_entry.get("stop_event")
-                if stop_event:
-                    stop_event.set()
+            _close_graph_entry(graph_entry)
 
         for session_id in watched_sessions:
             if session_id in _session_store:
