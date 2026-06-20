@@ -47,10 +47,12 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
                         request_limit = int(limit) if limit is not None else 50
                     except (TypeError, ValueError):
                         request_limit = 50
+                    request_limit = max(1, min(request_limit, 10000))
                     try:
                         request_offset = int(offset or 0)
                     except (TypeError, ValueError):
                         request_offset = 0
+                    request_offset = max(0, request_offset)
                     payload.update({"limit": request_limit, "offset": request_offset, "size": request_limit, "from": request_offset})
                 print("DF payload ES:", payload)
                 response = requests.post(API_URL, json=payload, timeout=timeout)
