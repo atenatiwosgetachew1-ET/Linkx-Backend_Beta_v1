@@ -539,8 +539,8 @@ Current rule: ingestion termination is not final session cleanup. Terminate/canc
 
 | Event | Cleanup type | Delete dfparts/uploads/session config? | Clean Neo4j? | Notes |
 |---|---|---:|---:|---|
-| Terminate ingestion from the UI | `run` when `run_id` exists, otherwise `neo4j_session` | No | Yes | Preserves dataframe artifacts for re-ingestion. |
-| Cancelled ingestion job | `run` when `run_id` exists, otherwise `neo4j_session` | No | Yes | Worker cancellation cleanup must not enqueue `session`. |
+| Terminate ingestion from the UI | `neo4j_session` | No | Yes | Cleans all Neo4j graph residue for the source session, preserves dataframe artifacts for re-ingestion. |
+| Cancelled ingestion job | `neo4j_session` | No | Yes | Worker cancellation cleanup must not enqueue `run` or destructive `session`. |
 | Browser refresh / socket abandoned after grace period | non-final stop, `run`/`neo4j_session` behavior | No | Yes | A reconnect within grace preserves the work. |
 | Re-ingest same source window | no destructive artifact cleanup | No | Previous graph/run residue may be cleaned first | Requires existing dfpart or a fresh `create_DF`. |
 | Close source window | `window` | Yes | Yes | This is a final source-window lifecycle event. |
@@ -550,8 +550,8 @@ Current rule: ingestion termination is not final session cleanup. Terminate/canc
 
 Implementation notes:
 
-- `request_session_cancellation(..., cancel_session=False)` is the non-final ingestion stop path. It should only cancel ingestion/analysis jobs and schedule `run` or `neo4j_session` cleanup.
-- Worker job cancellation cleanup now preserves dfparts, uploads, rules, and session config; it must not enqueue destructive `session` cleanup for a cancelled job.
+- `request_session_cancellation(..., cancel_session=False)` is the non-final ingestion stop path. It should only cancel ingestion/analysis jobs and schedule `neo4j_session` cleanup.
+- Worker job cancellation cleanup now preserves dfparts, uploads, rules, and session config; it must enqueue `neo4j_session`, not `run` or destructive `session`, for a cancelled ingestion job.
 - `window`, `session`, and `session_tree` are intentionally destructive and should be reserved for close-window, logout, max-idle expiry, or admin cleanup.
 - `create_DF` registers dfparts with expiry metadata. Scheduled `artifacts_expired` cleanup is the safety net for old artifacts that were not removed by a final lifecycle event.
 - Recommended retention policy: dfparts/uploads expire after 6-24 hours depending on analyst workflow; logs can remain 7-30 days; deleted metadata is pruned after `LINKX_METADATA_RETENTION_DAYS`.
