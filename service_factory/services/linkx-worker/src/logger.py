@@ -8,6 +8,17 @@ LOG_DIR = ensure_artifact_dir("logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
 
+def _log_stream_wait_seconds():
+    try:
+        return max(0.0, float(os.getenv("LINKX_LOG_STREAM_WAIT_SECONDS", "30")))
+    except (TypeError, ValueError):
+        return 30.0
+
+
+def _log_stream_from_start():
+    return str(os.getenv("LINKX_LOG_STREAM_FROM_START", "true")).lower() not in {"0", "false", "no"}
+
+
 def log_writer(filename, message):
     """Append a log line to a log file."""
     file_path = os.path.join(LOG_DIR, filename)
@@ -27,6 +38,10 @@ def log_stream_background(socketio, session_id, sid, filename, stop_event):
         return
 
     file_path = os.path.join(LOG_DIR, filename)
+    deadline = time.time() + _log_stream_wait_seconds()
+    while not os.path.exists(file_path) and not stop_event.is_set() and time.time() < deadline:
+        socketio.sleep(0.1)
+
     if not os.path.exists(file_path):
         socketio.emit(
             'stream_logs', 
@@ -37,7 +52,8 @@ def log_stream_background(socketio, session_id, sid, filename, stop_event):
 
     try:
         with open(file_path, 'r') as log_file:
-            log_file.seek(0, os.SEEK_END)
+            if not _log_stream_from_start():
+                log_file.seek(0, os.SEEK_END)
             while not stop_event.is_set():
                 line = log_file.readline()
                 if line:
