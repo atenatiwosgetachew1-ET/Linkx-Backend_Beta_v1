@@ -65,6 +65,8 @@ def run_job(job_type, payload):
 def run_job_safely(job_type, payload):
     try:
         result = run_job(job_type, payload)
+        if result is False:
+            return False, result, {"error": "job_failed", "result": result}
         if isinstance(result, dict) and str(result.get("status") or "").lower() in {"failed", "error"}:
             return False, result, {"error": result.get("error") or result.get("message") or "job_failed", "result": result}
         return True, result, None
