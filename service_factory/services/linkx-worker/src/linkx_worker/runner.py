@@ -1,6 +1,8 @@
 import argparse
 import json
+import multiprocessing
 import os
+import queue as queue_module
 import socket
 import time
 from datetime import datetime, timezone
@@ -126,13 +128,112 @@ def _jsonable(value):
         return repr(value)
 
 
-def run_loop(queues, poll_interval, once=False):
+def _job_child_main(job_type, payload, result_queue):
+    try:
+        result_queue.put(run_job_safely(job_type, payload))
+    except BaseException as exc:
+        result_queue.put((False, None, {"error": str(exc)}))
+
+
+def _terminate_child(process, grace_seconds=5.0):
+    if not process.is_alive():
+        return
+    process.terminate()
+    process.join(grace_seconds)
+    if process.is_alive():
+        process.kill()
+        process.join(2.0)
+
+
+def _process_start_method():
+    method = os.getenv("WORKER_PROCESS_START_METHOD", "fork")
+    try:
+        return multiprocessing.get_context(method)
+    except ValueError:
+        return multiprocessing.get_context("fork")
+
+
+def start_job_process(job):
+    ctx = _process_start_method()
+    result_queue = ctx.Queue(maxsize=1)
+    process = ctx.Process(
+        target=_job_child_main,
+        args=(job["job_type"], job["payload"], result_queue),
+    )
+    process.start()
+    return {"job": job, "process": process, "result_queue": result_queue}
+
+
+def _read_child_result(active_job):
+    process = active_job["process"]
+    result_queue = active_job["result_queue"]
+    process.join()
+    try:
+        return result_queue.get_nowait()
+    except queue_module.Empty:
+        return False, None, {"error": f"worker_child_exited:{process.exitcode}"}
+
+
+def _mark_running(conn, job):
+    with conn.cursor() as cur:
+        emit_event(cur, job, "job_progress", f"Running {job['job_type']} on worker", {"queue": job.get("queue_name")})
+        conn.commit()
+
+
+def _cancel_job(conn, job, active_job=None, message="Job cancelled during execution"):
+    if active_job:
+        _terminate_child(active_job["process"])
+    mark_job_cancelled(conn, job, message)
+    enqueue_session_cleanup(
+        conn,
+        job.get("session_id"),
+        job_id=job.get("id"),
+        payload={"reason": "cancelled_during_execution", "run_id": job.get("run_id"), **credentials_for_cleanup(job["payload"].get("tool_credentials"))},
+    )
+    print(f"[worker] cancelled job_id={job['id']} during execution", flush=True)
+
+
+def _finish_active_job(conn, active_job):
+    job = active_job["job"]
+    ok, result, error = _read_child_result(active_job)
+    with conn.cursor() as cur:
+        emit_event(cur, job, "job_progress", f"Finished execution ok={ok}", {"ok": ok})
+        conn.commit()
+    if is_cancel_requested(conn, session_id=job.get("session_id"), job_id=job.get("id")):
+        _cancel_job(conn, job, message="Job cancelled during execution")
+    else:
+        finish_job(conn, job, ok, result=result, error=error)
+        print(f"[worker] finished job_id={job['id']} ok={ok}", flush=True)
+
+
+def run_loop(queues, poll_interval, once=False, concurrency=1):
     worker_name = os.getenv("WORKER_NAME") or f"linkx-worker@{socket.gethostname()}:{os.getpid()}"
-    print(f"[worker] starting {worker_name} queues={queues}", flush=True)
+    concurrency = max(1, int(concurrency or 1))
+    active_jobs = []
+    print(f"[worker] starting {worker_name} queues={queues} concurrency={concurrency}", flush=True)
     while True:
         with connect() as conn:
-            job = claim_job(conn, queues, worker_name)
-            if job:
+            # First, free slots by handling completed or cancelled child jobs.
+            for active_job in list(active_jobs):
+                job = active_job["job"]
+                process = active_job["process"]
+                if process.is_alive():
+                    if is_cancel_requested(conn, session_id=job.get("session_id"), job_id=job.get("id")):
+                        _cancel_job(conn, job, active_job=active_job)
+                        active_jobs.remove(active_job)
+                    else:
+                        conn.commit()
+                    continue
+                _finish_active_job(conn, active_job)
+                active_jobs.remove(active_job)
+
+            # Claim enough work to fill available slots.
+            claimed_any = False
+            while len(active_jobs) < concurrency:
+                job = claim_job(conn, queues, worker_name)
+                if not job:
+                    break
+                claimed_any = True
                 print(f"[worker] running job_id={job['id']} type={job['job_type']} queue={job['queue_name']}", flush=True)
                 if is_cancel_requested(conn, session_id=job.get("session_id"), job_id=job.get("id")):
                     mark_job_cancelled(conn, job, "Job cancelled before execution")
@@ -143,34 +244,14 @@ def run_loop(queues, poll_interval, once=False):
                         payload={"reason": "cancelled_before_execution", "run_id": job.get("run_id"), **credentials_for_cleanup(job["payload"].get("tool_credentials"))},
                     )
                     print(f"[worker] cancelled job_id={job['id']} before execution", flush=True)
-                    if once:
-                        return
-                    time.sleep(poll_interval)
                     continue
-                with conn.cursor() as cur:
-                    emit_event(cur, job, "job_progress", f"Running {job['job_type']} on worker", {"queue": job.get("queue_name")})
-                    conn.commit()
-                ok, result, error = run_job_safely(job["job_type"], job["payload"])
-                with conn.cursor() as cur:
-                    emit_event(cur, job, "job_progress", f"Finished execution ok={ok}", {"ok": ok})
-                    conn.commit()
-                if is_cancel_requested(conn, session_id=job.get("session_id"), job_id=job.get("id")):
-                    mark_job_cancelled(conn, job, "Job cancelled during execution")
-                    enqueue_session_cleanup(
-                        conn,
-                        job.get("session_id"),
-                        job_id=job.get("id"),
-                        payload={"reason": "cancelled_during_execution", "run_id": job.get("run_id"), **credentials_for_cleanup(job["payload"].get("tool_credentials"))},
-                    )
-                    print(f"[worker] cancelled job_id={job['id']} during execution", flush=True)
-                else:
-                    finish_job(conn, job, ok, result=result, error=error)
-                    print(f"[worker] finished job_id={job['id']} ok={ok}", flush=True)
-            elif once:
-                print("[worker] no job found", flush=True)
+                _mark_running(conn, job)
+                active_jobs.append(start_job_process(job))
+
+            if once and not active_jobs:
+                if not claimed_any:
+                    print("[worker] no job found", flush=True)
                 return
-        if once:
-            return
         time.sleep(poll_interval)
 
 
@@ -179,11 +260,12 @@ def main():
     parser.add_argument("--queues", default=os.getenv("WORKER_QUEUES", "ingestion,dataframe,analysis,graph"))
     parser.add_argument("--poll-interval", type=float, default=float(os.getenv("WORKER_POLL_INTERVAL", "2")))
     parser.add_argument("--once", action="store_true")
+    parser.add_argument("--concurrency", type=int, default=int(os.getenv("WORKER_CONCURRENCY", "1")))
     args = parser.parse_args()
     queues = [q.strip() for q in args.queues.split(",") if q.strip()]
     if not queues:
         raise SystemExit("at least one queue is required")
-    run_loop(queues, args.poll_interval, once=args.once)
+    run_loop(queues, args.poll_interval, once=args.once, concurrency=args.concurrency)
 
 
 if __name__ == "__main__":
