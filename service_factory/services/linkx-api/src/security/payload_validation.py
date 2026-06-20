@@ -438,7 +438,7 @@ COMMON_SCHEMAS = {
             "id": {"type": "string", "enum": ["cleanup_session"]},
             "session_id": {"type": ["string", "integer"], "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
             "run_id": {"type": ["string", "integer", "null"], "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]*$"},
-            "cleanup_type": {"type": ["string", "null"], "enum": ["session", "session_tree", "window", "run", "neo4j_session", null]},
+            "cleanup_type": {"type": ["string", "null"], "enum": ["session", "session_tree", "window", "run", "neo4j_session", None]},
             "reason": {"type": ["string", "null"], "maxLength": 255},
             "dry_run": {"type": "boolean"},
             "preserve_session_config": {"type": "boolean"},
