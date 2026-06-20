@@ -4,6 +4,7 @@ import traceback
 from batch_manager.batch_data_manager import batch_data_manager
 from batch_manager.analyzing.analyzer import analyzer
 from batch_manager.services.dataframe_workflow import create_dataframe_result
+from batch_manager.services.graph_workflow import fetch_graph_result
 from batch_manager.services.str_link_analysis_workflow import run_str_link_analysis
 from linkx_worker.cancellation import DatabaseCancellationEvent
 
@@ -51,6 +52,9 @@ def run_job(job_type, payload):
 
     if job_type in {"str_link_analysis", "STR_link_analysis"}:
         return run_str_link_analysis(payload)
+
+    if job_type in {"graph_fetch", "get_graph"}:
+        return fetch_graph_result(payload)
 
     if job_type in {"analyzer", "analysis", "run_analysis", "realtime_data"}:
         return analyzer(payload)

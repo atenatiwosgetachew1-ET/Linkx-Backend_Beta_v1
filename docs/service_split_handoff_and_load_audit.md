@@ -519,15 +519,31 @@ echo "172.27.23.95:/mnt/linkx-artifacts /mnt/linkx-artifacts nfs defaults,_netde
 sudo systemctl daemon-reload
 ```
 
+
+### Cleanup Neo4j Startup Retry
+
+After reboot testing, cleanup sometimes reached Neo4j before Bolt/routing was fully ready even though the Docker container had started. Cleanup now warms up the Neo4j connection before running Neo4j cleanup or residue scanning.
+
+Defaults:
+
+```env
+LINKX_NEO4J_RETRY_ATTEMPTS=6
+LINKX_NEO4J_RETRY_DELAY_SECONDS=5
+```
+
+These values can remain unset because the code defaults are the same. This prevents transient post-reboot `Unable to retrieve routing information` failures from becoming cleanup audit noise unless Neo4j stays unavailable for roughly 30 seconds.
+
 ### Latest Mandatory Remaining Work
 
-| Priority | Item | Reason |
-|---|---|---|
-| 1 | End-to-end cleanup test after NFS | Prove uploads, dfparts, logs, and Neo4j data disappear after session/window cleanup |
-| 2 | Reboot persistence test for server 3 and server 4 NFS mounts | Ensure worker/cleanup still see shared artifacts after restart/reboot |
-| 3 | Continue moving heavy API routes to worker jobs | API should remain orchestration/auth/socket layer only |
-| 4 | Keep `neo4j_residue_scan` report-only until reviewed over time | Avoid deleting non-LinkX data accidentally |
-| 5 | Eventually add an admin cleanup/audit UI endpoint for manual session cleanup and residue review | Makes operations safer for admins |
+| Priority | Item | Reason | Status |
+|---|---|---|---|
+| 1 | End-to-end cleanup test after NFS | Prove uploads, dfparts, logs, and Neo4j data disappear after session/window cleanup | Done, `1_815493` cleanup removed files and Neo4j count was `0` |
+| 2 | Reboot persistence test for server 3 and server 4 NFS mounts | Ensure worker/cleanup still see shared artifacts after restart/reboot | Done, both NFS mounts and services survived reboot |
+| 3 | Cleanup Neo4j startup retry | Avoid transient post-reboot routing failures before Neo4j is fully ready | Done in cleanup task retry helper |
+| 4 | Remove old local artifact backups | Avoid confusion and stale duplicate files after NFS migration | Done on server 3 and server 4 |
+| 5 | Continue moving heavy API routes to worker jobs | API should remain orchestration/auth/socket layer only | Ongoing, get_graph relationship fetch now queues graph_fetch on worker |
+| 6 | Keep `neo4j_residue_scan` report-only until reviewed over time | Avoid deleting non-LinkX data accidentally | Active, report-only, currently clean |
+| 7 | Eventually add an admin cleanup/audit UI endpoint for manual session cleanup and residue review | Makes operations safer for admins | Pending |
 
 ### Quick Health Checklist
 

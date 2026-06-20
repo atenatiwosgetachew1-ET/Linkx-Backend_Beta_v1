@@ -1249,6 +1249,36 @@ def get_graph():
 
     if action == "relationship":
         try:
+            if _async_worker_jobs_enabled():
+                payload = {
+                    "id": action,
+                    "source_id": source_id,
+                    "relationship": data["relationship"],
+                    "session_id": source_id,
+                }
+                job = enqueue_worker_job(
+                    "graph",
+                    "graph_fetch",
+                    session_id=source_id,
+                    payload=payload,
+                    priority=45,
+                    max_attempts=1,
+                )
+                return jsonify({
+                    "message": "success",
+                    "results": {
+                        "accepted": True,
+                        "status": "queued",
+                        "job_id": job["job_id"],
+                        "job": job,
+                        "source_id": source_id,
+                        "graph_session_id": source_id,
+                        "relationship": data["relationship"],
+                        "queue": "graph",
+                        "poll_url": f"/jobs/{job['job_id']}",
+                    },
+                }), 202
+
             graph = fetch_graph(action, "generate", source_id, data["relationship"], "html")
             if isinstance(graph, tuple):
                 return graph
