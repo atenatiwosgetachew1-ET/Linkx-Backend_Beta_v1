@@ -13,12 +13,10 @@ def _parent_session_id(session_id):
 
 
 def _session_scope(session_id):
+    # Window cleanup must be exact. Including the parent id here makes cleanup
+    # for 1_123 delete sibling windows with parent_session_id=123.
     raw = str(session_id or "")
-    candidates = [raw] if raw else []
-    parent = _parent_session_id(raw)
-    if parent:
-        candidates.append(parent)
-    return list(dict.fromkeys(candidates))
+    return [raw] if raw else []
 
 
 def clean_existing_session(driver, session_id, log_file=None, batch_size=10000, run_id=None, database=None):
