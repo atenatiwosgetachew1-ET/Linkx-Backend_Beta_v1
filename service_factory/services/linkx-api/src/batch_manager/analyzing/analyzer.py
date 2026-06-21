@@ -499,6 +499,11 @@ def neo4j_row_data_injector(payload, batch_size=500):
                 # Indexes
                 session.run(f"CREATE INDEX IF NOT EXISTS FOR (n:Entity) ON (n.`{source_col}`)")
                 session.run(f"CREATE INDEX IF NOT EXISTS FOR (n:Entity) ON (n.`{target_col}`)")
+                try:
+                    session.run(f"CREATE INDEX rel_{relationship_type}_session_id IF NOT EXISTS FOR ()-[r:{relationship_type}]-() ON (r.session_id)")
+                    session.run(f"CREATE INDEX rel_{relationship_type}_run_id IF NOT EXISTS FOR ()-[r:{relationship_type}]-() ON (r.run_id)")
+                except Exception as index_exc:
+                    log_writer(log_file, f"[{datetime.now()}] [Warning] - Relationship index creation skipped: {index_exc}")
 
                 # Delete old relationships
                 session.run("""

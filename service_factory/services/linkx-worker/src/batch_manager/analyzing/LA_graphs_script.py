@@ -5,6 +5,10 @@ import os
 import re
 import time
 from flask import jsonify
+try:
+    from neo4j import Query
+except Exception:
+    Query = None
 
 def build_node_properties_full(node):
     # node is a Neo4j Node object
@@ -125,8 +129,11 @@ def fetch_graph(id,action,source_id,value,batch):
             started_at = time.monotonic()
             timed_out = False
                   
+            query_to_run = Query(query, timeout=fetch_timeout_seconds) if Query else query
+            print(f"[graph_fetch] query start session={source_id} relationship={rel_type} limit={graph_limit} timeout={fetch_timeout_seconds}s", flush=True)
+
             with driver.session() as session:
-                for record in session.run(query, **query_params):
+                for record in session.run(query_to_run, **query_params):
                     if time.monotonic() - started_at >= fetch_timeout_seconds:
                         timed_out = True
                         break
@@ -154,6 +161,7 @@ def fetch_graph(id,action,source_id,value,batch):
                         **dict(r)  # flatten all relationship properties
                     })
 
+            print(f"[graph_fetch] query done session={source_id} relationship={rel_type} nodes={len(nodes)} edges={len(edges)} timed_out={timed_out}", flush=True)
             return {
                 "nodes": list(nodes.values()),
                 "edges": edges,
