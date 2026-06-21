@@ -19,6 +19,8 @@ def _is_spark_df(df):
 
 
 def _append_dataframe(dfs, df, label="dataframe"):
+    if isinstance(df, dict) and df.get("status") == "failed":
+        raise RuntimeError(df.get("message") or f"{label} failed")
     if df is None:
         print(f"{label} returned None, skipping")
         return False
@@ -147,6 +149,8 @@ def load_dataframes_for_create_df(data, session_id):
     }
     print("create_df_payload:", payload)
     df = batch_data_manager(payload)
+    if isinstance(df, dict) and df.get("status") == "failed":
+        return df
     if df is None:
         return []
     if isinstance(df, list):
@@ -160,6 +164,17 @@ def load_dataframes_for_create_df(data, session_id):
 def create_dataframe_result(data, session_id):
     dfs = load_dataframes_for_create_df(data, session_id)
     source_manifest = _source_manifest(data)
+    if isinstance(dfs, dict) and dfs.get("status") == "failed":
+        return {
+            "results": {
+                "source_manifest": source_manifest,
+                "failed_sources": dfs.get("failed_sources", []),
+                "loaded_sources": dfs.get("loaded_sources", []),
+                "loaded_dataframes": dfs.get("loaded_dataframes", 0),
+            },
+            "message": dfs.get("message") or "Selected dataframe sources failed",
+            "status": "failed",
+        }, 400
     if not dfs:
         return {
             "results": {"source_manifest": source_manifest, "loaded_dataframes": 0},

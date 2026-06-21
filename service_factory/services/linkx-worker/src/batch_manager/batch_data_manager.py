@@ -72,6 +72,22 @@ def _truthy_config(value):
         return False
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
+
+def _source_failure(source, message, error=None):
+    item = dict(source or {})
+    failure = {
+        "type": item.get("type"),
+        "name": item.get("name") or item.get("filename") or item.get("path"),
+        "path": item.get("path"),
+        "column": item.get("column"),
+        "keyword": item.get("keyword"),
+        "strict": item.get("strict"),
+        "message": message,
+    }
+    if error is not None:
+        failure["error"] = str(error)
+    return failure
+
 def _normalize_raw_hdfs_paths(files, hdfs_uri):
     if not hdfs_uri:
         return files
@@ -377,6 +393,9 @@ def batch_data_manager(payload):
             es_search_endpoint_fuzzy = load_temp_config("search_api_endpoint_es_fuzzy", session_id)   
             dfs = []
             spark = None
+            failed_sources = []
+            loaded_sources = []
+            allow_partial_dataframe = _truthy_config(load_temp_config("allow_partial_dataframe", session_id))
             large_search_backend = str(load_temp_config("large_search_backend", session_id) or "hive").strip().lower()
             elastic_scroll_enabled = _truthy_config(load_temp_config("elastic_scroll_enabled", session_id))
             use_elastic_for_large_search = large_search_backend in {"elastic", "elastic_scroll", "scroll"} or elastic_scroll_enabled
@@ -400,7 +419,8 @@ def batch_data_manager(payload):
                     else:
                         hive_categories.append(file) 
                 else:
-                    print("Error on file type:",file['type'])           
+                    print("Error on file type:",file['type'])
+                    failed_sources.append(_source_failure(file, "Unsupported source type"))           
             # ---------------------------------------------------------------- Raw HDFS files
             if len(hdfs_categories) > 0: #Consists an elastic datas
                 spark_port = load_temp_config("spark_port", session_id)
@@ -409,11 +429,21 @@ def batch_data_manager(payload):
                 print("Consists hdfs file values",hdfs_categories)                               
                 try:
                     df = load_hdfs_files(spark,hdfs_categories)
-                    if df is not None:
+                    if df:
                         print("collecting dfss")
                         dfs.extend(df)
+                        loaded_sources.extend([{
+                            "type": item.get("type"),
+                            "name": item.get("name") or item.get("path"),
+                            "path": item.get("path"),
+                        } for item in hdfs_categories])
+                    else:
+                        for item in hdfs_categories:
+                            failed_sources.append(_source_failure(item, "Raw HDFS source returned no dataframe"))
                 except Exception as e:
-                    print(f"Error during hdfs raw file fetch: {e}")                    
+                    print(f"Error during hdfs raw file fetch: {e}")
+                    for item in hdfs_categories:
+                        failed_sources.append(_source_failure(item, "Raw HDFS source failed", e))                    
             # ---------------------------------------------------------------- Elastic DFs (default limit 100,000)
             if len(elastic_categories) > 0: #Consists an elastic datas
                 print("Consists elastic values",elastic_categories)               
@@ -470,8 +500,12 @@ def batch_data_manager(payload):
                             )
                         if df is not None:
                             dfs.append(df)
+                            loaded_sources.append(_source_failure(file, "loaded"))
+                        else:
+                            failed_sources.append(_source_failure(file, "Elastic source returned no dataframe"))
                     except Exception as e:
                         print(f"Error during es fetch: {e}")
+                        failed_sources.append(_source_failure(file, "Elastic source failed", e))
             # ---------------------------------------------------------------- Hive DFs (Results above the limit 100,000)
             if len(hive_categories) > 0: #Consists an hive datas 
                 hive_port = load_temp_config("hive_port", session_id)
@@ -504,8 +538,22 @@ def batch_data_manager(payload):
                         )
                         if df is not None:
                             dfs.append(df)
+                            loaded_sources.append(_source_failure(file, "loaded"))
+                        else:
+                            failed_sources.append(_source_failure(file, "Hive source returned no dataframe"))
                     except Exception as e:
                         print(f"Error during hive fetch: {e}")
+                        failed_sources.append(_source_failure(file, "Hive source failed", e))
+
+            if failed_sources and not allow_partial_dataframe:
+                print("Selected dataframe sources failed:", failed_sources)
+                return {
+                    "status": "failed",
+                    "message": "Selected dataframe sources failed. No partial dataframe was saved.",
+                    "failed_sources": failed_sources,
+                    "loaded_sources": loaded_sources,
+                    "loaded_dataframes": len(dfs),
+                }
 
             #---------------------------------------------------------------------- Returning collective Dataframes                        
             return dfs
