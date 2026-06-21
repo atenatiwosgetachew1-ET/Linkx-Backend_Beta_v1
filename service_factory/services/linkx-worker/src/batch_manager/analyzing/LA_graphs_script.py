@@ -1,7 +1,9 @@
 from globals import create_file,save_temp_config,load_temp_config
 from connection_utils import tools
 import json
+import os
 import re
+import time
 from flask import jsonify
 
 def build_node_properties_full(node):
@@ -91,10 +93,18 @@ def fetch_graph(id,action,source_id,value,batch):
             if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", rel_type):
                 return {"nodes": [], "edges": [], "error": "Invalid relationship type"}
             try:
-                graph_limit = int(load_temp_config("graph_fetch_limit", source_id) or 5000)
+                graph_limit = int(
+                    load_temp_config("graph_fetch_limit", source_id)
+                    or os.getenv("LINKX_GRAPH_FETCH_LIMIT", "5000")
+                )
             except (TypeError, ValueError):
                 graph_limit = 5000
-            graph_limit = max(1, min(graph_limit, 30000))
+            graph_limit = max(0, graph_limit)
+            try:
+                fetch_timeout_seconds = int(os.getenv("LINKX_GRAPH_FETCH_TIMEOUT_SECONDS", "90"))
+            except (TypeError, ValueError):
+                fetch_timeout_seconds = 90
+            fetch_timeout_seconds = max(1, fetch_timeout_seconds)
             print("dawg:",source_id)
             # query = f"""
             #         MATCH (a)-[r:{rel_type}]->(b)
@@ -102,15 +112,24 @@ def fetch_graph(id,action,source_id,value,batch):
             #         LIMIT 100000
             #         """
             # Scope graph fetches to the exact window/source instance stored on the relationship.
+            limit_clause = "LIMIT $limit" if graph_limit > 0 else ""
             query = f"""
                     MATCH (a)-[r:{rel_type}]->(b)
                     WHERE r.session_id = $source_id
                     RETURN a, r, b
-                    LIMIT $limit
+                    {limit_clause}
                     """
+            query_params = {"source_id": str(source_id)}
+            if graph_limit > 0:
+                query_params["limit"] = graph_limit
+            started_at = time.monotonic()
+            timed_out = False
                   
             with driver.session() as session:
-                for record in session.run(query, source_id=str(source_id), limit=graph_limit):
+                for record in session.run(query, **query_params):
+                    if time.monotonic() - started_at >= fetch_timeout_seconds:
+                        timed_out = True
+                        break
                     a = record["a"]
                     b = record["b"]
                     r = record["r"]
@@ -137,7 +156,11 @@ def fetch_graph(id,action,source_id,value,batch):
 
             return {
                 "nodes": list(nodes.values()),
-                "edges": edges
+                "edges": edges,
+                "partial": timed_out,
+                "timed_out": timed_out,
+                "fetch_timeout_seconds": fetch_timeout_seconds,
+                "graph_limit": graph_limit,
             }
         except Exception as e:
             print("Relationship graph error:", e)
