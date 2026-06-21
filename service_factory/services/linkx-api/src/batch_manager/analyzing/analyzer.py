@@ -938,16 +938,18 @@ def analyzer(payload):
     session_id = payload.get("session_id")
     stop_event = payload.get("stop_event")
     dataframe_dir = payload.get("dataframe_dir")
+    dataframe_id = payload.get("dataframe_id")
+    expected_rows = payload.get("expected_dataframe_rows")
     spark_conf = payload.get("spark_conf")
 
     # Spark is opt-in; API nodes in the split deployment do not require Java.
     use_spark = bool(payload.get("use_spark", False))
 
-    # Load the DataFrame (handles local/Windows paths safely)
+    print(f"[{session_id}] Loading dataframe id={dataframe_id} path={dataframe_dir} use_spark={use_spark} expected_rows={expected_rows}")
     df = load_file(dataframe_dir, session_id, use_spark=use_spark)
     if df is None:
         print(f"[{session_id}] Failed to load DataFrame from: {dataframe_dir}")
-        return
+        return False
 
     print(f"[{session_id}] DataFrame loaded successfully: {df}")
 

@@ -1,5 +1,6 @@
 import os
 import shutil
+import uuid
 
 import pandas as pd
 from flask import jsonify
@@ -7,6 +8,8 @@ from flask import jsonify
 from batch_manager.batch_data_manager import batch_data_manager
 from batch_manager.processing.merger import merge_pandas_and_save, merge_spark_and_save
 from batch_manager.utils.schema_utils import align_schemas
+from batch_manager.utils.spark_utils import get_spark_session
+from pyspark.sql.functions import col as spark_col
 from batch_manager.utils.artifact_utils import ensure_artifact_dir, register_artifact_dir
 from globals import load_temp_config, save_temp_config
 
@@ -18,13 +21,53 @@ def _is_spark_df(df):
 def _append_dataframe(dfs, df, label="dataframe"):
     if df is None:
         print(f"{label} returned None, skipping")
-        return
+        return False
     if isinstance(df, dict) and "df" in df:
         dfs.append(df["df"])
-    elif hasattr(df, "columns") or isinstance(df, pd.DataFrame) or _is_spark_df(df):
+        return True
+    if hasattr(df, "columns") or isinstance(df, pd.DataFrame) or _is_spark_df(df):
         dfs.append(df)
-    else:
-        print(f"Skipping invalid object returned for {label}:", df)
+        return True
+    print(f"Skipping invalid object returned for {label}:", df)
+    return False
+
+
+def _source_manifest(data):
+    files = data.get("value") or data.get("files") or []
+    if isinstance(files, (str, dict)):
+        files = [files]
+    manifest = []
+    for index, item in enumerate(files or []):
+        if isinstance(item, dict):
+            manifest.append({
+                "index": index,
+                "type": item.get("type"),
+                "name": item.get("name") or item.get("filename") or item.get("path"),
+                "path": item.get("path"),
+                "column": item.get("column"),
+                "keyword": item.get("keyword"),
+                "strict": item.get("strict"),
+                "size": item.get("size"),
+            })
+        else:
+            manifest.append({"index": index, "type": data.get("kind"), "name": str(item)})
+    return manifest
+
+
+def _dataframe_id(data):
+    value = data.get("dataframe_id") or data.get("job_id") or uuid.uuid4().hex
+    return str(value).replace(os.sep, "_")
+
+
+def _spark_as_string(df):
+    return df.select([spark_col(name).cast("string").alias(name) for name in df.columns])
+
+
+def _pandas_as_string(df):
+    copy = df.copy()
+    for name in copy.columns:
+        copy[name] = copy[name].astype(str)
+    return copy
 
 
 def load_dataframes_for_create_df(data, session_id):
@@ -116,8 +159,13 @@ def load_dataframes_for_create_df(data, session_id):
 
 def create_dataframe_result(data, session_id):
     dfs = load_dataframes_for_create_df(data, session_id)
+    source_manifest = _source_manifest(data)
     if not dfs:
-        return {"results": "", "message": "No valid dataframes loaded", "status": "failed"}, 400
+        return {
+            "results": {"source_manifest": source_manifest, "loaded_dataframes": 0},
+            "message": "No valid dataframes loaded",
+            "status": "failed",
+        }, 400
 
     try:
         all_columns = set()
@@ -129,48 +177,76 @@ def create_dataframe_result(data, session_id):
         pandas_dfs = [df for df in aligned if isinstance(df, pd.DataFrame)]
         spark_dfs = [df for df in aligned if _is_spark_df(df)]
 
+        dataframe_id = _dataframe_id(data)
         path_to_save = ensure_artifact_dir("dfparts")
-        folder_name = f"merged_dfpart_{session_id}"
+        folder_name = f"merged_dfpart_{session_id}_{dataframe_id}"
         target_folder = os.path.join(path_to_save, folder_name)
         if os.path.exists(target_folder):
             try:
                 shutil.rmtree(target_folder)
-                print("Deleted old folder:", target_folder)
+                print("Deleted existing dataframe version folder:", target_folder)
             except Exception as e:
-                print("Failed deleting session folder:", e)
+                print("Failed deleting dataframe version folder:", e)
 
-        if pandas_dfs:
-            merged_pandas = merge_pandas_and_save(pandas_dfs, path_to_save, session_id)
-            if merged_pandas is None:
-                return {"results": "", "message": "Failed to merge pandas DFs!", "status": "failed"}, 400
-            num_rows_pandas = len(merged_pandas)
-            columns_pandas = list(merged_pandas.columns)
-        else:
-            num_rows_pandas = 0
-            columns_pandas = []
+        use_spark_output = bool(spark_dfs)
+        if spark_dfs and pandas_dfs:
+            spark = get_spark_session()
+            spark_dfs = [_spark_as_string(df) for df in spark_dfs]
+            for pdf in pandas_dfs:
+                if not pdf.empty:
+                    spark_dfs.append(spark.createDataFrame(_pandas_as_string(pdf)))
+            pandas_dfs = []
 
         if spark_dfs:
-            merged_spark = merge_spark_and_save(spark_dfs, path_to_save, session_id)
+            merged_spark = merge_spark_and_save(spark_dfs, path_to_save, session_id, folder_name=folder_name)
             if merged_spark is None:
                 return {"results": "", "message": "Failed to merge Spark DFs!", "status": "failed"}, 400
-            num_rows_spark = merged_spark.count()
-            columns_spark = merged_spark.columns
+            total_rows = merged_spark.count()
+            final_columns = list(merged_spark.columns)
+        elif pandas_dfs:
+            merged_pandas = merge_pandas_and_save(pandas_dfs, path_to_save, session_id, folder_name=folder_name)
+            if merged_pandas is None:
+                return {"results": "", "message": "Failed to merge pandas DFs!", "status": "failed"}, 400
+            total_rows = len(merged_pandas)
+            final_columns = list(merged_pandas.columns)
         else:
-            num_rows_spark = 0
-            columns_spark = []
+            return {"results": "", "message": "No supported dataframe types loaded", "status": "failed"}, 400
 
-        register_artifact_dir(target_folder, "dfpart", session_id=session_id, metadata={"kind": data.get("kind")})
+        artifact_id = register_artifact_dir(
+            target_folder,
+            "dfpart",
+            session_id=session_id,
+            job_id=data.get("job_id"),
+            metadata={
+                "kind": data.get("kind"),
+                "dataframe_id": dataframe_id,
+                "row_count": total_rows,
+                "columns": final_columns,
+                "source_manifest": source_manifest,
+                "loaded_dataframes": len(dfs),
+                "use_spark": use_spark_output,
+            },
+        )
 
-        final_columns = list(set(columns_pandas + list(columns_spark)))
-        total_rows = num_rows_pandas + num_rows_spark
         save_temp_config("dataframe_ready", True, session_id)
         save_temp_config("active_dataframe_kind", data.get("kind"), session_id)
+        save_temp_config("active_dataframe_id", dataframe_id, session_id)
+        save_temp_config("active_dataframe_dir", target_folder, session_id)
+        save_temp_config("active_dataframe_rows", total_rows, session_id)
+        save_temp_config("active_dataframe_columns", final_columns, session_id)
+        save_temp_config("active_dataframe_use_spark", use_spark_output, session_id)
+        save_temp_config("active_dataframe_source_manifest", source_manifest, session_id)
 
         return {
             "results": {
+                "dataframe_id": dataframe_id,
+                "dataframe_dir": target_folder,
+                "artifact_id": artifact_id,
                 "columns": final_columns,
                 "num_columns": len(final_columns),
                 "num_rows": total_rows,
+                "loaded_dataframes": len(dfs),
+                "source_manifest": source_manifest,
                 "storage_url": load_temp_config("active_storage_address", session_id),
                 "broker_url": load_temp_config("active_kafka_adress", session_id),
                 "tool": load_temp_config("active_tool", session_id),

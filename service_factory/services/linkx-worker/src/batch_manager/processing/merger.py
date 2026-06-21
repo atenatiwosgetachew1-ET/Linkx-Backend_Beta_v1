@@ -7,7 +7,7 @@ import time
 # ---------------------------------------------
 # SPARK MERGE + SAVE WITH EXCEPTION HANDLING
 # ---------------------------------------------
-def merge_spark_and_save(dfs: list[SparkDF], base_path: str, session_id: str):
+def merge_spark_and_save(dfs: list[SparkDF], base_path: str, session_id: str, folder_name: str | None = None):
     print("merge_spark_and_save:", session_id)
     try:
         # Empty list check
@@ -25,7 +25,7 @@ def merge_spark_and_save(dfs: list[SparkDF], base_path: str, session_id: str):
             return None
 
         # Resolve output folder
-        folder_name = f"merged_dfpart_{session_id}"
+        folder_name = folder_name or f"merged_dfpart_{session_id}"
 
         try:
             local_dir = os.path.abspath(os.path.join(base_path, folder_name))
@@ -54,7 +54,7 @@ def merge_spark_and_save(dfs: list[SparkDF], base_path: str, session_id: str):
 # ---------------------------------------------
 # PANDAS MERGE + SAVE WITH EXCEPTION HANDLING
 # ---------------------------------------------
-def merge_pandas_and_save(dfs: list[pd.DataFrame], base_path: str, session_id: str):
+def merge_pandas_and_save(dfs: list[pd.DataFrame], base_path: str, session_id: str, folder_name: str | None = None):
     """
     Merge pandas dataframes, harmonize dtypes, and save to parquet:
         merged_dfpart_<session_id>/<session_id>.parquet
@@ -84,7 +84,7 @@ def merge_pandas_and_save(dfs: list[pd.DataFrame], base_path: str, session_id: s
             print("[ERROR] Failed harmonizing dtypes:", e, flush=True)
             return None
 
-        folder_name = f"merged_dfpart_{session_id}"
+        folder_name = folder_name or f"merged_dfpart_{session_id}"
         try:
             output_dir = os.path.join(base_path, folder_name)
             print(f"[pandas_merge] mkdir start output_dir={output_dir}", flush=True)

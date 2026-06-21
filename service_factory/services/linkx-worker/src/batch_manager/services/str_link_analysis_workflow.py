@@ -73,7 +73,10 @@ def _base_analyzer_payload(session_id, credentials):
         "id": "batch_data",
         "type": "new",
         "session_id": session_id,
-        "dataframe_dir": os.path.join(ensure_artifact_dir("dfparts"), f"merged_dfpart_{session_id}"),
+        "dataframe_dir": load_temp_config("active_dataframe_dir", session_id) or os.path.join(ensure_artifact_dir("dfparts"), f"merged_dfpart_{session_id}"),
+        "dataframe_id": load_temp_config("active_dataframe_id", session_id),
+        "expected_dataframe_rows": load_temp_config("active_dataframe_rows", session_id),
+        "use_spark": bool(load_temp_config("active_dataframe_use_spark", session_id)),
         "spark_conf": {
             "storage_ip": _config_value(session_id, "active_storage_address"),
             "spark_port": _config_value(session_id, "spark_port"),

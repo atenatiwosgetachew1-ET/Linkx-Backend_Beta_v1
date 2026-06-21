@@ -170,11 +170,19 @@ def batch_data_manager(payload):
         else:
             payload["id"]="batch_data"
             payload["type"]="new"
-            #Loading the merged parquet files onto spark
-            directory = os.path.join(ensure_artifact_dir("dfparts"), "merged_dfpart_" + session_id) #Pass only the directory (loads all the files inside it)
-            #dataframe=load_file(directory,session_id,use_spark=True)
-            #print(dataframe)
-            payload["dataframe_dir"]=directory
+            # Bind ingestion to the dataframe artifact selected/created for this session.
+            # The legacy merged_dfpart_<session_id> path is only a fallback for older data.
+            directory = (
+                payload.get("dataframe_dir")
+                or load_temp_config("active_dataframe_dir", session_id)
+                or os.path.join(ensure_artifact_dir("dfparts"), "merged_dfpart_" + session_id)
+            )
+            payload["dataframe_dir"] = directory
+            payload.setdefault("dataframe_id", load_temp_config("active_dataframe_id", session_id))
+            payload.setdefault("expected_dataframe_rows", load_temp_config("active_dataframe_rows", session_id))
+            payload.setdefault("dataframe_source_manifest", load_temp_config("active_dataframe_source_manifest", session_id))
+            if "use_spark" not in payload:
+                payload["use_spark"] = bool(load_temp_config("active_dataframe_use_spark", session_id))
         spark_port = load_temp_config("spark_port", session_id)
         active_tool = load_temp_config("active_tool",session_id)
         tool_credentials = load_temp_config("tool_credentials",session_id)
@@ -219,14 +227,20 @@ def batch_data_manager(payload):
                 file_info = payload["path"]
                 session_id = payload["session_id"]
 
-                # CASE 1: Processed folder with parquet parts (file_info is dict)
+                # File metadata from the frontend should still resolve to the uploaded file,
+                # not to a previous merged dataframe. Only explicit dataframe references load dfparts.
                 if isinstance(file_info, dict):
-                    folder_path = os.path.join(ensure_artifact_dir("dfparts"), f"merged_dfpart_{session_id}")
-                    df = load_file(folder_path, session_id, use_spark=True)
-                    return df
+                    if file_info.get("artifact_type") in {"dfpart", "dataframe"} and file_info.get("dataframe_dir"):
+                        folder_path = str(file_info.get("dataframe_dir"))
+                        dfparts_root = os.path.abspath(ensure_artifact_dir("dfparts"))
+                        abs_folder = os.path.abspath(folder_path)
+                        if not abs_folder.startswith(dfparts_root + os.sep):
+                            raise ValueError("Invalid dataframe artifact path")
+                        return load_file(abs_folder, session_id, use_spark=True)
+                    file_info = file_info.get("path") or file_info.get("filename") or file_info.get("name")
 
-                # CASE 2: Raw uploaded file (file_info is string) (Freash meat) --------------------------------------
-                elif isinstance(file_info, str):
+                # Raw uploaded file (Freash meat) --------------------------------------
+                if isinstance(file_info, str):
                     filename = file_info
                     # Sanitize incoming filename to match how uploads are saved
                     try:
