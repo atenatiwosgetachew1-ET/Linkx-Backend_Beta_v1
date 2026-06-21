@@ -16,6 +16,8 @@ def fetch_graph_result(payload):
         return {"status": "failed", "message": "unexpected_graph_response", "response": graph}
 
     graph = dict(graph or {})
+    graph.setdefault("nodes", [])
+    graph.setdefault("edges", [])
     graph["file"] = "graphs_template"
     if graph.get("error"):
         graph.setdefault("status", "failed")
@@ -24,10 +26,21 @@ def fetch_graph_result(payload):
         graph.setdefault("status", "succeeded")
         graph.setdefault("message", "success")
 
-    return {
+    result = {
         **graph,
         "source_id": source_id,
         "graph_session_id": source_id,
         "relationship": relationship,
         "graph": graph,
     }
+    result["results"] = {
+        "source_id": source_id,
+        "graph_session_id": source_id,
+        "relationship": relationship,
+        "graph": graph,
+        "nodes": graph.get("nodes", []),
+        "edges": graph.get("edges", []),
+        "status": graph.get("status"),
+        "message": graph.get("message"),
+    }
+    return result
