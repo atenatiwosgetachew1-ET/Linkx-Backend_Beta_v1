@@ -132,7 +132,7 @@ def start_session(payload):
         })
         try:
             result = analyzer(payload)
-            return {"status": "success" if result is True else "finished", "log_file": log_file, "run_id": run_id, "result": result}
+            return {"status": "success" if result is True else "failed", "log_file": log_file, "run_id": run_id, "result": result}
         except Exception as e:
             print(f"[ERROR] Inline worker session failed: {e}")
             return {"status": "failed", "log_file": log_file, "run_id": run_id, "error": str(e)}

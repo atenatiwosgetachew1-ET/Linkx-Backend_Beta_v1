@@ -952,6 +952,19 @@ def analyzer(payload):
         return False
 
     print(f"[{session_id}] DataFrame loaded successfully: {df}")
+    actual_rows = None
+    try:
+        actual_rows = df.count() if hasattr(df, "count") and "pyspark" in str(type(df)).lower() else len(df)
+    except Exception as exc:
+        print(f"[{session_id}] Unable to count loaded DataFrame rows: {exc}")
+    print(f"[{session_id}] Loaded dataframe rows actual={actual_rows} expected={expected_rows} id={dataframe_id} path={dataframe_dir}")
+    try:
+        expected_int = int(expected_rows) if expected_rows not in (None, "", "None") else None
+    except (TypeError, ValueError):
+        expected_int = None
+    if expected_int is not None and actual_rows is not None and int(actual_rows) != expected_int:
+        print(f"[{session_id}] DataFrame row count mismatch: actual={actual_rows} expected={expected_int}")
+        return False
 
     # ---------- Batch Data Processing ----------
     if payload.get("id") == "batch_data" and payload.get("type") == "new":

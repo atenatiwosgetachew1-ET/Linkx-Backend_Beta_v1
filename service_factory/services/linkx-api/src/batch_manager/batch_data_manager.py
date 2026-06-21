@@ -172,13 +172,25 @@ def batch_data_manager(payload):
             payload["type"]="new"
             # Bind ingestion to the dataframe artifact selected/created for this session.
             # The legacy merged_dfpart_<session_id> path is only a fallback for older data.
+            active_dataframe_dir = load_temp_config("active_dataframe_dir", session_id)
+            active_dataframe_id = load_temp_config("active_dataframe_id", session_id)
+            if dataframe_analysis and not payload.get("dataframe_dir") and not active_dataframe_dir:
+                return {
+                    "status": "failed",
+                    "message": "No active dataframe artifact is bound to this session/window. Recreate the dataframe before ingestion.",
+                    "detail": {
+                        "session_id": session_id,
+                        "dataframe_ready": dataframe_ready,
+                        "active_dataframe_kind": active_dataframe_kind,
+                    },
+                }
             directory = (
                 payload.get("dataframe_dir")
-                or load_temp_config("active_dataframe_dir", session_id)
+                or active_dataframe_dir
                 or os.path.join(ensure_artifact_dir("dfparts"), "merged_dfpart_" + session_id)
             )
             payload["dataframe_dir"] = directory
-            payload.setdefault("dataframe_id", load_temp_config("active_dataframe_id", session_id))
+            payload.setdefault("dataframe_id", active_dataframe_id)
             payload.setdefault("expected_dataframe_rows", load_temp_config("active_dataframe_rows", session_id))
             payload.setdefault("dataframe_source_manifest", load_temp_config("active_dataframe_source_manifest", session_id))
             if "use_spark" not in payload:
