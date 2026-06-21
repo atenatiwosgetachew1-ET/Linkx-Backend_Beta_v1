@@ -1,4 +1,6 @@
 import requests
+import os
+import shutil
 import logging
 from pyspark.sql import Row
 import polars as pl
@@ -321,3 +323,159 @@ def load_elastic_rows(API_URL, keyword, search_column, fetch_columns, date=None,
     except requests.exceptions.HTTPError:
         print("error:", "API returned an error",response.text)
         return None
+
+
+def es_keyword_search_spark_chunks(
+    API_URL,
+    keyword,
+    search_column,
+    strict_mood,
+    date_column,
+    spark,
+    chunk_dir,
+    date=None,
+    fetch_columns=None,
+    timeout=30,
+    limit=None,
+    offset=0,
+    batch_size=None,
+):
+    """Fetch Elastic rows into backend-owned parquet chunks and return a Spark DataFrame.
+
+    This is intentionally separate from es_keyword_search so existing pure-Elastic
+    pandas flows keep their behavior. It is used for mixed HDFS/Spark + Elastic
+    dataframe creation to avoid building one huge pandas DataFrame on the driver.
+    """
+    if not search_column or spark is None or not chunk_dir:
+        return None
+
+    if isinstance(search_column, (list, tuple, set)):
+        search_columns = [col for col in search_column if col]
+    else:
+        search_columns = [search_column]
+
+    try:
+        if os.path.exists(chunk_dir):
+            shutil.rmtree(chunk_dir)
+        os.makedirs(chunk_dir, exist_ok=True)
+    except Exception as exc:
+        print("Elastic chunk directory error:", exc)
+        return None
+
+    normalized_fetch = [c.lower() for c in (fetch_columns or [])]
+
+    def page_to_dataframe(page):
+        records = [_record_from_result(r) for r in page or []]
+        records = [record for record in records if record]
+        if not records:
+            return None
+        df = pd.DataFrame(records)
+        df.columns = [c.lower() for c in df.columns]
+        if date and date_column:
+            date_key = str(date_column).lower()
+            if date_key in df.columns:
+                df = df[df[date_key].astype(str).str.startswith(str(date))]
+        if normalized_fetch:
+            existing = [c for c in normalized_fetch if c in df.columns]
+            if not existing:
+                print("No matching columns found for Elastic chunk page")
+                print("DF columns:", df.columns.tolist())
+                print("fetch_columns:", normalized_fetch)
+                return None
+            df = df[existing]
+        if df.empty:
+            return None
+        for col_name in df.columns:
+            df[col_name] = df[col_name].astype(str)
+        return df
+
+    def write_page(page, mode):
+        df = page_to_dataframe(page)
+        if df is None:
+            return 0
+        sdf = spark.createDataFrame(df)
+        sdf.write.mode(mode).parquet(chunk_dir)
+        return len(df)
+
+    total_written = 0
+    last_result = None
+    for column in search_columns:
+        try:
+            if strict_mood:
+                payload = {column: keyword}
+                print("DF payload ES chunk:", payload)
+                response = requests.post(API_URL, json=payload, timeout=timeout)
+                response.raise_for_status()
+                last_result = response.json()
+                written = write_page(_extract_results(last_result), "overwrite")
+                if written:
+                    total_written += written
+                    break
+                continue
+
+            try:
+                total_limit = int(limit) if limit is not None else 100000
+            except (TypeError, ValueError):
+                total_limit = 100000
+            try:
+                page_size = int(batch_size) if batch_size is not None else 10000
+            except (TypeError, ValueError):
+                page_size = 10000
+            page_size = max(1, min(page_size, 10000))
+            try:
+                current_offset = int(offset or 0)
+            except (TypeError, ValueError):
+                current_offset = 0
+
+            scroll_id = None
+            mode = "overwrite"
+            while total_written < total_limit:
+                request_limit = min(page_size, total_limit - total_written)
+                payload = {
+                    column: keyword,
+                    "limit": request_limit,
+                    "offset": current_offset,
+                    "size": request_limit,
+                    "from": current_offset,
+                    "batch_size": request_limit,
+                    "page_size": request_limit,
+                    "scroll_size": request_limit,
+                }
+                if scroll_id:
+                    payload["scroll_id"] = scroll_id
+                print("DF payload ES chunk:", payload)
+                response = requests.post(API_URL, json=payload, timeout=timeout)
+                response.raise_for_status()
+                last_result = response.json()
+                page = _extract_results(last_result)
+                if not page:
+                    break
+                written = write_page(page, mode)
+                if written:
+                    total_written += written
+                    mode = "append"
+                scroll_id = last_result.get("scroll_id") if isinstance(last_result, dict) else None
+                has_more = bool(last_result.get("has_more")) if isinstance(last_result, dict) else False
+                current_offset += len(page)
+                total = last_result.get("total") if isinstance(last_result, dict) else None
+                if len(page) < request_limit and not has_more and not scroll_id:
+                    break
+                if total is not None:
+                    try:
+                        if current_offset >= int(total):
+                            break
+                    except (TypeError, ValueError):
+                        pass
+            if total_written:
+                break
+        except requests.exceptions.HTTPError as exc:
+            text = exc.response.text[:500] if exc.response is not None else ""
+            print("Elastic chunk fetch HTTP error:", exc, text)
+        except Exception as exc:
+            print("Elastic chunk fetch error:", exc)
+
+    if total_written <= 0:
+        print("Elastic chunk fetch produced no rows", API_URL, keyword, search_column, last_result)
+        return None
+    print(f"Elastic chunk fetch wrote {total_written} rows to {chunk_dir}")
+    return spark.read.parquet(chunk_dir)

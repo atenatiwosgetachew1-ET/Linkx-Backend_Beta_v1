@@ -9,7 +9,7 @@ from batch_manager.utils.spark_utils import get_spark_session
 from batch_manager.utils.hdfs_utils import stream_hdfs_metadata,load_hdfs_files
 
 from batch_manager.utils.hive_utils import run_hive_query, hive_keyword_search, load_hive_rows
-from batch_manager.utils.elastic_utils import es_keyword_search
+from batch_manager.utils.elastic_utils import es_keyword_search, es_keyword_search_spark_chunks
 from py4j.java_gateway import java_import
 import os, pickle
 from datetime import datetime, timedelta
@@ -364,6 +364,7 @@ def batch_data_manager(payload):
             es_search_endpoint_strict = load_temp_config("search_api_endpoint_es_strict", session_id)   
             es_search_endpoint_fuzzy = load_temp_config("search_api_endpoint_es_fuzzy", session_id)   
             dfs = []
+            spark = None
             large_search_backend = str(load_temp_config("large_search_backend", session_id) or "hive").strip().lower()
             elastic_scroll_enabled = _truthy_config(load_temp_config("elastic_scroll_enabled", session_id))
             use_elastic_for_large_search = large_search_backend in {"elastic", "elastic_scroll", "scroll"} or elastic_scroll_enabled
@@ -424,18 +425,37 @@ def batch_data_manager(payload):
                         if file.get("large_result_backend") == "elastic_scroll":
                             fetch_limit = load_temp_config("elastic_scroll_limit", session_id) or load_temp_config("dataframes_limit", session_id)
                             fetch_batch_size = load_temp_config("elastic_scroll_batch_size", session_id) or 10000
-                        df = es_keyword_search(
-                            id,
-                            API_URL,
-                            keyword,
-                            search_column,
-                            strict_mood,
-                            date_column,
-                            date,
-                            fetch_columns,
-                            limit=fetch_limit,
-                            batch_size=fetch_batch_size,
-                        )
+                        if spark is not None:
+                            job_id = str(payload.get("job_id") or "no_job")
+                            safe_job_id = re.sub(r"[^0-9A-Za-z_.-]", "_", job_id)
+                            safe_column = re.sub(r"[^0-9A-Za-z_.-]", "_", str(search_column or "elastic"))
+                            chunk_dir = ensure_artifact_dir("dfparts", "elastic_chunks", session_id, f"{safe_job_id}_{safe_column}")
+                            df = es_keyword_search_spark_chunks(
+                                API_URL,
+                                keyword,
+                                search_column,
+                                strict_mood,
+                                date_column,
+                                spark,
+                                chunk_dir,
+                                date=date,
+                                fetch_columns=fetch_columns,
+                                limit=fetch_limit,
+                                batch_size=fetch_batch_size,
+                            )
+                        else:
+                            df = es_keyword_search(
+                                id,
+                                API_URL,
+                                keyword,
+                                search_column,
+                                strict_mood,
+                                date_column,
+                                date,
+                                fetch_columns,
+                                limit=fetch_limit,
+                                batch_size=fetch_batch_size,
+                            )
                         if df is not None:
                             dfs.append(df)
                     except Exception as e:
