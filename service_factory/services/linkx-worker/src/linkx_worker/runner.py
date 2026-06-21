@@ -2,8 +2,10 @@ import argparse
 import json
 import multiprocessing
 import os
+import pickle
 import queue as queue_module
 import socket
+import tempfile
 import time
 from datetime import datetime, timezone
 
@@ -174,11 +176,47 @@ def _jsonable(value):
         return repr(value)
 
 
+def _result_dir():
+    path = os.getenv("WORKER_RESULT_DIR", "/tmp/linkx-worker-results")
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    return path
+
+
+def _write_child_result(result):
+    fd, path = tempfile.mkstemp(prefix="job-result-", suffix=".pickle", dir=_result_dir())
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            pickle.dump(result, fh, protocol=pickle.HIGHEST_PROTOCOL)
+        return path
+    except Exception:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        raise
+
+
+def _read_result_file(path):
+    try:
+        with open(path, "rb") as fh:
+            return pickle.load(fh)
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
 def _job_child_main(job_type, payload, result_queue):
     try:
-        result_queue.put(run_job_safely(job_type, payload))
+        result_path = _write_child_result(run_job_safely(job_type, payload))
+        result_queue.put({"result_path": result_path})
     except BaseException as exc:
-        result_queue.put((False, None, {"error": str(exc)}))
+        try:
+            result_path = _write_child_result((False, None, {"error": str(exc)}))
+            result_queue.put({"result_path": result_path})
+        except BaseException:
+            result_queue.put({"inline_result": (False, None, {"error": str(exc)})})
 
 
 def _terminate_child(process, grace_seconds=5.0):
@@ -220,9 +258,14 @@ def _read_child_result(active_job):
     result_queue = active_job["result_queue"]
     process.join()
     try:
-        return result_queue.get_nowait()
+        message = result_queue.get_nowait()
     except queue_module.Empty:
         return False, None, {"error": f"worker_child_exited:{process.exitcode}"}
+    if isinstance(message, dict) and message.get("result_path"):
+        return _read_result_file(message["result_path"])
+    if isinstance(message, dict) and "inline_result" in message:
+        return message["inline_result"]
+    return message
 
 
 def _mark_running(conn, job):
