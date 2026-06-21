@@ -91,6 +91,52 @@ def claim_job(conn, queues, worker_name):
         return job
 
 
+def graph_stale_seconds():
+    try:
+        return int(os.getenv("WORKER_GRAPH_STALE_SECONDS", "300"))
+    except (TypeError, ValueError):
+        return 300
+
+
+def recover_stale_graph_jobs(conn, queues, worker_name):
+    if "graph" not in queues:
+        return 0
+    stale_seconds = graph_stale_seconds()
+    if stale_seconds <= 0:
+        return 0
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE jobs
+            SET status = 'failed',
+                finished_at = NOW(),
+                locked_by = NULL,
+                locked_at = NULL,
+                error_message = 'stale graph_fetch recovered by worker'
+            WHERE queue_name = 'graph'
+              AND job_type = 'graph_fetch'
+              AND status = 'running'
+              AND started_at < NOW() - (%s * INTERVAL '1 second')
+            RETURNING id::text, session_id
+            """,
+            (stale_seconds,),
+        )
+        rows = cur.fetchall()
+        for job_id, session_id in rows:
+            emit_event(
+                cur,
+                {"id": job_id, "session_id": session_id},
+                "job_failed",
+                "stale graph_fetch recovered by worker",
+                {"worker": worker_name, "stale_seconds": stale_seconds},
+            )
+        conn.commit()
+        if rows:
+            print(f"[worker] recovered stale graph_fetch jobs count={len(rows)}", flush=True)
+        return len(rows)
+
+
 def finish_job(conn, job, ok, result=None, error=None):
     with conn.cursor() as cur:
         if ok:
@@ -161,7 +207,12 @@ def start_job_process(job):
         args=(job["job_type"], job["payload"], result_queue),
     )
     process.start()
-    return {"job": job, "process": process, "result_queue": result_queue}
+    return {
+        "job": job,
+        "process": process,
+        "result_queue": result_queue,
+        "started_monotonic": time.monotonic(),
+    }
 
 
 def _read_child_result(active_job):
@@ -211,14 +262,40 @@ def run_loop(queues, poll_interval, once=False, concurrency=1):
     concurrency = max(1, int(concurrency or 1))
     active_jobs = []
     print(f"[worker] starting {worker_name} queues={queues} concurrency={concurrency}", flush=True)
+    last_stale_recovery = 0.0
     while True:
         with connect() as conn:
+            now_monotonic = time.monotonic()
+            if now_monotonic - last_stale_recovery >= 30:
+                recover_stale_graph_jobs(conn, queues, worker_name)
+                last_stale_recovery = now_monotonic
+
             # First, free slots by handling completed or cancelled child jobs.
             for active_job in list(active_jobs):
                 job = active_job["job"]
                 process = active_job["process"]
                 if process.is_alive():
-                    if is_cancel_requested(conn, session_id=job.get("session_id"), job_id=job.get("id")):
+                    stale_seconds = graph_stale_seconds()
+                    elapsed = time.monotonic() - float(active_job.get("started_monotonic") or 0)
+                    if (
+                        job.get("queue_name") == "graph"
+                        and job.get("job_type") == "graph_fetch"
+                        and stale_seconds > 0
+                        and elapsed > stale_seconds
+                    ):
+                        _terminate_child(process)
+                        finish_job(
+                            conn,
+                            job,
+                            False,
+                            error={
+                                "error": "graph_fetch timed out",
+                                "stale_seconds": stale_seconds,
+                            },
+                        )
+                        active_jobs.remove(active_job)
+                        print(f"[worker] timed out graph_fetch job_id={job['id']}", flush=True)
+                    elif is_cancel_requested(conn, session_id=job.get("session_id"), job_id=job.get("id")):
                         _cancel_job(conn, job, active_job=active_job)
                         active_jobs.remove(active_job)
                     else:
