@@ -481,12 +481,15 @@ def es_keyword_search_spark_chunks(
         return None
 
     try:
+        local_chunk_dir = os.path.abspath(chunk_dir)
+        os.makedirs(local_chunk_dir, exist_ok=True)
+        spark_chunk_uri = "file:///" + local_chunk_dir.replace("\\", "/")
         merged = page_spark_dfs[0]
         for page_df in page_spark_dfs[1:]:
             merged = merged.unionByName(page_df, allowMissingColumns=True)
-        merged.write.mode("overwrite").parquet(chunk_dir)
-        print(f"Elastic chunk fetch wrote {total_written} rows to {chunk_dir}")
-        return spark.read.parquet(chunk_dir)
+        merged.write.mode("overwrite").parquet(spark_chunk_uri)
+        print(f"Elastic chunk fetch wrote {total_written} rows to {local_chunk_dir}")
+        return spark.read.parquet(spark_chunk_uri)
     except Exception as exc:
         print("Elastic chunk final write/read error:", exc)
         return None
