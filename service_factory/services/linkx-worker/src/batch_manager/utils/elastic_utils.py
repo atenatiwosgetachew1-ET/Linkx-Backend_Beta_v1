@@ -389,12 +389,14 @@ def es_keyword_search_spark_chunks(
             df[col_name] = df[col_name].astype(str)
         return df
 
+    page_spark_dfs = []
+
     def write_page(page, mode):
         df = page_to_dataframe(page)
         if df is None:
             return 0
         sdf = spark.createDataFrame(df)
-        sdf.write.mode(mode).parquet(chunk_dir)
+        page_spark_dfs.append(sdf)
         return len(df)
 
     total_written = 0
@@ -474,8 +476,17 @@ def es_keyword_search_spark_chunks(
         except Exception as exc:
             print("Elastic chunk fetch error:", exc)
 
-    if total_written <= 0:
+    if total_written <= 0 or not page_spark_dfs:
         print("Elastic chunk fetch produced no rows", API_URL, keyword, search_column, last_result)
         return None
-    print(f"Elastic chunk fetch wrote {total_written} rows to {chunk_dir}")
-    return spark.read.parquet(chunk_dir)
+
+    try:
+        merged = page_spark_dfs[0]
+        for page_df in page_spark_dfs[1:]:
+            merged = merged.unionByName(page_df, allowMissingColumns=True)
+        merged.write.mode("overwrite").parquet(chunk_dir)
+        print(f"Elastic chunk fetch wrote {total_written} rows to {chunk_dir}")
+        return spark.read.parquet(chunk_dir)
+    except Exception as exc:
+        print("Elastic chunk final write/read error:", exc)
+        return None
