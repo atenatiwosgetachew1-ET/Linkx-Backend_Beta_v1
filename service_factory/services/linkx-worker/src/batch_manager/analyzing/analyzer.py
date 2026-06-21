@@ -152,7 +152,7 @@ def _stamp_graph_ownership(driver, session_id, run_id=None, batch_id=None):
             """
             MATCH (n)
             WHERE n.session_id = $session_id
-               OR n.parent_session_id = $parent_session_id
+               OR ($run_id IS NOT NULL AND n.run_id = $run_id)
                OR ($batch_id IS NOT NULL AND n.batch_id = $batch_id)
                OR coalesce(n.batch_id, '') STARTS WITH $batch_prefix
             SET n.created_by = coalesce(n.created_by, 'linkx'),
@@ -172,7 +172,7 @@ def _stamp_graph_ownership(driver, session_id, run_id=None, batch_id=None):
             """
             MATCH ()-[r]->()
             WHERE r.session_id = $session_id
-               OR r.parent_session_id = $parent_session_id
+               OR ($run_id IS NOT NULL AND r.run_id = $run_id)
                OR ($batch_id IS NOT NULL AND r.batch_id = $batch_id)
                OR coalesce(r.batch_id, '') STARTS WITH $batch_prefix
             SET r.created_by = coalesce(r.created_by, 'linkx'),
@@ -449,11 +449,19 @@ def neo4j_row_data_injector(payload, batch_size=500):
                 "weight": 0
             })
 
+            scanned_rows = 0
+            skipped_blank = 0
+            skipped_self = 0
             for row_batch in _iter_dataframe_row_batches(df, batch_size):
                 for raw_row in row_batch:
+                    scanned_rows += 1
                     source_value = _neo4j_property_value(raw_row.get(source_col))
                     target_value = _neo4j_property_value(raw_row.get(target_col))
-                    if source_value == "" or target_value == "" or source_value == target_value:
+                    if source_value == "" or target_value == "":
+                        skipped_blank += 1
+                        continue
+                    if source_value == target_value:
+                        skipped_self += 1
                         continue
 
                     row_dict = _relationship_node_props(_clean_neo4j_props(sanitize_props(raw_row)))
@@ -477,6 +485,11 @@ def neo4j_row_data_injector(payload, batch_size=500):
                 })
 
             total_rels = len(rels)
+            log_writer(
+                log_file,
+                f"[{datetime.now()}] [Info] - Source/Target rows scanned={scanned_rows}, "
+                f"unique_pairs={total_rels}, skipped_blank={skipped_blank}, skipped_self={skipped_self}"
+            )
             log_writer(log_file, f"[{datetime.now()}] [Info] - {total_rels} weighted relationships collected")
 
             if session_id in _session_store:
@@ -512,7 +525,8 @@ def neo4j_row_data_injector(payload, batch_size=500):
                     grouped_by_source[r["source"]].append(r)
 
                 # ---- PROCESS EACH SOURCE SEPARATELY ----
-                for source_value, source_rows in grouped_by_source.items():
+                for source_value in sorted(grouped_by_source.keys()):
+                    source_rows = grouped_by_source[source_value]
 
                     for i in range(0, len(source_rows), batch_size):
 
