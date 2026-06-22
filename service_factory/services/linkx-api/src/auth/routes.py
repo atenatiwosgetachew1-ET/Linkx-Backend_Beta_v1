@@ -1,5 +1,8 @@
 import hmac
 import os
+import time
+from collections import defaultdict, deque
+from functools import wraps
 
 from flask import Blueprint, jsonify, request
 
@@ -30,6 +33,35 @@ from session_config_store import get_user_preferences, save_user_preferences
 
 
 auth_api = Blueprint("auth_api", __name__)
+
+
+_RATE_LIMIT_BUCKETS = defaultdict(deque)
+
+
+def _rate_limited(name, *, limit_env, window_env, default_limit, default_window):
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            limit = _env_int(limit_env, default_limit)
+            window_seconds = _env_int(window_env, default_window)
+            if limit <= 0 or window_seconds <= 0:
+                return fn(*args, **kwargs)
+            client_ip = request.remote_addr or "unknown"
+            key = (name, client_ip)
+            now = time.monotonic()
+            bucket = _RATE_LIMIT_BUCKETS[key]
+            cutoff = now - window_seconds
+            while bucket and bucket[0] <= cutoff:
+                bucket.popleft()
+            if len(bucket) >= limit:
+                retry_after = max(1, int(window_seconds - (now - bucket[0])))
+                response = jsonify({"message": "rate_limited", "retry_after": retry_after})
+                response.headers["Retry-After"] = str(retry_after)
+                return response, 429
+            bucket.append(now)
+            return fn(*args, **kwargs)
+        return wrapper
+    return decorator
 
 
 def _env_int(name, default):
@@ -187,6 +219,7 @@ def idle_timeout():
 
 
 @auth_api.route("/login", methods=["POST"])
+@_rate_limited("auth_login", limit_env="LINKX_LOGIN_RATE_LIMIT", window_env="LINKX_LOGIN_RATE_WINDOW_SECONDS", default_limit=5, default_window=60)
 @validate_json_payload(COMMON_SCHEMAS["login"])
 def login():
     data = validated_json()
@@ -208,6 +241,7 @@ def login():
 
 
 @auth_api.route("/service-token", methods=["POST"])
+@_rate_limited("auth_service_token", limit_env="LINKX_SERVICE_TOKEN_RATE_LIMIT", window_env="LINKX_SERVICE_TOKEN_RATE_WINDOW_SECONDS", default_limit=10, default_window=60)
 @validate_json_payload(COMMON_SCHEMAS["service_token"])
 def service_token():
     data = validated_json()
@@ -228,6 +262,7 @@ def service_token():
 
 
 @auth_api.route("/parent-token", methods=["POST"])
+@_rate_limited("auth_parent_token", limit_env="LINKX_PARENT_TOKEN_RATE_LIMIT", window_env="LINKX_PARENT_TOKEN_RATE_WINDOW_SECONDS", default_limit=30, default_window=60)
 @validate_json_payload(COMMON_SCHEMAS["parent_token"])
 def parent_token():
     shared_secret = os.getenv("LINKX_PARENT_SHARED_SECRET")

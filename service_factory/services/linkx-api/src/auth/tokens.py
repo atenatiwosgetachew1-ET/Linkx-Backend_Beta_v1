@@ -13,6 +13,14 @@ TOKEN_MAX_AGE_SECONDS = int(os.getenv("LINKX_AUTH_TOKEN_SECONDS", "3600"))
 SERVICE_TOKEN_MAX_AGE_SECONDS = int(os.getenv("LINKX_SERVICE_TOKEN_SECONDS", "3600"))
 
 
+def _expected_issuer():
+    return os.getenv("LINKX_AUTH_ISSUER") or None
+
+
+def _expected_audience():
+    return os.getenv("LINKX_AUTH_AUDIENCE") or None
+
+
 def _secret_key():
     return str(current_app.config.get("SECRET_KEY") or current_app.secret_key).encode("utf-8")
 
@@ -52,6 +60,20 @@ def _jwt_decode(token):
         exp = payload.get("exp")
         if exp is not None and int(exp) < int(time.time()):
             return None
+
+        expected_issuer = _expected_issuer()
+        if expected_issuer and payload.get("iss") != expected_issuer:
+            return None
+
+        expected_audience = _expected_audience()
+        if expected_audience:
+            audience = payload.get("aud")
+            if isinstance(audience, list):
+                if expected_audience not in audience:
+                    return None
+            elif audience != expected_audience:
+                return None
+
         return payload
     except Exception:
         return None
@@ -67,6 +89,12 @@ def create_access_token(user):
         "exp": now + TOKEN_MAX_AGE_SECONDS,
         "issued_at": datetime.now(timezone.utc).isoformat(),
     }
+    issuer = _expected_issuer()
+    audience = _expected_audience()
+    if issuer:
+        payload["iss"] = issuer
+    if audience:
+        payload["aud"] = audience
     return _jwt_encode(payload)
 
 
@@ -80,6 +108,12 @@ def create_service_token(service):
         "exp": now + SERVICE_TOKEN_MAX_AGE_SECONDS,
         "issued_at": datetime.now(timezone.utc).isoformat(),
     }
+    issuer = _expected_issuer()
+    audience = _expected_audience()
+    if issuer:
+        payload["iss"] = issuer
+    if audience:
+        payload["aud"] = audience
     return _jwt_encode(payload)
 
 

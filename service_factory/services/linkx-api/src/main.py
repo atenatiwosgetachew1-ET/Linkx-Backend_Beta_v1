@@ -43,7 +43,7 @@ from api.ai_service import ai_service_api
 from session_config_store import create_session_config, duplicate_window_config, get_user_config, get_workspace_layout, save_user_config, save_workspace_layout
 from service_orchestration import enqueue_cleanup_run, enqueue_worker_job, get_active_session_lock, get_any_active_actor_lock, get_worker_job, list_cleanup_audit, public_lock_state, reactivate_analysis_session, request_session_cancellation
 from auth.decorators import auth_required, current_actor_from_request, permission_required
-from auth.repository import bind_analysis_session_actor, can_access_analysis_session_actor, get_postgres_connection
+from auth.repository import actor_has_permission, bind_analysis_session_actor, can_access_analysis_session_actor, get_postgres_connection
 from auth.routes import auth_api
 from security.payload_validation import (
     COMMON_SCHEMAS,
@@ -80,6 +80,47 @@ app.register_blueprint(auth_api, url_prefix="/auth")
 # Register external API blueprint
 app.register_blueprint(STR_link_analysis_api, url_prefix="/api")
 app.register_blueprint(ai_service_api, url_prefix="/ai")
+
+
+@app.after_request
+def apply_security_headers(response):
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", os.getenv("LINKX_FRAME_OPTIONS", "DENY"))
+    response.headers.setdefault("Referrer-Policy", os.getenv("LINKX_REFERRER_POLICY", "no-referrer"))
+    response.headers.setdefault("Permissions-Policy", os.getenv("LINKX_PERMISSIONS_POLICY", "camera=(), microphone=(), geolocation=()"))
+    csp = os.getenv("LINKX_CONTENT_SECURITY_POLICY")
+    if csp:
+        response.headers.setdefault("Content-Security-Policy", csp)
+    if os.getenv("LINKX_ENABLE_HSTS", "").lower() in {"1", "true", "yes", "on"}:
+        response.headers.setdefault("Strict-Transport-Security", os.getenv("LINKX_HSTS_VALUE", "max-age=31536000; includeSubDomains"))
+    if request.path.startswith("/auth/"):
+        response.headers.setdefault("Cache-Control", "no-store")
+        response.headers.setdefault("Pragma", "no-cache")
+    return response
+
+
+@app.errorhandler(413)
+def request_entity_too_large(_exc):
+    return jsonify({"message": "payload_too_large"}), 413
+
+
+@app.errorhandler(500)
+def internal_server_error(exc):
+    current_app.logger.exception("unhandled API error")
+    return jsonify({"message": "internal_server_error"}), 500
+
+
+def _permission_denied(permission):
+    return jsonify({"message": "forbidden", "permission": permission}), 403
+
+
+def _require_permission(permission):
+    actor = current_actor_from_request()
+    if not actor:
+        return jsonify({"message": "unauthorized"}), 401
+    if not actor_has_permission(actor, permission):
+        return _permission_denied(permission)
+    return None
 
 
 
@@ -198,7 +239,7 @@ def enforce_locked_session():
         return jsonify({
             "message": "lock_state_unavailable",
             "error": "Unable to verify session lock state.",
-            "detail": str(exc),
+            "detail": "lock_state_check_failed",
         }), 503
 
     if lock:
@@ -467,7 +508,7 @@ def admin_cleanup_audit():
         return jsonify({"message": "success", "results": result}), 200
     except Exception as exc:
         current_app.logger.warning("cleanup audit query failed: %s", exc)
-        return jsonify({"message": "audit_query_failed", "detail": str(exc)}), 500
+        return jsonify({"message": "audit_query_failed"}), 500
 
 
 @app.route('/admin/cleanup/session', methods=['POST'])
@@ -507,7 +548,7 @@ def admin_cleanup_session():
         )
     except Exception as exc:
         current_app.logger.warning("admin cleanup enqueue failed: %s", exc)
-        return jsonify({"message": "cleanup_enqueue_failed", "detail": str(exc)}), 500
+        return jsonify({"message": "cleanup_enqueue_failed"}), 500
 
     return jsonify({
         "message": "success",
@@ -667,6 +708,11 @@ def configuration():
         action = "save"
     elif "remove" in action and "rule" in action:
         action = "remove_rule"
+
+    required_permission = "config:read" if action == "load" else "config:write"
+    denied = _require_permission(required_permission)
+    if denied:
+        return denied
 
     if action == "load":
         try:
@@ -1079,6 +1125,7 @@ def _source_window_session_id(data):
 
 @app.route('/close_source_window', methods=['POST'])
 @auth_required
+@permission_required("source:disconnect")
 @validate_json_payload(COMMON_SCHEMAS["close_source_window"])
 def close_source_window():
     data = validated_json() or {}
@@ -1104,7 +1151,7 @@ def close_source_window():
         )
     except Exception as exc:
         print(f"[cleanup] failed to enqueue close_source_window cleanup for {session_id}: {exc}")
-        return jsonify({'status': 'error', 'message': 'cleanup_enqueue_failed', 'detail': str(exc)}), 500
+        return jsonify({'status': 'error', 'message': 'cleanup_enqueue_failed'}), 500
 
     return jsonify({
         'status': 'success',
@@ -1155,7 +1202,6 @@ def upload_batch_files():
 
 @app.route('/live_batch_files', methods=['POST'])
 @auth_required
-@permission_required("analysis:run")
 @validate_json_payload(COMMON_SCHEMAS["live_batch_files"])
 def live_batch_files():
     data = validated_json()
@@ -1164,6 +1210,18 @@ def live_batch_files():
     session_id = data.get('session_id')
     if not action_id or not session_id:
         return jsonify({'results': None, 'message': 'Missing action_id or session_id'}), 400
+
+    permission_by_action = {
+        "search": "batch:query",
+        "create_DF": "batch:upload",
+        "stream": "analysis:run",
+        "end_session": "analysis:run",
+    }
+    required_permission = permission_by_action.get(action_id)
+    if required_permission:
+        denied = _require_permission(required_permission)
+        if denied:
+            return denied
 
     # -----------------------------
     # SEARCH HDFS / HYBRID
@@ -1353,6 +1411,7 @@ def live_batch_files():
 
 @app.route('/graph_link', methods=['POST'])
 @auth_required
+@permission_required("graph:link")
 @validate_json_payload(COMMON_SCHEMAS["graph_link"])
 def graph_link():
     data = validated_json()
@@ -1384,6 +1443,7 @@ def graph_link():
 
 @app.route('/get_graph', methods=['POST'])
 @auth_required
+@permission_required("graph:read")
 @validate_json_payload(COMMON_SCHEMAS["get_graph"])
 def get_graph():
     data = validated_json()
@@ -1443,8 +1503,8 @@ def get_graph():
                 },
             }), 200
         except Exception as e:
-            print(e)
-            return jsonify({'exception': str(e), 'message': 'failed!'}), 500
+            current_app.logger.exception('graph fetch failed')
+            return jsonify({'message': 'failed!', 'error': 'graph_fetch_failed'}), 500
 
     return jsonify({'results': "", 'message': 'failed!'}), 200
 
