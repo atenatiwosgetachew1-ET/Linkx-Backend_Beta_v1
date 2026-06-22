@@ -1,4 +1,6 @@
 import base64
+import hashlib
+import hmac
 import json
 import ipaddress
 import os
@@ -185,6 +187,15 @@ def _verify_es256(signing_input, signature, kid=None):
         raise ParentJwtError("invalid_parent_signature") from exc
 
 
+
+def _verify_hs256(signing_input, signature):
+    secret = os.getenv("LINKX_PARENT_JWT_HS256_SECRET") or ""
+    if not secret:
+        raise ParentJwtError("parent_hs256_secret_not_configured")
+    expected = hmac.new(secret.encode("utf-8"), signing_input, hashlib.sha256).digest()
+    if not hmac.compare_digest(signature, expected):
+        raise ParentJwtError("invalid_parent_signature")
+
 def _expected_roles_from_payload(payload):
     roles = []
     role = payload.get("role")
@@ -204,11 +215,16 @@ def verify_parent_access_token(token):
         raise ParentJwtError("malformed_parent_token") from exc
 
     header = _json_segment(header_segment)
-    if header.get("alg") != "ES256" or header.get("typ") != "JWT":
+    alg = header.get("alg")
+    if header.get("typ") != "JWT" or alg not in {"ES256", "HS256"}:
         raise ParentJwtError("unsupported_parent_token_header")
 
     signing_input = f"{header_segment}.{payload_segment}".encode("ascii")
-    _verify_es256(signing_input, _b64decode(signature_segment), header.get("kid"))
+    signature = _b64decode(signature_segment)
+    if alg == "ES256":
+        _verify_es256(signing_input, signature, header.get("kid"))
+    else:
+        _verify_hs256(signing_input, signature)
 
     payload = _json_segment(payload_segment)
     now = int(time.time())
