@@ -110,7 +110,10 @@ def _jwk_public_key(jwk):
 
 
 def _load_public_key_from_jwks(kid=None):
-    keys = _fetch_jwks()
+    try:
+        keys = _fetch_jwks()
+    except ParentJwtError:
+        keys = None
     if not keys:
         return None
     candidates = []
@@ -141,8 +144,11 @@ def _pem_from_env():
         return pem.replace("\\n", "\n").encode("utf-8")
     path = os.getenv("LINKX_PARENT_JWT_PUBLIC_KEY_FILE")
     if path:
-        with open(path, "rb") as fh:
-            return fh.read()
+        try:
+            with open(path, "rb") as fh:
+                return fh.read()
+        except OSError as exc:
+            raise ParentJwtError("parent_public_key_file_unavailable") from exc
     return b""
 
 
