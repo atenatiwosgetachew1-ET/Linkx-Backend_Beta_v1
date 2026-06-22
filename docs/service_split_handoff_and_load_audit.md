@@ -296,6 +296,76 @@ Deployment touches Server 1 API and Server 3 worker. No database migration is re
 - Cleanup is event-driven plus scheduled. Explicit window close, source disconnect, tool disconnect, idle timeout, abandoned sessions, and cleanup scheduler should remove Neo4j/session/artifact footprints.
 - AI access is now controlled through `/ai/...`, not through database credentials.
 
+## 2026-06-22 Runtime Config Cleanup Note
+
+Server 1 currently has auth-related settings split across multiple runtime layers, which is why the setup can feel duplicated.
+
+Observed sources of configuration:
+- The deployed service unit reads [EnvironmentFile=/opt/linkx-backend-api/.env](../service_factory/services/linkx-api/deploy/systemd/linkx-api.service).
+- The service unit sets `LINKX_CTMS_JWKS_URL` and `LINKX_CTMS_ORIGIN` directly.
+- A systemd drop-in sets `LINKX_PARENT_SHARED_SECRET`.
+- The runtime code reads `LINKX_PARENT_SHARED_SECRET` in [auth/routes.py](../service_factory/services/linkx-api/src/auth/routes.py) and `LINKX_CTMS_JWKS_URL` in [auth/jwks_client.py](../service_factory/services/linkx-api/src/auth/jwks_client.py).
+
+Current behavior:
+- CTMS mode depends on `LINKX_CTMS_JWKS_URL` and `LINKX_CTMS_ORIGIN`.
+- Legacy parent-token mode depends on `LINKX_PARENT_SHARED_SECRET`.
+- If the shared secret is missing, `/auth/parent-token` returns `parent_federation_disabled`.
+- If the request header does not exactly match the shared secret, `/auth/parent-token` returns `unauthorized`.
+
+Cleanup recommendation:
+- Keep CTMS settings in one place only.
+- Keep the parent shared secret in one place only.
+- Remove malformed or duplicated `Environment=` lines from the systemd drop-in.
+- Verify the final runtime env with `systemctl show linkx-api -p Environment` before testing parent-token again.
+
+## 2026-06-22 CTMS Deployment Note
+
+The current Server 1 CTMS rollout failed on startup because the deployed venv did not yet have PyJWT installed. The error surfaced as `ModuleNotFoundError: No module named 'jwt'` while importing [auth/tokens.py](../service_factory/services/linkx-api/src/auth/tokens.py).
+
+Use `python -m pip`, not the missing `pip` entrypoint, when installing into the deployed venv:
+
+```bash
+cd /opt/linkx-backend-update
+sudo git pull
+
+sudo cp /opt/linkx-backend-update/service_factory/services/linkx-api/src/requirements.txt \
+  /opt/linkx-backend-api/src/requirements.txt
+sudo cp /opt/linkx-backend-update/service_factory/services/linkx-api/src/auth/jwks_client.py \
+  /opt/linkx-backend-api/src/auth/jwks_client.py
+sudo cp /opt/linkx-backend-update/service_factory/services/linkx-api/src/auth/tokens.py \
+  /opt/linkx-backend-api/src/auth/tokens.py
+sudo cp /opt/linkx-backend-update/service_factory/services/linkx-api/src/auth/routes.py \
+  /opt/linkx-backend-api/src/auth/routes.py
+sudo cp /opt/linkx-backend-update/service_factory/services/linkx-api/src/main.py \
+  /opt/linkx-backend-api/src/main.py
+sudo cp /opt/linkx-backend-update/service_factory/services/linkx-api/src/security/redaction.py \
+  /opt/linkx-backend-api/src/security/redaction.py
+
+sudo /opt/linkx-backend-api/.venv/bin/python -m pip install 'PyJWT>=2.8.0'
+
+cd /opt/linkx-backend-api/src
+sudo /opt/linkx-backend-api/.venv/bin/python -m py_compile \
+  auth/jwks_client.py auth/tokens.py auth/routes.py main.py
+
+sudo systemctl restart linkx-api
+sudo systemctl status linkx-api --no-pager
+sudo journalctl -u linkx-api -n 50 --no-pager
+```
+
+If the service is stuck in a restart loop, stop it before copying files and clear the failed state first:
+
+```bash
+sudo systemctl stop linkx-api
+sudo systemctl reset-failed linkx-api
+```
+
+The CTMS environment variables remain optional until the parent team provides real values. If they are not available, LinkX should continue using the legacy parent-token path:
+
+```bash
+LINKX_CTMS_JWKS_URL=http://172.27.23.213:3001/.well-known/jwks.json
+LINKX_CTMS_ORIGIN=http://172.27.23.107
+```
+
 
 ## 2026-06-19 Operations Update
 
