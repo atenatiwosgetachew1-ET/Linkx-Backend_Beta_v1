@@ -6,6 +6,9 @@ from flask import Flask, request, jsonify, session, render_template, current_app
 from flask_socketio import SocketIO, emit
 
 import os
+import ipaddress
+import socket
+from urllib.parse import urlparse
 from werkzeug.utils import secure_filename
 import time
 import shutil
@@ -55,10 +58,19 @@ import globals #Globally used by multible pages (functions and variables) #Conta
 
 
 app = Flask(__name__)
-allowed_origins = os.getenv("LINKX_CORS_ORIGINS", "*")
-cors_origins = "*" if allowed_origins == "*" else [origin.strip() for origin in allowed_origins.split(",") if origin.strip()]
+allowed_origins = os.getenv("LINKX_CORS_ORIGINS", "")
+cors_origins = [origin.strip() for origin in allowed_origins.split(",") if origin.strip()]
+if not cors_origins:
+    if os.getenv("LINKX_ALLOW_WILDCARD_CORS", "").lower() in {"1", "true", "yes", "on"}:
+        cors_origins = "*"
+    else:
+        raise RuntimeError("LINKX_CORS_ORIGINS must be configured; set LINKX_ALLOW_WILDCARD_CORS=true only for local development")
 CORS(app, origins=cors_origins)  # Allow configured clients
-app.secret_key = os.getenv("LINKX_FLASK_SECRET_KEY", "dev-only-change-me")
+app.secret_key = os.getenv("LINKX_FLASK_SECRET_KEY")
+if not app.secret_key or app.secret_key == "dev-only-change-me":
+    if os.getenv("LINKX_ALLOW_INSECURE_DEV_SECRET", "").lower() not in {"1", "true", "yes", "on"}:
+        raise RuntimeError("LINKX_FLASK_SECRET_KEY must be set to a strong production secret")
+    app.secret_key = "dev-only-change-me"
 app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("LINKX_MAX_UPLOAD_BYTES", "104857600"))
 socketio = SocketIO(app, cors_allowed_origins=cors_origins, async_mode="eventlet") #Socket listners are found inside 'logger.py' page
 # Register socket
@@ -197,6 +209,39 @@ def enforce_locked_session():
         }), 423
 
     return None
+
+
+def _network_host(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    parsed = urlparse(raw if "://" in raw else f"//{raw}")
+    return (parsed.hostname or raw.split(":", 1)[0]).strip().lower()
+
+
+def _network_target_allowed(value):
+    host = _network_host(value)
+    if not host:
+        return False, "missing_host"
+    allowed_hosts = {h.strip().lower() for h in os.getenv("LINKX_ALLOWED_CONNECT_HOSTS", "").split(",") if h.strip()}
+    if allowed_hosts and host not in allowed_hosts:
+        return False, "host_not_allowed"
+    try:
+        addresses = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    except socket.gaierror:
+        return False, "host_resolution_failed"
+    for info in addresses:
+        ip = ipaddress.ip_address(info[4][0])
+        if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified:
+            return False, "unsafe_host_address"
+    return True, None
+
+
+def _reject_unsafe_network_target(value):
+    allowed, reason = _network_target_allowed(value)
+    if allowed:
+        return None
+    return jsonify({"status": "error", "message": "Connection rejected by security policy.", "detail": reason}), 400
 
 
 def _normalize_neo4j_url(url):
@@ -583,6 +628,7 @@ def account_configuration_save():
 
 
 @app.route('/configuration', methods=['POST'])
+@auth_required
 def configuration():
     data = {}
     files = {}
@@ -768,6 +814,8 @@ def configuration():
         return jsonify({'results': "unknown action", 'message': 'failed!'}), 400
 
 @app.route('/init_source', methods=['POST'])
+@auth_required
+@permission_required("source:create")
 @validate_json_payload(COMMON_SCHEMAS["init_source"])
 def init_source():
     print("Initializing source window....")
@@ -801,6 +849,8 @@ def init_source():
         return jsonify({'results': str(e), 'message': 'failed!'}), 200
 
 @app.route('/connect_to_source', methods=['POST'])
+@auth_required
+@permission_required("source:connect")
 @validate_json_payload(COMMON_SCHEMAS["connect_to_source"])
 def connect_to_source():
     data = validated_json() or {}
@@ -810,6 +860,12 @@ def connect_to_source():
     topic = data.get('topic') or data.get('kafka_topic')
     session_id = data.get('session_id') or data.get('source_id')
     source_mode = data.get('source_mode') or data.get('mode')
+
+    target_to_check = storage or address
+    if target_to_check:
+        blocked = _reject_unsafe_network_target(target_to_check)
+        if blocked:
+            return blocked
 
     if topic and address_type == "api" and not str(address or "").startswith(("http://", "https://")):
         address_type = "broker"
@@ -876,6 +932,8 @@ def connect_to_source():
         return jsonify({'status': 'error', 'message': 'Connection failed!'}), 400
 
 @app.route('/disconnect_source', methods=['POST'])
+@auth_required
+@permission_required("source:disconnect")
 @validate_json_payload(COMMON_SCHEMAS["disconnect_source"])
 def disconnect_source():
     data = validated_json() or {}
@@ -936,6 +994,8 @@ def disconnect_source():
         return jsonify({'status': 'error', 'message': 'Disconnecting failed!'}), 500
 
 @app.route('/connect_to_tool', methods=['POST'])
+@auth_required
+@permission_required("graph:create")
 @validate_json_payload(COMMON_SCHEMAS["connect_to_tool"])
 def connect_to_tool():
     data = validated_json()
@@ -947,6 +1007,10 @@ def connect_to_tool():
     database = data.get('database') or load_temp_config("active_tool_database", session_id)
     if tool_name == "neo4j":
         url = _normalize_neo4j_url(url)
+    if url:
+        blocked = _reject_unsafe_network_target(url)
+        if blocked:
+            return blocked
     payload = {"url": url, "username": username, "password": password, "session_id": session_id}
     if database:
         payload["database"] = database
@@ -966,6 +1030,8 @@ def connect_to_tool():
         return jsonify({'status': 'error', 'message': 'Not connected!'}), 400
 
 @app.route('/disconnect_tool', methods=['POST'])
+@auth_required
+@permission_required("graph:create")
 @validate_json_payload(COMMON_SCHEMAS["disconnect_tool"])
 def disconnect_tool():
     data = validated_json()
@@ -1049,6 +1115,8 @@ def close_source_window():
 
 
 @app.route('/upload_batch_files', methods=['POST'])
+@auth_required
+@permission_required("batch:upload")
 def upload_batch_files():
     if 'file' not in request.files:
         return jsonify({"message": "No file part in the request"}), 400
@@ -1086,6 +1154,8 @@ def upload_batch_files():
     return jsonify({"message": "success", "results": {"session_id": session_id, "files": saved_files}}), 200
 
 @app.route('/live_batch_files', methods=['POST'])
+@auth_required
+@permission_required("analysis:run")
 @validate_json_payload(COMMON_SCHEMAS["live_batch_files"])
 def live_batch_files():
     data = validated_json()
