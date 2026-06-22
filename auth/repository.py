@@ -11,9 +11,18 @@ from batch_manager.utils.postgres_utils import get_postgres_connection
 
 
 ROLE_ALIASES = {
+    # Legacy parent federation role mappings
     "team_leader": "admin",
     "analyst": "analyst",
     "viewer": "viewer",
+    # CTMS role mappings (ES256 JWT)
+    "SUPER_ADMIN": "admin",
+    "HIGHER_OFFICIAL": "admin",
+    "DIRECTOR": "admin",  # No manager role in LinkX, promote to admin
+    "TEAM_LEADER": "admin",  # No manager role in LinkX, promote to admin
+    "ANALYST": "analyst",
+    "VIEWER": "viewer",
+    "DATA_ENCODER": "viewer",
 }
 
 DEFAULT_ROLE_PERMISSIONS = {

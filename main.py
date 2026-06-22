@@ -70,6 +70,28 @@ app.register_blueprint(auth_api, url_prefix="/auth")
 app.register_blueprint(STR_link_analysis_api, url_prefix="/api")
 
 
+# Configure frame embedding and security headers for CTMS integration
+@app.after_request
+def add_security_headers(response):
+    """
+    Add security headers for iframe embedding and CSP.
+    Allows CTMS (172.27.23.107) to embed LinkX frontend in an iframe.
+    """
+    # Allow framing from CTMS frontend
+    ctms_origin = os.getenv("LINKX_CTMS_ORIGIN", "http://172.27.23.107")
+    
+    # CSP frame-ancestors (modern approach, preferred)
+    current_csp = response.headers.get("Content-Security-Policy", "")
+    if "frame-ancestors" not in current_csp:
+        frame_ancestors = f"'self' {ctms_origin}"
+        if current_csp:
+            response.headers["Content-Security-Policy"] = f"{current_csp} frame-ancestors {frame_ancestors};"
+        else:
+            response.headers["Content-Security-Policy"] = f"frame-ancestors {frame_ancestors};"
+    
+    return response
+
+
 
 def _validation_error_response(exc):
     body = {"message": "validation_error", "detail": exc.message}

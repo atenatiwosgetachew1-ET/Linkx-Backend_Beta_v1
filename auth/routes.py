@@ -23,7 +23,7 @@ from .repository import (
     update_user,
     upsert_external_user,
 )
-from .tokens import create_access_token, create_service_token, verify_access_token
+from .tokens import create_access_token, create_service_token, verify_access_token, verify_ctms_token
 from security.payload_validation import COMMON_SCHEMAS, validate_json_payload, validated_json
 
 
@@ -164,6 +164,102 @@ def service_token():
 @auth_api.route("/parent-token", methods=["POST"])
 @validate_json_payload(COMMON_SCHEMAS["parent_token"])
 def parent_token():
+    """
+    Exchange parent (CTMS) credentials for LinkX session token.
+    
+    Supports two modes:
+    1. CTMS Mode (ES256 JWT):
+       - POST with {"access_token": "<CTMS_ES256_JWT>"}
+       - Validates CTMS JWT signature against JWKS endpoint
+       - Extracts identity and roles from JWT claims
+       - Maps CTMS roles to LinkX roles
+    
+    2. Legacy Mode (HMAC-based federation):
+       - POST with {"username": "...", "roles": [...]}
+       - Validates X-Linkx-Parent-Secret header (HMAC)
+       - For backwards compatibility with existing parent projects
+    
+    Returns LinkX HS256 access token on success.
+    """
+    data = validated_json()
+    
+    # Mode 1: CTMS ES256 JWT token
+    if "access_token" in data:
+        return _handle_ctms_token(data.get("access_token"))
+    
+    # Mode 2: Legacy HMAC-based parent federation
+    return _handle_legacy_parent_token(data)
+
+
+def _handle_ctms_token(access_token: str):
+    """Handle CTMS ES256 JWT token exchange."""
+    if not access_token:
+        return jsonify({"error": "access_token is required"}), 400
+    
+    # Verify CTMS token (ES256 JWT)
+    payload = verify_ctms_token(access_token)
+    if not payload:
+        return jsonify({"error": "Invalid parent token"}), 401
+    
+    # Validate token_type
+    if payload.get("token_type") != "access":
+        return jsonify({"error": "Only access tokens accepted"}), 400
+    
+    # Validate exp
+    import time
+    if payload.get("exp") and payload.get("exp") < time.time():
+        return jsonify({"error": "Parent token expired"}), 401
+    
+    # Extract identity
+    sub = payload.get("sub")  # CTMS user UUID
+    if not sub:
+        return jsonify({"error": "Missing user identity (sub)"}), 401
+    
+    # Extract roles from CTMS token
+    ctms_roles = payload.get("roles") or []
+    if isinstance(ctms_roles, str):
+        ctms_roles = [ctms_roles]
+    
+    # Optional: Check permissions array for finer control
+    permissions = payload.get("permissions") or []
+    
+    # Map CTMS roles to LinkX roles
+    linkx_roles = []
+    for role in ctms_roles:
+        role_str = str(role).strip()
+        # Role mapping happens in upsert_external_user via normalize_parent_role
+        linkx_roles.append(role_str)
+    
+    # Create or update LinkX user with CTMS identity
+    username = f"parent:{sub}"  # Prefix to indicate external user
+    display_name = payload.get("name") or sub
+    
+    try:
+        user = upsert_external_user(
+            username,
+            display_name=display_name,
+            parent_roles=linkx_roles,
+        )
+    except Exception as e:
+        from flask import current_app
+        current_app.logger.error(f"Failed to create CTMS user: {e}")
+        return jsonify({"error": "Failed to create session"}), 500
+    
+    return jsonify({
+        "message": "success",
+        "token": create_access_token(user),
+        "actor": public_actor(user),
+        "user": public_actor(user),
+        "parent": {
+            "sub": sub,
+            "role": ctms_roles[0] if ctms_roles else None,
+            "token_type": "access"
+        }
+    }), 200
+
+
+def _handle_legacy_parent_token(data: dict):
+    """Handle legacy HMAC-based parent federation."""
     shared_secret = os.getenv("LINKX_PARENT_SHARED_SECRET")
     if not shared_secret:
         return jsonify({"message": "parent_federation_disabled"}), 503
@@ -172,7 +268,6 @@ def parent_token():
     if not hmac.compare_digest(provided_secret, shared_secret):
         return jsonify({"message": "unauthorized"}), 401
 
-    data = validated_json()
     username = str(data.get("username") or data.get("sub") or "").strip()
     display_name = data.get("display_name") or data.get("name") or username
     roles = data.get("roles") or data.get("parent_roles") or []

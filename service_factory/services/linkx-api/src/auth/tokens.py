@@ -5,8 +5,12 @@ import json
 import os
 import time
 from datetime import datetime, timezone
+from typing import Optional, Dict, Any
 
+import jwt
 from flask import current_app
+
+from .jwks_client import get_ctms_jwks_client
 
 
 TOKEN_MAX_AGE_SECONDS = int(os.getenv("LINKX_AUTH_TOKEN_SECONDS", "3600"))
@@ -128,3 +132,85 @@ def extract_bearer_token(auth_header):
     if not auth_header or not auth_header.startswith(prefix):
         return None
     return auth_header[len(prefix):].strip()
+
+
+def verify_ctms_token(token: str) -> Optional[Dict[str, Any]]:
+    """
+    Verify and decode a CTMS JWT token (ES256 signed).
+    
+    CTMS tokens are signed with ES256 (ECDSA P-256 SHA-256) and must be
+    verified against the CTMS public key fetched from the JWKS endpoint.
+    
+    Validation checks:
+    - Algorithm is ES256 (prevents algorithm confusion attacks)
+    - Signature is valid using CTMS public key
+    - token_type is "access" (rejects refresh tokens)
+    - exp (expiration) is in the future
+    - sub (subject UUID) is present
+    
+    Args:
+        token: The CTMS JWT token string
+    
+    Returns:
+        Decoded token payload (dict) if valid, None if invalid
+    """
+    if not token:
+        return None
+    
+    try:
+        # Decode header without verification to get kid
+        header = jwt.get_unverified_header(token)
+        alg = header.get("alg")
+        kid = header.get("kid")
+        
+        # Strict algorithm check: only ES256 allowed
+        if alg != "ES256":
+            current_app.logger.warning(f"CTMS token rejected: invalid algorithm '{alg}' (expected ES256)")
+            return None
+        
+        # Get CTMS JWKS client
+        jwks_client = get_ctms_jwks_client()
+        if not jwks_client:
+            current_app.logger.warning("CTMS JWKS client not configured")
+            return None
+        
+        # Get public key from JWKS
+        try:
+            public_key = jwks_client.get_key(kid)
+        except Exception as e:
+            current_app.logger.warning(f"Failed to get CTMS public key: {e}")
+            return None
+        
+        # Verify signature and decode payload
+        payload = jwt.decode(
+            token,
+            public_key,
+            algorithms=["ES256"],  # Only allow ES256
+            options={"verify_exp": True}  # Automatically check expiration
+        )
+        
+        # Additional validations
+        token_type = payload.get("token_type")
+        if token_type != "access":
+            current_app.logger.warning(f"CTMS token rejected: token_type '{token_type}' (expected 'access')")
+            return None
+        
+        sub = payload.get("sub")
+        if not sub:
+            current_app.logger.warning("CTMS token rejected: missing 'sub' (subject UUID)")
+            return None
+        
+        return payload
+    
+    except jwt.ExpiredSignatureError:
+        current_app.logger.warning("CTMS token rejected: expired")
+        return None
+    except jwt.InvalidSignatureError:
+        current_app.logger.warning("CTMS token rejected: invalid signature")
+        return None
+    except jwt.InvalidAlgorithmError:
+        current_app.logger.warning("CTMS token rejected: invalid algorithm")
+        return None
+    except Exception as e:
+        current_app.logger.warning(f"CTMS token verification failed: {e}")
+        return None

@@ -166,14 +166,21 @@ COMMON_SCHEMAS = {
         "type": "object",
         "additionalProperties": False,
         "properties": {
+            # Legacy mode: HMAC-based parent federation
             "username": {"type": "string", "minLength": 1, "maxLength": 255},
             "sub": {"type": "string", "minLength": 1, "maxLength": 255},
             "display_name": {"type": "string", "maxLength": 255},
             "name": {"type": "string", "maxLength": 255},
             "roles": {"type": ["array", "string"], "items": {"type": "string", "maxLength": 64}},
             "parent_roles": {"type": ["array", "string"], "items": {"type": "string", "maxLength": 64}},
+            # CTMS mode: ES256 JWT token
+            "access_token": {"type": "string", "minLength": 1, "maxLength": 8192},
         },
-        "anyOf": [{"required": ["username"]}, {"required": ["sub"]}],
+        "anyOf": [
+            {"required": ["access_token"]},  # CTMS: JWT token only
+            {"required": ["username"]},       # Legacy: username required
+            {"required": ["sub"]},            # Legacy: sub (UUID) as alternative to username
+        ],
     },
     "verify": {
         "type": "object",

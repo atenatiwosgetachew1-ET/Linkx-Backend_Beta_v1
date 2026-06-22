@@ -24,7 +24,7 @@ from .repository import (
     update_user,
     upsert_external_user,
 )
-from .tokens import create_access_token, create_service_token, verify_access_token
+from .tokens import create_access_token, create_service_token, verify_access_token, verify_ctms_token
 from .parent_jwt import ParentJwtError, verify_parent_access_token
 from security.payload_validation import COMMON_SCHEMAS, validate_json_payload, validated_json
 from globals import _session_store
@@ -262,21 +262,100 @@ def service_token():
     }), 200
 
 
+def _parent_token_error(error):
+    mapping = {
+        "parent_access_token_required": (400, "Only access tokens accepted"),
+        "unsupported_parent_token_header": (401, "Invalid algorithm"),
+        "parent_token_expired": (401, "Parent token expired"),
+        "invalid_parent_signature": (401, "Invalid parent token"),
+        "parent_subject_invalid": (401, "Invalid parent token"),
+    }
+    status, message = mapping.get(str(error), (401, "Invalid parent token"))
+    return jsonify({"error": message}), status
+
+
+def _map_ctms_roles_to_linkx(ctms_roles):
+    """
+    Map CTMS role names to LinkX role names.
+    
+    CTMS role hierarchy (provided by parent system):
+    - SUPER_ADMIN, HIGHER_OFFICIAL → admin
+    - DIRECTOR, TEAM_LEADER → manager
+    - ANALYST → analyst
+    - VIEWER, DATA_ENCODER → viewer
+    
+    This aligns with LinkX ROLE_ALIASES which uses:
+    "admin", "manager", "analyst", "viewer"
+    """
+    ctms_role_mapping = {
+        "SUPER_ADMIN": "admin",
+        "HIGHER_OFFICIAL": "admin",
+        "DIRECTOR": "manager",
+        "TEAM_LEADER": "manager",
+        "ANALYST": "analyst",
+        "VIEWER": "viewer",
+        "DATA_ENCODER": "viewer",
+    }
+    
+    linkx_roles = set()
+    for ctms_role in (ctms_roles or []):
+        mapped = ctms_role_mapping.get(ctms_role)
+        if mapped:
+            linkx_roles.add(mapped)
+    
+    # Ensure at least viewer role if something was provided
+    if ctms_roles and not linkx_roles:
+        linkx_roles.add("viewer")
+    
+    return sorted(linkx_roles) if linkx_roles else []
+
+
 @auth_api.route("/parent-token", methods=["POST"])
 @_rate_limited("auth_parent_token", limit_env="LINKX_PARENT_TOKEN_RATE_LIMIT", window_env="LINKX_PARENT_TOKEN_RATE_WINDOW_SECONDS", default_limit=30, default_window=60)
-@validate_json_payload(COMMON_SCHEMAS["parent_token"])
+@validate_json_payload(COMMON_SCHEMAS["parent_token"], required=False)
 def parent_token():
-    data = validated_json()
+    data = validated_json() or {}
     parent_access_token = data.get("access_token") or data.get("token")
     bearer_header = request.headers.get("Authorization") or ""
     if bearer_header.startswith("Bearer "):
         parent_access_token = parent_access_token or bearer_header[len("Bearer "):].strip()
 
+    # Mode 1: CTMS ES256 token
     if parent_access_token:
+        # Try CTMS verification first
+        ctms_payload = verify_ctms_token(parent_access_token)
+        if ctms_payload:
+            # Extract CTMS user info
+            sub = ctms_payload.get("sub")
+            username = f"parent:{sub}"  # Create parent namespace username
+            display_name = ctms_payload.get("name") or ctms_payload.get("sub")
+            
+            # Map CTMS roles to LinkX roles
+            ctms_roles = ctms_payload.get("roles") or []
+            parent_roles = _map_ctms_roles_to_linkx(ctms_roles)
+            
+            user = upsert_external_user(
+                username,
+                display_name=display_name,
+                parent_roles=parent_roles,
+            )
+            return jsonify({
+                "message": "success",
+                "token": create_access_token(user),
+                "actor": public_actor(user),
+                "user": public_actor(user),
+                "parent": {
+                    "sub": sub,
+                    "roles": ctms_roles,
+                    "mapped_roles": parent_roles,
+                },
+            }), 200
+        
+        # Fallback to legacy parent JWT verification
         try:
             identity = verify_parent_access_token(parent_access_token)
         except ParentJwtError as exc:
-            return jsonify({"message": "unauthorized", "detail": str(exc)}), 401
+            return _parent_token_error(exc)
         user = upsert_external_user(
             identity["username"],
             display_name=identity["display_name"],
@@ -293,6 +372,10 @@ def parent_token():
                 "token_type": identity["claims"].get("token_type"),
             },
         }), 200
+
+    # Mode 2: Legacy HMAC header mode
+    if not parent_access_token and not data.get("username") and not data.get("sub"):
+        return jsonify({"error": "access_token is required"}), 400
 
     shared_secret = os.getenv("LINKX_PARENT_SHARED_SECRET")
     if not shared_secret:

@@ -89,9 +89,19 @@ def apply_security_headers(response):
     response.headers.setdefault("X-Frame-Options", os.getenv("LINKX_FRAME_OPTIONS", "DENY"))
     response.headers.setdefault("Referrer-Policy", os.getenv("LINKX_REFERRER_POLICY", "no-referrer"))
     response.headers.setdefault("Permissions-Policy", os.getenv("LINKX_PERMISSIONS_POLICY", "camera=(), microphone=(), geolocation=()"))
+    
+    # CSP with support for CTMS iframe embedding
     csp = os.getenv("LINKX_CONTENT_SECURITY_POLICY")
-    if csp:
-        response.headers.setdefault("Content-Security-Policy", csp)
+    if not csp:
+        # Build default CSP with CTMS support if origin is configured
+        ctms_origin = os.getenv("LINKX_CTMS_ORIGIN", "")
+        frame_ancestors = "'self'"
+        if ctms_origin:
+            frame_ancestors = f"'self' {ctms_origin}"
+        csp = f"frame-ancestors {frame_ancestors}; default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';"
+    
+    response.headers.setdefault("Content-Security-Policy", csp)
+    
     if os.getenv("LINKX_ENABLE_HSTS", "").lower() in {"1", "true", "yes", "on"}:
         response.headers.setdefault("Strict-Transport-Security", os.getenv("LINKX_HSTS_VALUE", "max-age=31536000; includeSubDomains"))
     if request.path.startswith("/auth/"):

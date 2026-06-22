@@ -164,12 +164,6 @@ COMMON_SCHEMAS = {
             "roles": {"type": ["array", "string"], "items": {"type": "string", "maxLength": 64}},
             "parent_roles": {"type": ["array", "string"], "items": {"type": "string", "maxLength": 64}},
         },
-        "anyOf": [
-            {"required": ["access_token"]},
-            {"required": ["token"]},
-            {"required": ["username"]},
-            {"required": ["sub"]}
-        ],
     },
     "verify": {
         "type": "object",

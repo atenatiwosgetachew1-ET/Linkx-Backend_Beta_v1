@@ -1,11 +1,10 @@
 import base64
-import hashlib
-import hmac
 import json
 import ipaddress
 import os
 import socket
 import time
+import uuid
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 
@@ -188,24 +187,9 @@ def _verify_es256(signing_input, signature, kid=None):
 
 
 
-def _verify_hs256(signing_input, signature):
-    secret = os.getenv("LINKX_PARENT_JWT_HS256_SECRET") or ""
-    if not secret:
-        raise ParentJwtError("parent_hs256_secret_not_configured")
-    expected = hmac.new(secret.encode("utf-8"), signing_input, hashlib.sha256).digest()
-    if not hmac.compare_digest(signature, expected):
-        raise ParentJwtError("invalid_parent_signature")
-
 def _expected_roles_from_payload(payload):
-    roles = []
-    role = payload.get("role")
-    if role:
-        roles.append(str(role))
-    assignable_roles = payload.get("assignable_roles") or []
-    if isinstance(assignable_roles, str):
-        assignable_roles = [assignable_roles]
-    roles.extend(str(item) for item in assignable_roles if item)
-    return roles
+    role = str(payload.get("role") or "").strip()
+    return [role] if role else []
 
 
 def verify_parent_access_token(token):
@@ -215,16 +199,11 @@ def verify_parent_access_token(token):
         raise ParentJwtError("malformed_parent_token") from exc
 
     header = _json_segment(header_segment)
-    alg = header.get("alg")
-    if header.get("typ") != "JWT" or alg not in {"ES256", "HS256"}:
+    if header.get("typ") != "JWT" or header.get("alg") != "ES256":
         raise ParentJwtError("unsupported_parent_token_header")
 
     signing_input = f"{header_segment}.{payload_segment}".encode("ascii")
-    signature = _b64decode(signature_segment)
-    if alg == "ES256":
-        _verify_es256(signing_input, signature, header.get("kid"))
-    else:
-        _verify_hs256(signing_input, signature)
+    _verify_es256(signing_input, _b64decode(signature_segment), header.get("kid"))
 
     payload = _json_segment(payload_segment)
     now = int(time.time())
@@ -255,6 +234,10 @@ def verify_parent_access_token(token):
     subject = str(payload.get("sub") or "").strip()
     if not subject:
         raise ParentJwtError("parent_subject_missing")
+    try:
+        uuid.UUID(subject)
+    except ValueError as exc:
+        raise ParentJwtError("parent_subject_invalid") from exc
 
     return {
         "sub": subject,
