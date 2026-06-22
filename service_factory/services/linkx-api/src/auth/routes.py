@@ -25,6 +25,7 @@ from .repository import (
     upsert_external_user,
 )
 from .tokens import create_access_token, create_service_token, verify_access_token
+from .parent_jwt import ParentJwtError, verify_parent_access_token
 from security.payload_validation import COMMON_SCHEMAS, validate_json_payload, validated_json
 from globals import _session_store
 from batch_manager.processing.session_manager import end_session
@@ -265,6 +266,34 @@ def service_token():
 @_rate_limited("auth_parent_token", limit_env="LINKX_PARENT_TOKEN_RATE_LIMIT", window_env="LINKX_PARENT_TOKEN_RATE_WINDOW_SECONDS", default_limit=30, default_window=60)
 @validate_json_payload(COMMON_SCHEMAS["parent_token"])
 def parent_token():
+    data = validated_json()
+    parent_access_token = data.get("access_token") or data.get("token")
+    bearer_header = request.headers.get("Authorization") or ""
+    if bearer_header.startswith("Bearer "):
+        parent_access_token = parent_access_token or bearer_header[len("Bearer "):].strip()
+
+    if parent_access_token:
+        try:
+            identity = verify_parent_access_token(parent_access_token)
+        except ParentJwtError as exc:
+            return jsonify({"message": "unauthorized", "detail": str(exc)}), 401
+        user = upsert_external_user(
+            identity["username"],
+            display_name=identity["display_name"],
+            parent_roles=identity["roles"],
+        )
+        return jsonify({
+            "message": "success",
+            "token": create_access_token(user),
+            "actor": public_actor(user),
+            "user": public_actor(user),
+            "parent": {
+                "sub": identity["sub"],
+                "role": identity["claims"].get("role"),
+                "token_type": identity["claims"].get("token_type"),
+            },
+        }), 200
+
     shared_secret = os.getenv("LINKX_PARENT_SHARED_SECRET")
     if not shared_secret:
         return jsonify({"message": "parent_federation_disabled"}), 503
@@ -273,7 +302,6 @@ def parent_token():
     if not hmac.compare_digest(provided_secret, shared_secret):
         return jsonify({"message": "unauthorized"}), 401
 
-    data = validated_json()
     username = str(data.get("username") or data.get("sub") or "").strip()
     display_name = data.get("display_name") or data.get("name") or username
     roles = data.get("roles") or data.get("parent_roles") or []

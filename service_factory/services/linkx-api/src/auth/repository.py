@@ -11,6 +11,12 @@ ROLE_ALIASES = {
     "team_leader": "admin",
     "analyst": "analyst",
     "viewer": "viewer",
+    "SUPER_ADMIN": "superuser",
+    "ADMIN": "admin",
+    "TEAM_LEADER": "admin",
+    "ANALYST": "analyst",
+    "DATA_ENCODER": "analyst",
+    "VIEWER": "viewer",
 }
 
 DEFAULT_ROLE_PERMISSIONS = {
@@ -751,7 +757,8 @@ def public_actor(actor):
 
 
 def normalize_parent_role(role):
-    return ROLE_ALIASES.get(role, role)
+    value = str(role or "").strip()
+    return ROLE_ALIASES.get(value) or ROLE_ALIASES.get(value.upper()) or ROLE_ALIASES.get(value.lower()) or value
 
 
 def user_has_permission(user, permission):

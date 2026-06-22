@@ -155,6 +155,8 @@ COMMON_SCHEMAS = {
         "type": "object",
         "additionalProperties": False,
         "properties": {
+            "access_token": {"type": "string", "minLength": 1, "maxLength": 8192},
+            "token": {"type": "string", "minLength": 1, "maxLength": 8192},
             "username": {"type": "string", "minLength": 1, "maxLength": 255},
             "sub": {"type": "string", "minLength": 1, "maxLength": 255},
             "display_name": {"type": "string", "maxLength": 255},
@@ -162,7 +164,12 @@ COMMON_SCHEMAS = {
             "roles": {"type": ["array", "string"], "items": {"type": "string", "maxLength": 64}},
             "parent_roles": {"type": ["array", "string"], "items": {"type": "string", "maxLength": 64}},
         },
-        "anyOf": [{"required": ["username"]}, {"required": ["sub"]}],
+        "anyOf": [
+            {"required": ["access_token"]},
+            {"required": ["token"]},
+            {"required": ["username"]},
+            {"required": ["sub"]}
+        ],
     },
     "verify": {
         "type": "object",

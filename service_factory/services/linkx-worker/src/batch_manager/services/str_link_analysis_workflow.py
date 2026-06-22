@@ -8,6 +8,7 @@ from batch_manager.utils.artifact_utils import ensure_artifact_dir
 from batch_manager.utils.elastic_utils import es_keyword_search
 from batch_manager.utils.neo4j_utils import create_neo4j_driver
 from globals import create_file, load_temp_config, save_temp_config
+from security.redaction import redact_value
 
 
 def _bank_source_target_relationship(session_id):
@@ -88,7 +89,7 @@ def _base_analyzer_payload(session_id, credentials):
 
 
 def _run_analyzer(payload, step_name):
-    print(f"STR link analysis {step_name} analyzer payload:", payload)
+    print(f"STR link analysis {step_name} analyzer payload:", redact_value(payload), flush=True)
     try:
         return analyzer(payload) is True
     except Exception as exc:

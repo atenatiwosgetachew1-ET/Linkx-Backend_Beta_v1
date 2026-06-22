@@ -16,6 +16,7 @@ from linkx_worker.cancellation import (
     mark_job_cancelled,
 )
 from linkx_worker.handlers import run_job_safely
+from security.redaction import redact_value
 
 
 def utcnow():
@@ -41,7 +42,7 @@ def emit_event(cur, job, event_type, message=None, payload=None):
         INSERT INTO job_events (job_id, session_id, event_type, message, payload)
         VALUES (%s, %s, %s, %s, %s::jsonb)
         """,
-        (job["id"], job.get("session_id"), event_type, message, json.dumps(payload or {})),
+        (job["id"], job.get("session_id"), event_type, message, json.dumps(redact_value(payload or {}))),
     )
 
 
@@ -150,7 +151,7 @@ def finish_job(conn, job, ok, result=None, error=None):
                 """,
                 (job["id"],),
             )
-            emit_event(cur, job, "job_succeeded", "Job completed", {"result": _jsonable(result)})
+            emit_event(cur, job, "job_succeeded", "Job completed", {"result": redact_value(_jsonable(result))})
         else:
             next_status = "retry" if int(job.get("attempts") or 0) < int(job.get("max_attempts") or 0) else "failed"
             cur.execute(
@@ -164,7 +165,7 @@ def finish_job(conn, job, ok, result=None, error=None):
                 """,
                 (next_status, next_status, (error or {}).get("error"), next_status, job["id"]),
             )
-            emit_event(cur, job, "job_failed" if next_status == "failed" else "job_retry", (error or {}).get("error"), error)
+            emit_event(cur, job, "job_failed" if next_status == "failed" else "job_retry", (error or {}).get("error"), redact_value(error or {}))
         conn.commit()
 
 
@@ -213,10 +214,10 @@ def _job_child_main(job_type, payload, result_queue):
         result_queue.put({"result_path": result_path})
     except BaseException as exc:
         try:
-            result_path = _write_child_result((False, None, {"error": str(exc)}))
+            result_path = _write_child_result((False, None, {"error": "worker_child_failed"}))
             result_queue.put({"result_path": result_path})
         except BaseException:
-            result_queue.put({"inline_result": (False, None, {"error": str(exc)})})
+            result_queue.put({"inline_result": (False, None, {"error": "worker_child_failed"})})
 
 
 def _terminate_child(process, grace_seconds=5.0):

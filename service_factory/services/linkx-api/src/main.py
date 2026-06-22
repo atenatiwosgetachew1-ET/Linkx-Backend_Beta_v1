@@ -45,6 +45,7 @@ from service_orchestration import enqueue_cleanup_run, enqueue_worker_job, get_a
 from auth.decorators import auth_required, current_actor_from_request, permission_required
 from auth.repository import actor_has_permission, bind_analysis_session_actor, can_access_analysis_session_actor, get_postgres_connection
 from auth.routes import auth_api
+from security.redaction import redact_value
 from security.payload_validation import (
     COMMON_SCHEMAS,
     PayloadValidationError,
@@ -637,8 +638,8 @@ def init():
         normalized = _normalize_configuration(stored_new_configs)
         return jsonify({'message': 'success', 'results': {'session_id': session_id, 'configuration': normalized, 'reused_existing_session': False}, 'configurations': normalized}), 200
     except Exception as e:
-        print(e)
-        return jsonify({'results': str(e), 'message': 'failed!'}), 200
+        current_app.logger.warning("init failed: %s", e)
+        return jsonify({'message': 'failed!', 'error': 'init_failed'}), 500
 
 @app.route('/account/configuration', methods=['GET'])
 @auth_required
@@ -724,9 +725,10 @@ def configuration():
                 config_data = get_user_config(actor.get("id"), default_config=defaults) if actor and actor.get("actor_type") == "user" else defaults
             return _configuration_success(config_data)
         except Exception as e:
-            return jsonify({'results': str(e), 'message': 'failed!'}), 200
+            current_app.logger.warning("configuration load failed: %s", e)
+            return jsonify({'message': 'failed!', 'error': 'configuration_load_failed'}), 500
     elif action == "save":
-        print("Form fields:", data)
+        current_app.logger.info("configuration save requested session_id=%s fields=%s", session_id, redact_value(data))
         #uploaded file
         if files:
             try:
@@ -786,8 +788,8 @@ def configuration():
                         print("The rule is invalid")
                         return jsonify({'results': "Invalid rule file.", 'message': 'failed!'}), 200
                 except Exception as e:
-                    print(f"Failed to upload rule: {e}")
-                    return jsonify({'results': str(e), 'message': 'failed!'}), 200
+                    current_app.logger.warning("rule upload failed session_id=%s: %s", session_id, e)
+                    return jsonify({'message': 'failed!', 'error': 'rule_upload_failed'}), 400
         if session_id:
             config = load_temp_config("all", session_id)
             config_dict = config.get("data", {}) if config else {}
@@ -856,7 +858,7 @@ def configuration():
         save_temp_config("all", config_dict, session_id)
         return _configuration_success(config_dict, extra={'removed_rule': rule_name, 'removed_files': removed_paths})
     else:
-        print("Unknown action:", data)
+        current_app.logger.info("unknown configuration action fields=%s", redact_value(data))
         return jsonify({'results': "unknown action", 'message': 'failed!'}), 400
 
 @app.route('/init_source', methods=['POST'])
@@ -891,8 +893,8 @@ def init_source():
             return jsonify({'message': 'success'}), 200
         return jsonify({'results': "Base session config not found", 'message': 'failed!'}), 404
     except Exception as e:
-        print(e)
-        return jsonify({'results': str(e), 'message': 'failed!'}), 200
+        current_app.logger.warning("init failed: %s", e)
+        return jsonify({'message': 'failed!', 'error': 'init_failed'}), 500
 
 @app.route('/connect_to_source', methods=['POST'])
 @auth_required
@@ -1205,7 +1207,7 @@ def upload_batch_files():
 @validate_json_payload(COMMON_SCHEMAS["live_batch_files"])
 def live_batch_files():
     data = validated_json()
-    print("1:",data)
+    current_app.logger.info("live_batch_files action=%s session_id=%s", data.get("id"), data.get("session_id"))
     action_id = data.get('id')
     session_id = data.get('session_id')
     if not action_id or not session_id:
@@ -1287,8 +1289,7 @@ def live_batch_files():
     # CREATE DATAFRAME / LOAD FILES
     # -----------------------------
     if action_id == "create_DF":
-        print("data", data)
-        print("kindkindkind:", data.get("kind", ""))
+        current_app.logger.info("create_DF requested session_id=%s kind=%s type=%s", session_id, data.get("kind", ""), data.get("type", ""))
         if _async_worker_jobs_enabled():
             reactivation = reactivate_analysis_session(session_id)
             if reactivation.get("reactivated"):
@@ -1355,7 +1356,7 @@ def live_batch_files():
                 priority=50,
                 max_attempts=1,
             )
-            print("stream queued:", job)
+            current_app.logger.info("stream queued session_id=%s job_id=%s run_id=%s", session_id, job.get("job_id"), run_id)
             return jsonify({
                 'results': log_file,
                 'message': 'success',

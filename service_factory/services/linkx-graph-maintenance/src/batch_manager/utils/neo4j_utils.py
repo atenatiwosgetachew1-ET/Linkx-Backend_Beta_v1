@@ -1,3 +1,4 @@
+import os
 from neo4j import GraphDatabase
 
 
@@ -41,6 +42,11 @@ def create_neo4j_driver(credentials):
 
 
 def credentials_for_cleanup(credentials=None):
+    if str(os.getenv("LINKX_STORE_CLEANUP_CREDENTIALS", "false")).lower() not in {"1", "true", "yes", "on"}:
+        credentials = dict(credentials or {})
+        database = neo4j_database_name(credentials)
+        return {"neo4j_database": database} if database else {}
+
     credentials = dict(credentials or {})
     database = neo4j_database_name(credentials)
     payload = {
