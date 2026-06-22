@@ -4,6 +4,7 @@ import hmac
 import json
 import os
 import time
+import uuid
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
@@ -198,6 +199,11 @@ def verify_ctms_token(token: str) -> Optional[Dict[str, Any]]:
         sub = payload.get("sub")
         if not sub:
             current_app.logger.warning("CTMS token rejected: missing 'sub' (subject UUID)")
+            return None
+        try:
+            uuid.UUID(str(sub))
+        except ValueError:
+            current_app.logger.warning("CTMS token rejected: invalid 'sub' UUID")
             return None
         
         return payload

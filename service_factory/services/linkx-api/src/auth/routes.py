@@ -330,8 +330,15 @@ def parent_token():
             username = f"parent:{sub}"  # Create parent namespace username
             display_name = ctms_payload.get("name") or ctms_payload.get("sub")
             
-            # Map CTMS roles to LinkX roles
-            ctms_roles = ctms_payload.get("roles") or []
+            # Map CTMS role to LinkX role. CTMS sends singular `role`;
+            # keep `roles` as a compatibility fallback.
+            ctms_roles = []
+            if ctms_payload.get("role"):
+                ctms_roles.append(str(ctms_payload.get("role")))
+            raw_roles = ctms_payload.get("roles") or []
+            if isinstance(raw_roles, str):
+                raw_roles = [raw_roles]
+            ctms_roles.extend(str(role) for role in raw_roles if role)
             parent_roles = _map_ctms_roles_to_linkx(ctms_roles)
             
             user = upsert_external_user(
