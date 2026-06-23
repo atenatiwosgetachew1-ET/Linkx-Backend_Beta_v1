@@ -2,6 +2,8 @@ import json
 import os
 from datetime import datetime
 
+from security.secret_store import MASKED_SECRET, decrypt_secret, encrypt_secret, is_sensitive_key, should_store_secret
+
 
 def _dsn():
     return os.getenv("DATABASE_URL") or os.getenv("LINKX_POSTGRES_DSN")
@@ -56,6 +58,23 @@ def ensure_schema():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_session_configs_session ON session_configs(session_id, window_id)")
             cur.execute(
                 """
+                CREATE TABLE IF NOT EXISTS managed_secrets (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    scope_type TEXT NOT NULL,
+                    scope_id TEXT NOT NULL,
+                    secret_type TEXT NOT NULL,
+                    ciphertext TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    rotated_at TIMESTAMPTZ,
+                    expires_at TIMESTAMPTZ,
+                    deleted_at TIMESTAMPTZ,
+                    metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+                )
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_managed_secrets_scope ON managed_secrets(scope_type, scope_id, secret_type, created_at DESC)")
+            cur.execute(
+                """
                 CREATE TABLE IF NOT EXISTS user_preferences (
                     user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
                     preferences JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -81,6 +100,76 @@ def ensure_schema():
     return True
 
 
+
+def _secret_ref_key(key):
+    return f"{key}_ref"
+
+
+def _store_managed_secret(cur, scope_type, scope_id, secret_type, value):
+    cur.execute(
+        """
+        INSERT INTO managed_secrets (scope_type, scope_id, secret_type, ciphertext)
+        VALUES (%s, %s, %s, %s)
+        RETURNING id::text
+        """,
+        (str(scope_type), str(scope_id), str(secret_type), encrypt_secret(value)),
+    )
+    return cur.fetchone()[0]
+
+
+def _load_managed_secret(cur, secret_id):
+    if not secret_id:
+        return None
+    cur.execute(
+        "SELECT ciphertext FROM managed_secrets WHERE id = %s AND deleted_at IS NULL",
+        (str(secret_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    return decrypt_secret(row[0])
+
+
+def _protect_config_secrets(value, cur, scope_type, scope_id, prefix=""):
+    if isinstance(value, dict):
+        protected = {}
+        for key, item in value.items():
+            key_text = str(key or "")
+            if key_text.endswith("_ref"):
+                protected.setdefault(key, item)
+                continue
+            path = f"{prefix}.{key_text}" if prefix else key_text
+            ref_key = _secret_ref_key(key_text)
+            if is_sensitive_key(key_text) and should_store_secret(item):
+                protected[key] = MASKED_SECRET
+                protected[ref_key] = _store_managed_secret(cur, scope_type, scope_id, path, item)
+            else:
+                protected[key] = _protect_config_secrets(item, cur, scope_type, scope_id, path)
+        return protected
+    if isinstance(value, list):
+        return [_protect_config_secrets(item, cur, scope_type, scope_id, f"{prefix}[{idx}]") for idx, item in enumerate(value)]
+    return value
+
+
+def _resolve_config_secrets(value, cur):
+    if isinstance(value, dict):
+        resolved = {}
+        for key, item in value.items():
+            key_text = str(key or "")
+            if key_text.endswith("_ref"):
+                resolved[key] = item
+                continue
+            ref_key = _secret_ref_key(key_text)
+            if item == MASKED_SECRET and value.get(ref_key):
+                secret = _load_managed_secret(cur, value.get(ref_key))
+                resolved[key] = secret if secret is not None else item
+            else:
+                resolved[key] = _resolve_config_secrets(item, cur)
+        return resolved
+    if isinstance(value, list):
+        return [_resolve_config_secrets(item, cur) for item in value]
+    return value
+
 def _actor_ids(actor=None):
     actor = actor or {}
     if actor.get("actor_type") == "service":
@@ -97,7 +186,7 @@ def get_user_config(user_id, default_config=None):
             cur.execute("SELECT config FROM user_configs WHERE user_id = %s", (user_id,))
             row = cur.fetchone()
             if row:
-                return row[0] or {}
+                return _resolve_config_secrets(row[0] or {}, cur)
             if default_config is None:
                 return {}
             cur.execute(
@@ -129,7 +218,7 @@ def save_user_config(user_id, config):
                     version = user_configs.version + 1,
                     updated_at = NOW()
                 """,
-                (user_id, json.dumps(config or {})),
+                (user_id, json.dumps(_protect_config_secrets(config or {}, cur, "user", user_id))),
             )
         conn.commit()
     return True
@@ -156,6 +245,7 @@ def create_session_config(session_id, actor=None, default_config=None, existing_
                 config = get_user_config(user_id, default_config=default_config)
             if config is None:
                 config = default_config or {}
+            config = _protect_config_secrets(config or {}, cur, "session", f"{session_id}:")
             cur.execute(
                 """
                 INSERT INTO session_configs (
@@ -241,10 +331,10 @@ def load_session_config(session_id, window_id=None):
             row = cur.fetchone()
             if row:
                 if target_window and base_config is not None:
-                    return {**base_config, **(row[0] or {})}
-                return row[0] or {}
+                    return _resolve_config_secrets({**base_config, **(row[0] or {})}, cur)
+                return _resolve_config_secrets(row[0] or {}, cur)
             if target_window:
-                return base_config
+                return _resolve_config_secrets(base_config, cur)
     return None
 
 
@@ -264,6 +354,7 @@ def save_session_config(session_id, config, window_id=None, merge=True):
             row = cur.fetchone()
             current = row[0] if row else {}
             new_config = {**(current or {}), **incoming} if merge else incoming
+            new_config = _protect_config_secrets(new_config, cur, "session", f"{base_session}:{target_window}")
             if row:
                 cur.execute(
                     """
@@ -288,6 +379,36 @@ def save_session_config(session_id, config, window_id=None, merge=True):
                 )
         conn.commit()
     return True
+
+
+def migrate_existing_config_secrets():
+    if not db_enabled():
+        return {"user_configs": 0, "session_configs": 0}
+    ensure_schema()
+    counts = {"user_configs": 0, "session_configs": 0}
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT user_id, config FROM user_configs")
+            for user_id, config in cur.fetchall():
+                protected = _protect_config_secrets(config or {}, cur, "user", user_id)
+                if protected != (config or {}):
+                    cur.execute(
+                        "UPDATE user_configs SET config = %s::jsonb, updated_at = NOW() WHERE user_id = %s",
+                        (json.dumps(protected), user_id),
+                    )
+                    counts["user_configs"] += 1
+
+            cur.execute("SELECT session_id, window_id, config FROM session_configs")
+            for session_id, window_id, config in cur.fetchall():
+                protected = _protect_config_secrets(config or {}, cur, "session", f"{session_id}:{window_id or ''}")
+                if protected != (config or {}):
+                    cur.execute(
+                        "UPDATE session_configs SET config = %s::jsonb, updated_at = NOW() WHERE session_id = %s AND window_id = %s",
+                        (json.dumps(protected), session_id, window_id or ""),
+                    )
+                    counts["session_configs"] += 1
+        conn.commit()
+    return counts
 
 
 def response_config(config):

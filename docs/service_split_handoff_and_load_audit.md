@@ -322,7 +322,17 @@ Cleanup recommendation:
 
 Code-side hardening now redacts sensitive job-event payloads, high-volume dataframe/search logs, and `/configuration` API responses. Worker/API Elastic logs no longer print raw search payloads, keywords, response bodies, or row data; dataframe routing logs avoid full local paths and DataFrame contents. Runtime defaults no longer fall back to the old hardcoded Neo4j password. Sensitive configuration writes such as `active_tool_password`, `tool_credentials.password`, tokens, secrets, and authorization headers now require `users:manage` and are audited by key path only, not by value.
 
-Remaining design hardening: user-provided secrets are still stored as raw values inside PostgreSQL `session_configs.config` so workers can resolve them. The next step is an encrypted secret table or external secret manager where session config stores only `*_secret_ref` values.
+Encrypted config-secret storage is now implemented for newly saved user/session configuration secrets. Sensitive values are stored in `managed_secrets.ciphertext` and config JSON keeps masked values plus `*_ref` IDs. API and worker services must share the same `LINKX_SECRET_ENCRYPTION_KEY` so API can store secrets and workers can decrypt them in memory.
+
+Deployment requirements:
+
+```bash
+# Generate once, store securely, and set the same value on API + worker services
+python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+LINKX_SECRET_ENCRYPTION_KEY=<generated-fernet-key>
+```
+
+Existing raw secrets already present in `session_configs.config` still need a one-time migration or manual re-save through the configuration endpoint after the key is deployed. New sensitive saves use encrypted refs.
 
 Still required on the live environment after any exposed value has appeared in chat, shell history, screenshots, or journals:
 
