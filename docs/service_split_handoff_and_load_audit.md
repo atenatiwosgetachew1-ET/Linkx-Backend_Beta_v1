@@ -354,6 +354,11 @@ sudo journalctl -u linkx-api -u linkx-search-worker -u linkx-dataframe-worker -u
 
 The grep should not show raw credential values. It may show safe field names or redacted `***` values.
 
+## P1 Request Body Limits
+
+API upload bodies are capped with `LINKX_MAX_UPLOAD_BYTES` through Flask `MAX_CONTENT_LENGTH`. JSON API requests now have a separate smaller cap, `LINKX_MAX_JSON_BYTES`, defaulting to `2097152` bytes. This keeps large file uploads possible while rejecting oversized JSON before parsing. Set `LINKX_MAX_JSON_BYTES=0` only for controlled debugging.
+
+
 ## 2026-06-22 CTMS Deployment Note
 
 The current Server 1 CTMS rollout failed on startup because the deployed venv did not yet have PyJWT installed. The error surfaced as `ModuleNotFoundError: No module named 'jwt'` while importing [auth/tokens.py](../service_factory/services/linkx-api/src/auth/tokens.py).

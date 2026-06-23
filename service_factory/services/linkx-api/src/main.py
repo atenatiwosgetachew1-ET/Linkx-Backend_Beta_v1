@@ -73,6 +73,7 @@ if not app.secret_key or app.secret_key == "dev-only-change-me":
         raise RuntimeError("LINKX_FLASK_SECRET_KEY must be set to a strong production secret")
     app.secret_key = "dev-only-change-me"
 app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("LINKX_MAX_UPLOAD_BYTES", "104857600"))
+app.config["LINKX_MAX_JSON_BYTES"] = int(os.getenv("LINKX_MAX_JSON_BYTES", "2097152"))
 socketio = SocketIO(app, cors_allowed_origins=cors_origins, async_mode="eventlet") #Socket listners are found inside 'logger.py' page
 # Register socket
 register_socket_handlers(socketio)
@@ -115,6 +116,24 @@ def apply_security_headers(response):
 @app.errorhandler(413)
 def request_entity_too_large(_exc):
     return jsonify({"message": "payload_too_large"}), 413
+
+
+@app.before_request
+def enforce_request_body_size():
+    if request.method == "OPTIONS":
+        return None
+    content_length = request.content_length
+    if not content_length or content_length < 0:
+        return None
+    if request.is_json:
+        max_json_bytes = int(os.getenv("LINKX_MAX_JSON_BYTES", app.config.get("LINKX_MAX_JSON_BYTES", 2097152)))
+        if max_json_bytes > 0 and content_length > max_json_bytes:
+            return jsonify({
+                "message": "payload_too_large",
+                "limit": "json",
+                "max_bytes": max_json_bytes,
+            }), 413
+    return None
 
 
 @app.errorhandler(500)
