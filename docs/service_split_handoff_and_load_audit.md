@@ -332,17 +332,17 @@ python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().
 LINKX_SECRET_ENCRYPTION_KEY=<generated-fernet-key>
 ```
 
-Existing raw secrets already present in `session_configs.config` still need a one-time migration or manual re-save through the configuration endpoint after the key is deployed. New sensitive saves use encrypted refs.
+Existing raw secrets in `session_configs.config` were migrated after deploying `LINKX_SECRET_ENCRYPTION_KEY`. Verification showed `65` masked password rows, `65` password ref rows, and `0` possible raw password rows in `session_configs`; `managed_secrets` contained encrypted rows for `active_tool_password` and `tool_credentials.password`.
 
-Still required on the live environment after any exposed value has appeared in chat, shell history, screenshots, or journals:
+Live P0 rotation/completion status as of 2026-06-23:
 
-1. Rotate PostgreSQL `linkx` password and update Server 1 API, Server 3 workers, and Server 4 cleanup env files.
-2. Rotate Neo4j password and update API/worker/cleanup env files.
-3. Rotate `LINKX_FLASK_SECRET_KEY`; expect current LinkX-issued tokens/sessions to expire.
-4. Change the built-in/admin user password and avoid placing it directly in pasted curl commands.
-5. Remove any stale `LINKX_PARENT_SHARED_SECRET` drop-ins unless legacy parent-token mode is explicitly re-enabled.
-6. Keep `/opt/linkx-*/.env` owned by the service owner/root and set to `chmod 600`; do not commit real env files.
-7. Keep CTMS SSO on ES256/JWKS only; do not accept HS256/shared-secret tokens for CTMS.
+1. PostgreSQL `linkx` password rotated and API `/db/health` verified.
+2. Neo4j password rotated, API/worker/cleanup env files updated, encrypted config refs rotated, and `neo4j_residue_scan` verified as `succeeded`.
+3. `LINKX_FLASK_SECRET_KEY` rotated; old LinkX-issued sessions/tokens were intentionally invalidated.
+4. Built-in/admin password rotated; new login returned `200 OK` and old default password returned `401 invalid_credentials`.
+5. Stale `LINKX_PARENT_SHARED_SECRET` removed from runtime; `LINKX_ENABLE_LEGACY_PARENT_TOKEN=false` and CTMS ES256/JWKS remains the only parent SSO path.
+6. Live `.env` files on API, worker, and cleanup servers were set to `root:root` and `chmod 600`.
+7. CTMS SSO remains ES256/JWKS only; final parent end-to-end proof still needs a real CTMS ES256 access JWT from the CTMS team.
 
 Recommended post-rotation verification:
 
@@ -354,10 +354,35 @@ sudo journalctl -u linkx-api -u linkx-search-worker -u linkx-dataframe-worker -u
 
 The grep should not show raw credential values. It may show safe field names or redacted `***` values.
 
-## P1 Request Body Limits
+## P1 Security Hardening Status
 
-API upload bodies are capped with `LINKX_MAX_UPLOAD_BYTES` through Flask `MAX_CONTENT_LENGTH`. JSON API requests now have a separate smaller cap, `LINKX_MAX_JSON_BYTES`, defaulting to `2097152` bytes. This keeps large file uploads possible while rejecting oversized JSON before parsing. Set `LINKX_MAX_JSON_BYTES=0` only for controlled debugging.
+Request/body limits:
+- API upload bodies are capped with `LINKX_MAX_UPLOAD_BYTES` through Flask `MAX_CONTENT_LENGTH`.
+- JSON API requests have a separate smaller cap, `LINKX_MAX_JSON_BYTES`, defaulting to `2097152` bytes. Oversized JSON was verified to return `413 payload_too_large` before schema parsing.
+- Set `LINKX_MAX_JSON_BYTES=0` only for controlled debugging.
 
+Structured audit logging:
+- `security_audit_events` was added for auth/admin/config/cleanup security events.
+- Verified rows include successful and failed `auth.login` events without passwords, tokens, or request bodies.
+- Admin endpoint: `GET /auth/admin/audit/security` with `users:manage`.
+- Covered events include `auth.login`, `auth.service_token`, `auth.parent_token`, `admin.user.*`, `admin.service_account.*`, `admin.cleanup.request`, `config.user.save`, `config.session.save`, and `config.session.sensitive_update`.
+
+Systemd hardening:
+- Server 1 `linkx-api` uses `NoNewPrivileges=true`, `PrivateTmp=true`, `ProtectHome=true`, and `ProtectSystem=full`; `/db/health` verified after restart.
+- Server 3 workers use `NoNewPrivileges=true`, `PrivateTmp=true`, and `ProtectHome=true`; `ProtectSystem` is intentionally not enabled yet because Spark/artifact writes need more compatibility testing.
+- Server 4 cleanup worker/scheduler use `NoNewPrivileges=true`, `PrivateTmp=true`, and `ProtectHome=true`; cleanup dry-run scan verified after restart.
+
+Firewall/exposure hardening:
+- Server 2 UFW restricts Postgres `5432` and Redis `6379` to Server 1/API, Server 3/workers, and Server 4/cleanup.
+- Server 4 UFW restricts Neo4j Bolt `7687` to API/worker/cleanup nodes and Neo4j Browser `7474` to the admin workstation.
+- Server 1 UFW restricts API `8000` to frontend/CTMS/dev/admin/AI sources and allows NFS basics to worker/cleanup nodes.
+- Post-firewall verification: cleanup `neo4j_residue_scan` succeeded, and Server 3 graph worker service-env Neo4j test returned `1`.
+
+Current security caveats:
+- CORS still includes the active frontend development origin; production target should remove dev-only origins and keep CTMS/frontend origins only.
+- SSH is still allowed broadly to avoid lockout during active hardening. Restrict SSH to VPN/admin IPs once operational access is confirmed.
+- Server 1 NFS/RPC still shows random RPC listener ports. Pin NFS/rpcbind auxiliary ports before tightening Server 1 firewall further.
+- CTMS SSO implementation is ready, but final proof waits for a real CTMS ES256 access JWT.
 
 ## 2026-06-22 CTMS Deployment Note
 
@@ -695,7 +720,8 @@ If ordinary terminate creates `cleanup_type = session` or deletes `/mnt/linkx-ar
 | 4 | Remove old local artifact backups | Avoid confusion and stale duplicate files after NFS migration | Done on server 3 and server 4 |
 | 5 | Continue moving heavy API routes to worker jobs | API should remain orchestration/auth/socket layer only | Ongoing, get_graph relationship fetch now queues graph_fetch on worker; worker runner has generic stale/running job timeout recovery |
 | 6 | Keep `neo4j_residue_scan` report-only until reviewed over time | Avoid deleting non-LinkX data accidentally | Active, report-only, currently clean |
-| 7 | Eventually add an admin cleanup/audit UI endpoint for manual session cleanup and residue review | Makes operations safer for admins | Pending |
+| 7 | Eventually add an admin cleanup/audit UI endpoint for manual session cleanup and residue review | Makes operations safer for admins | API endpoints exist for cleanup/security audit; frontend UI still pending |
+| 8 | Backup/restore evidence | Production recovery must be proven, not assumed | P2 runbook and Postgres scripts added; live restore drill and off-host target still pending |
 
 ### Worker Timeout Recovery
 
@@ -711,6 +737,74 @@ WORKER_GRAPH_STALE_SECONDS=300
 ```
 
 Use `0` only for controlled debugging; production workers should keep timeout recovery enabled so queued work cannot be blocked forever by a lost child process.
+
+
+### P2 Backup And Restore Evidence
+
+This is the current backup/restore baseline. Treat it as an operational control, not just documentation: every backup family needs a recent restore proof before it can be called complete.
+
+| Data | Source | Backup Method | Restore Proof | Current Status |
+|---|---|---|---|---|
+| PostgreSQL control DB | Server 2 `linkx-postgres` | Custom-format `pg_dump` into `/opt/linkx-backups/postgres` | Restore into `linkx_restore_test`, verify key table counts, then drop test DB | Scripted, restore drill still needs live run/evidence |
+| Shared artifacts | Server 1 `/mnt/linkx-artifacts` | Encrypted off-host `rsync` or `tar` snapshot | Restore a sample upload/dfpart/log tree to a temporary path and compare checksums/counts | Runbook ready, off-host target still pending |
+| Neo4j graph DB | Server 4 `linkx-neo4j` | Prefer Neo4j backup tooling if licensed; otherwise maintenance-window dump/export | Restore to an isolated Neo4j container and run count/query smoke tests | Requires final method selection |
+| Redis queue/cache | Server 2 `linkx-redis` | Optional RDB snapshot if queued/running jobs must survive host loss | Restart Redis from copied RDB in a test container | Optional; Postgres remains the source of truth |
+| Secret material | `.env` files and `LINKX_SECRET_ENCRYPTION_KEY` | Store in a protected secret manager/offline escrow, never in Git | Prove API can decrypt one managed secret after restore | Required before production backup sign-off |
+
+Suggested RPO/RTO target until the business sets formal values:
+
+| Area | Draft RPO | Draft RTO | Notes |
+|---|---:|---:|---|
+| PostgreSQL | 24h, plus before deployments | 1h | Use daily scheduled dump and manual dump before schema/security changes. |
+| Artifacts | 24h | 2-4h | Use incremental file backup where possible; artifact volume can grow quickly. |
+| Neo4j | 24h or before graph schema changes | 2-4h | Restore time depends on graph size and whether offline dump is required. |
+| Secrets | Immediate after rotation | 1h | Losing `LINKX_SECRET_ENCRYPTION_KEY` makes managed secret refs unrecoverable. |
+
+Server 2 PostgreSQL backup:
+
+```bash
+cd /opt/linkx-backend-update/service_factory/services/linkx-control-data
+sudo BACKUP_DIR=/opt/linkx-backups/postgres ./scripts/backup-postgres.sh
+sudo ls -lh /opt/linkx-backups/postgres | tail
+```
+
+Server 2 PostgreSQL restore drill into an isolated test DB:
+
+```bash
+cd /opt/linkx-backend-update/service_factory/services/linkx-control-data
+DUMP_FILE=/opt/linkx-backups/postgres/<backup-file>.dump
+sudo POSTGRES_DB=linkx_restore_test ./scripts/restore-postgres.sh "$DUMP_FILE"
+sudo docker exec -it linkx-postgres psql -U linkx -d linkx_restore_test -P pager=off -c "select count(*) from users;"
+sudo docker exec -i linkx-postgres dropdb -U linkx --if-exists linkx_restore_test
+```
+
+Server 1 artifact snapshot example:
+
+```bash
+sudo mkdir -p /opt/linkx-backups/artifacts
+sudo tar --xattrs --acls -czf /opt/linkx-backups/artifacts/linkx-artifacts_$(date -u +%Y%m%dT%H%M%SZ).tar.gz -C /mnt linkx-artifacts
+sudo tar -tzf /opt/linkx-backups/artifacts/<backup-file>.tar.gz | head
+```
+
+For large production artifact volume, prefer an encrypted off-host `rsync` target over repeated full tar archives. Keep backups off the same disk/host where possible.
+
+Server 4 Neo4j backup method still needs final confirmation against the live compose file and license mode. Before choosing the final command, inspect the actual mounts:
+
+```bash
+sudo docker inspect linkx-neo4j --format '{{json .Mounts}}' | python3 -m json.tool
+```
+
+Evidence to record after each restore drill:
+
+| Field | Value |
+|---|---|
+| Backup file/path | `<path>` |
+| SHA256 | `<sha256>` |
+| Backup timestamp UTC | `<timestamp>` |
+| Restore target | `<test database/path/container>` |
+| Verification queries/checks | `<row counts, sample artifacts, Neo4j counts>` |
+| Operator | `<name>` |
+| Result | `passed` / `failed` |
 
 ### Quick Health Checklist
 
