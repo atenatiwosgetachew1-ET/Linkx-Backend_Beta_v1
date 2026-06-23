@@ -17,9 +17,11 @@ from .repository import (
     delete_user,
     get_service_account_by_id,
     get_user_by_id,
+    list_security_audit_events,
     list_service_accounts,
     list_users,
     public_actor,
+    record_security_event,
     update_service_account,
     update_user,
     upsert_external_user,
@@ -70,6 +72,23 @@ def _env_int(name, default):
         return int(os.getenv(name, str(default)))
     except (TypeError, ValueError):
         return int(default)
+
+
+def _audit_context():
+    return {
+        "ip_address": request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip() or None,
+        "user_agent": (request.headers.get("User-Agent") or "")[:512] or None,
+    }
+
+
+def _record_security_event_safe(event_type, **kwargs):
+    try:
+        ctx = _audit_context()
+        kwargs.setdefault("ip_address", ctx["ip_address"])
+        kwargs.setdefault("user_agent", ctx["user_agent"])
+        return record_security_event(event_type, **kwargs)
+    except Exception:
+        return None
 
 
 def _idle_policy():
@@ -231,8 +250,10 @@ def login():
 
     user = authenticate_user(username, password)
     if not user:
+        _record_security_event_safe("auth.login", username=username, success=False)
         return jsonify({"message": "invalid_credentials"}), 401
 
+    _record_security_event_safe("auth.login", actor=user, username=username, success=True)
     return jsonify({
         "message": "success",
         "token": create_access_token(user),
@@ -253,8 +274,10 @@ def service_token():
 
     service = authenticate_service_account(client_id, client_secret)
     if not service:
+        _record_security_event_safe("auth.service_token", username=client_id, target_type="service_account", success=False)
         return jsonify({"message": "invalid_client_credentials"}), 401
 
+    _record_security_event_safe("auth.service_token", actor=service, username=client_id, target_type="service_account", target_id=service.get("id"), success=True)
     return jsonify({
         "message": "success",
         "token": create_service_token(service),
@@ -346,6 +369,15 @@ def parent_token():
                 display_name=display_name,
                 parent_roles=parent_roles,
             )
+            _record_security_event_safe(
+                "auth.parent_token",
+                actor=user,
+                username=username,
+                target_type="ctms_user",
+                target_id=sub,
+                success=True,
+                metadata={"roles": ctms_roles, "mapped_roles": parent_roles},
+            )
             return jsonify({
                 "message": "success",
                 "token": create_access_token(user),
@@ -362,6 +394,7 @@ def parent_token():
         try:
             identity = verify_parent_access_token(parent_access_token)
         except ParentJwtError as exc:
+            _record_security_event_safe("auth.parent_token", success=False, metadata={"error": str(exc)})
             return _parent_token_error(exc)
         user = upsert_external_user(
             identity["username"],
@@ -383,6 +416,7 @@ def parent_token():
     # Mode 2: Legacy HMAC header mode. Disabled by default so CTMS ES256
     # cannot be confused with the old parent shared-secret flow.
     if not parent_access_token and str(os.getenv("LINKX_ENABLE_LEGACY_PARENT_TOKEN", "")).lower() not in {"1", "true", "yes", "on"}:
+        _record_security_event_safe("auth.parent_token", success=False, metadata={"error": "access_token_required"})
         return jsonify({"error": "access_token is required"}), 400
     if not parent_access_token and not data.get("username") and not data.get("sub"):
         return jsonify({"error": "access_token is required"}), 400
@@ -514,6 +548,15 @@ def admin_create_service_account():
         permissions=permissions,
         display_name=display_name,
     )
+    _record_security_event_safe(
+        "admin.service_account.create",
+        actor=current_actor_from_request(),
+        target_type="service_account",
+        target_id=service.get("id"),
+        username=client_id,
+        success=True,
+        metadata={"permissions": permissions},
+    )
     return jsonify({
         "message": "success",
         "result": public_actor(service),
@@ -537,8 +580,17 @@ def admin_update_service_account(service_id):
         is_active=data.get("is_active") if "is_active" in data else None,
     )
     if not service:
+        _record_security_event_safe("admin.service_account.update", actor=current_actor_from_request(), target_type="service_account", target_id=service_id, success=False, metadata={"error": "not_found"})
         return jsonify({"message": "not_found"}), 404
 
+    _record_security_event_safe(
+        "admin.service_account.update",
+        actor=current_actor_from_request(),
+        target_type="service_account",
+        target_id=service_id,
+        success=True,
+        metadata={"fields": sorted(data.keys())},
+    )
     return jsonify({
         "message": "success",
         "result": public_actor(service),
@@ -549,7 +601,9 @@ def admin_update_service_account(service_id):
 @permission_required("users:manage")
 def admin_delete_service_account(service_id):
     if not delete_service_account(service_id):
+        _record_security_event_safe("admin.service_account.delete", actor=current_actor_from_request(), target_type="service_account", target_id=service_id, success=False, metadata={"error": "not_found"})
         return jsonify({"message": "not_found"}), 404
+    _record_security_event_safe("admin.service_account.delete", actor=current_actor_from_request(), target_type="service_account", target_id=service_id, success=True)
     return jsonify({"message": "success"}), 200
 
 
@@ -590,6 +644,15 @@ def admin_create_user():
         display_name=display_name,
         is_active=is_active,
     )
+    _record_security_event_safe(
+        "admin.user.create",
+        actor=actor,
+        target_type="user",
+        target_id=user.get("id"),
+        username=username,
+        success=True,
+        metadata={"roles": roles, "is_active": bool(is_active)},
+    )
     return jsonify({
         "message": "success",
         "result": public_actor(user),
@@ -618,8 +681,17 @@ def admin_update_user(user_id):
         is_active=data.get("is_active") if "is_active" in data else None,
     )
     if not user:
+        _record_security_event_safe("admin.user.update", actor=actor, target_type="user", target_id=user_id, success=False, metadata={"error": "not_found"})
         return jsonify({"message": "not_found"}), 404
 
+    _record_security_event_safe(
+        "admin.user.update",
+        actor=actor,
+        target_type="user",
+        target_id=user_id,
+        success=True,
+        metadata={"fields": sorted(data.keys())},
+    )
     return jsonify({
         "message": "success",
         "result": public_actor(user),
@@ -630,5 +702,23 @@ def admin_update_user(user_id):
 @permission_required("users:manage")
 def admin_delete_user(user_id):
     if not delete_user(user_id):
+        _record_security_event_safe("admin.user.delete", actor=current_actor_from_request(), target_type="user", target_id=user_id, success=False, metadata={"error": "not_found"})
         return jsonify({"message": "not_found"}), 404
+    _record_security_event_safe("admin.user.delete", actor=current_actor_from_request(), target_type="user", target_id=user_id, success=True)
     return jsonify({"message": "success"}), 200
+
+
+@auth_api.route("/admin/audit/security", methods=["GET"])
+@permission_required("users:manage")
+def admin_security_audit():
+    filters = {
+        "event_type": request.args.get("event_type"),
+        "actor_type": request.args.get("actor_type"),
+        "target_type": request.args.get("target_type"),
+        "target_id": request.args.get("target_id"),
+        "session_id": request.args.get("session_id"),
+        "success": request.args.get("success"),
+        "limit": request.args.get("limit"),
+        "offset": request.args.get("offset"),
+    }
+    return jsonify({"message": "success", "results": list_security_audit_events(filters)}), 200

@@ -43,7 +43,7 @@ from api.ai_service import ai_service_api
 from session_config_store import create_session_config, duplicate_window_config, get_user_config, get_workspace_layout, save_user_config, save_workspace_layout
 from service_orchestration import enqueue_cleanup_run, enqueue_worker_job, get_active_session_lock, get_any_active_actor_lock, get_worker_job, list_cleanup_audit, public_lock_state, reactivate_analysis_session, request_session_cancellation
 from auth.decorators import auth_required, current_actor_from_request, permission_required
-from auth.repository import actor_has_permission, bind_analysis_session_actor, can_access_analysis_session_actor, get_postgres_connection
+from auth.repository import actor_has_permission, bind_analysis_session_actor, can_access_analysis_session_actor, get_postgres_connection, record_security_event
 from auth.routes import auth_api
 from security.redaction import redact_value
 from security.payload_validation import (
@@ -174,6 +174,24 @@ def _validation_error_response(exc):
     if exc.field:
         body["field"] = exc.field
     return jsonify(body), 400
+
+
+def _audit_context():
+    return {
+        "ip_address": request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip() or None,
+        "user_agent": (request.headers.get("User-Agent") or "")[:512] or None,
+    }
+
+
+def _record_security_event_safe(event_type, **kwargs):
+    try:
+        ctx = _audit_context()
+        kwargs.setdefault("ip_address", ctx["ip_address"])
+        kwargs.setdefault("user_agent", ctx["user_agent"])
+        return record_security_event(event_type, **kwargs)
+    except Exception:
+        current_app.logger.warning("security audit event failed event_type=%s", event_type, exc_info=True)
+        return None
 
 
 _LOCK_EXEMPT_PATHS = {
@@ -601,6 +619,15 @@ def admin_cleanup_session():
             payload=payload,
             dry_run=dry_run,
         )
+        _record_security_event_safe(
+            "admin.cleanup.request",
+            actor=current_actor_from_request(),
+            target_type="cleanup_run",
+            target_id=cleanup_id,
+            session_id=session_id or None,
+            success=True,
+            metadata={"cleanup_type": cleanup_type, "dry_run": dry_run, "has_run_id": bool(run_id)},
+        )
     except Exception as exc:
         current_app.logger.warning("admin cleanup enqueue failed: %s", exc)
         return jsonify({"message": "cleanup_enqueue_failed"}), 500
@@ -720,6 +747,14 @@ def account_configuration_save():
         return jsonify({'message': 'validation_error', 'detail': 'config_object_required'}), 400
     normalized_config = _normalize_configuration(config)
     save_user_config(actor.get("id"), normalized_config)
+    _record_security_event_safe(
+        "config.user.save",
+        actor=actor,
+        target_type="user_config",
+        target_id=actor.get("id"),
+        success=True,
+        metadata={"sensitive_paths": _sensitive_config_paths(normalized_config)},
+    )
     return _configuration_success(normalized_config)
 
 
@@ -870,6 +905,15 @@ def configuration():
                     redact_value(actor),
                     sensitive_paths,
                 )
+                _record_security_event_safe(
+                    "config.session.sensitive_update",
+                    actor=actor,
+                    target_type="session_config",
+                    target_id=session_id,
+                    session_id=session_id,
+                    success=True,
+                    metadata={"sensitive_paths": sensitive_paths},
+                )
             for key, value in incoming_config.items():
                 if key == "active_rule":
                     config_dict[key] = value if isinstance(value, list) else [value]
@@ -878,10 +922,27 @@ def configuration():
             config_dict = _normalize_configuration(config_dict)
             if session_id:
                 save_temp_config("all", config_dict, session_id)
+                _record_security_event_safe(
+                    "config.session.save",
+                    actor=current_actor_from_request(),
+                    target_type="session_config",
+                    target_id=session_id,
+                    session_id=session_id,
+                    success=True,
+                    metadata={"sensitive_paths": _sensitive_config_paths(incoming_config)},
+                )
             else:
                 actor = current_actor_from_request()
                 if actor and actor.get("actor_type") == "user":
                     save_user_config(actor.get("id"), config_dict)
+                    _record_security_event_safe(
+                        "config.user.save",
+                        actor=actor,
+                        target_type="user_config",
+                        target_id=actor.get("id"),
+                        success=True,
+                        metadata={"sensitive_paths": _sensitive_config_paths(incoming_config)},
+                    )
         return _configuration_success(config_dict)
     elif action == "remove_rule":
         rule_name = str(data.get("rule_name") or "").strip()

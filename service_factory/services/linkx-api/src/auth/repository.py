@@ -195,6 +195,25 @@ def ensure_auth_schema():
                 last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
             """)
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS security_audit_events (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                event_type TEXT NOT NULL,
+                actor_type TEXT,
+                actor_id TEXT,
+                username TEXT,
+                target_type TEXT,
+                target_id TEXT,
+                session_id TEXT,
+                ip_address TEXT,
+                user_agent TEXT,
+                success BOOLEAN,
+                metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_security_audit_events_created ON security_audit_events(created_at DESC)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_security_audit_events_type_created ON security_audit_events(event_type, created_at DESC)")
             _migrate_analysis_sessions(cur)
             _seed_roles_permissions(cur)
             _bootstrap_superuser(cur)
@@ -881,4 +900,108 @@ def _service_from_row(row):
         "secret_hash": row[2],
         "display_name": row[3],
         "is_active": row[4],
+    }
+
+
+def record_security_event(
+    event_type,
+    *,
+    actor=None,
+    username=None,
+    target_type=None,
+    target_id=None,
+    session_id=None,
+    ip_address=None,
+    user_agent=None,
+    success=None,
+    metadata=None,
+):
+    ensure_auth_schema()
+    actor = actor or {}
+    metadata = metadata or {}
+    safe_metadata = json.dumps(metadata)
+    with get_postgres_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO security_audit_events (
+                    event_type, actor_type, actor_id, username, target_type, target_id,
+                    session_id, ip_address, user_agent, success, metadata
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                RETURNING id::text
+                """,
+                (
+                    str(event_type),
+                    actor.get("actor_type"),
+                    str(actor.get("id")) if actor.get("id") is not None else None,
+                    username,
+                    target_type,
+                    str(target_id) if target_id is not None else None,
+                    str(session_id) if session_id is not None else None,
+                    ip_address,
+                    user_agent,
+                    None if success is None else bool(success),
+                    safe_metadata,
+                ),
+            )
+            event_id = cur.fetchone()[0]
+        conn.commit()
+    return event_id
+
+
+def list_security_audit_events(filters=None):
+    ensure_auth_schema()
+    filters = filters or {}
+    limit = min(max(int(filters.get("limit") or 100), 1), 500)
+    offset = max(int(filters.get("offset") or 0), 0)
+    clauses = []
+    params = []
+    for column in ("event_type", "actor_type", "target_type", "target_id", "session_id", "success"):
+        value = filters.get(column)
+        if value in (None, ""):
+            continue
+        if column == "success":
+            value = str(value).lower() in {"1", "true", "yes", "on", "succeeded", "success"}
+        clauses.append(f"{column} = %s")
+        params.append(value)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    with get_postgres_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT count(*) FROM security_audit_events {where}", params)
+            total = cur.fetchone()[0]
+            cur.execute(
+                f"""
+                SELECT id::text, event_type, actor_type, actor_id, username, target_type, target_id,
+                       session_id, ip_address, user_agent, success, metadata, created_at
+                FROM security_audit_events
+                {where}
+                ORDER BY created_at DESC
+                LIMIT %s OFFSET %s
+                """,
+                [*params, limit, offset],
+            )
+            rows = cur.fetchall()
+    return {
+        "items": [
+            {
+                "id": row[0],
+                "event_type": row[1],
+                "actor_type": row[2],
+                "actor_id": row[3],
+                "username": row[4],
+                "target_type": row[5],
+                "target_id": row[6],
+                "session_id": row[7],
+                "ip_address": row[8],
+                "user_agent": row[9],
+                "success": row[10],
+                "metadata": row[11] or {},
+                "created_at": row[12].isoformat() if row[12] else None,
+            }
+            for row in rows
+        ],
+        "limit": limit,
+        "offset": offset,
+        "total": total,
     }
