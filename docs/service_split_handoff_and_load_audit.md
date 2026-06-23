@@ -320,7 +320,9 @@ Cleanup recommendation:
 
 ## P0 Secret Hygiene Status
 
-Code-side hardening now redacts sensitive job-event payloads and high-volume dataframe/search logs. Worker/API Elastic logs no longer print raw search payloads, keywords, response bodies, or row data; dataframe routing logs avoid full local paths and DataFrame contents. Runtime defaults no longer fall back to the old hardcoded Neo4j password.
+Code-side hardening now redacts sensitive job-event payloads, high-volume dataframe/search logs, and `/configuration` API responses. Worker/API Elastic logs no longer print raw search payloads, keywords, response bodies, or row data; dataframe routing logs avoid full local paths and DataFrame contents. Runtime defaults no longer fall back to the old hardcoded Neo4j password. Sensitive configuration writes such as `active_tool_password`, `tool_credentials.password`, tokens, secrets, and authorization headers now require `users:manage` and are audited by key path only, not by value.
+
+Remaining design hardening: user-provided secrets are still stored as raw values inside PostgreSQL `session_configs.config` so workers can resolve them. The next step is an encrypted secret table or external secret manager where session config stores only `*_secret_ref` values.
 
 Still required on the live environment after any exposed value has appeared in chat, shell history, screenshots, or journals:
 

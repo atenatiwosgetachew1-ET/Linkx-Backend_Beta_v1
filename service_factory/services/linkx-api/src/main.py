@@ -413,11 +413,34 @@ def _normalize_configuration(config):
     return normalized
 
 
+SENSITIVE_CONFIG_KEY_PARTS = ("password", "secret", "token", "credential", "authorization", "x-api-key", "client_secret")
+
+
+def _sensitive_config_paths(value, prefix=""):
+    paths = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            key_text = str(key or "")
+            path = f"{prefix}.{key_text}" if prefix else key_text
+            lowered = key_text.lower()
+            if any(part in lowered for part in SENSITIVE_CONFIG_KEY_PARTS):
+                paths.append(path)
+            paths.extend(_sensitive_config_paths(item, path))
+    elif isinstance(value, list):
+        for idx, item in enumerate(value):
+            paths.extend(_sensitive_config_paths(item, f"{prefix}[{idx}]" if prefix else f"[{idx}]"))
+    return paths
+
+
+def _configuration_for_response(config):
+    return redact_value(_normalize_configuration(config))
+
+
 def _configuration_success(config, extra=None):
-    normalized = _normalize_configuration(config)
+    normalized = _configuration_for_response(config)
     results = {"configuration": normalized}
     if extra:
-        results.update(extra)
+        results.update(redact_value(extra))
     return jsonify({
         "message": "success",
         "results": results,
@@ -811,6 +834,23 @@ def configuration():
             config_dict = get_user_config(actor.get("id"), default_config=defaults) if actor and actor.get("actor_type") == "user" else defaults
         incoming_config = _configuration_payload(data)
         if incoming_config:
+            sensitive_paths = _sensitive_config_paths(incoming_config)
+            if sensitive_paths:
+                actor = current_actor_from_request()
+                if not actor or not actor_has_permission(actor, "users:manage"):
+                    current_app.logger.warning(
+                        "sensitive configuration write denied session_id=%s actor=%s paths=%s",
+                        session_id,
+                        redact_value(actor),
+                        sensitive_paths,
+                    )
+                    return _permission_denied("users:manage")
+                current_app.logger.info(
+                    "sensitive configuration updated session_id=%s actor=%s paths=%s",
+                    session_id,
+                    redact_value(actor),
+                    sensitive_paths,
+                )
             for key, value in incoming_config.items():
                 if key == "active_rule":
                     config_dict[key] = value if isinstance(value, list) else [value]
