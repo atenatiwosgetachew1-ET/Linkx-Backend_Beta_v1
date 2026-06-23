@@ -86,7 +86,9 @@ app.register_blueprint(ai_service_api, url_prefix="/ai")
 @app.after_request
 def apply_security_headers(response):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    response.headers.setdefault("X-Frame-Options", os.getenv("LINKX_FRAME_OPTIONS", "DENY"))
+    frame_options = os.getenv("LINKX_FRAME_OPTIONS")
+    if frame_options:
+        response.headers.setdefault("X-Frame-Options", frame_options)
     response.headers.setdefault("Referrer-Policy", os.getenv("LINKX_REFERRER_POLICY", "no-referrer"))
     response.headers.setdefault("Permissions-Policy", os.getenv("LINKX_PERMISSIONS_POLICY", "camera=(), microphone=(), geolocation=()"))
     

@@ -307,16 +307,16 @@ Observed sources of configuration:
 - The runtime code reads `LINKX_PARENT_SHARED_SECRET` in [auth/routes.py](../service_factory/services/linkx-api/src/auth/routes.py) and `LINKX_CTMS_JWKS_URL` in [auth/jwks_client.py](../service_factory/services/linkx-api/src/auth/jwks_client.py).
 
 Current behavior:
-- CTMS mode depends on `LINKX_CTMS_JWKS_URL` and `LINKX_CTMS_ORIGIN`.
-- Legacy parent-token mode depends on `LINKX_PARENT_SHARED_SECRET`.
-- If the shared secret is missing, `/auth/parent-token` returns `parent_federation_disabled`.
-- If the request header does not exactly match the shared secret, `/auth/parent-token` returns `unauthorized`.
+- CTMS mode is the primary `/auth/parent-token` path and depends on `LINKX_CTMS_JWKS_URL` plus `LINKX_CTMS_ORIGIN`.
+- CTMS tokens must be ES256 access JWTs signed by CTMS and verified through JWKS. Placeholder strings or the JWKS/public key itself correctly return `Invalid parent token`.
+- Legacy parent-token shared-secret mode is disabled by default and only runs when `LINKX_ENABLE_LEGACY_PARENT_TOKEN=true`. This prevents CTMS ES256 testing from being confused with `X-Linkx-Parent-Secret`.
+- `LINKX_PARENT_SHARED_SECRET` should be removed from systemd drop-ins after CTMS SSO is confirmed, unless a separate legacy integration still needs it.
 
 Cleanup recommendation:
-- Keep CTMS settings in one place only.
-- Keep the parent shared secret in one place only.
-- Remove malformed or duplicated `Environment=` lines from the systemd drop-in.
+- Keep CTMS settings in one place only, preferably `/opt/linkx-backend-api/.env` or one clearly named systemd drop-in.
+- Remove malformed or duplicated `Environment=` lines from systemd drop-ins.
 - Verify the final runtime env with `systemctl show linkx-api -p Environment` before testing parent-token again.
+- Final SSO proof requires a real CTMS access JWT with `alg=ES256`, `kid=ctms-auth-v1`, `token_type=access`, future `exp`, valid UUID `sub`, and CTMS `role`.
 
 ## 2026-06-22 CTMS Deployment Note
 
@@ -359,12 +359,18 @@ sudo systemctl stop linkx-api
 sudo systemctl reset-failed linkx-api
 ```
 
-The CTMS environment variables remain optional until the parent team provides real values. If they are not available, LinkX should continue using the legacy parent-token path:
+The CTMS environment is now known and should be configured for LinkX API runtime:
 
 ```bash
 LINKX_CTMS_JWKS_URL=http://172.27.23.213:3001/.well-known/jwks.json
 LINKX_CTMS_ORIGIN=http://172.27.23.107
+LINKX_AUTH_TOKEN_SECONDS=1800
+LINKX_ENABLE_LEGACY_PARENT_TOKEN=false
+LINKX_FRAME_OPTIONS=
+LINKX_CONTENT_SECURITY_POLICY=default-src 'self'; frame-ancestors 'self' http://172.27.23.107
 ```
+
+The only remaining CTMS-side dependency is a real CTMS ES256 access JWT for final `/auth/parent-token` verification.
 
 
 ## 2026-06-19 Operations Update

@@ -380,7 +380,10 @@ def parent_token():
             },
         }), 200
 
-    # Mode 2: Legacy HMAC header mode
+    # Mode 2: Legacy HMAC header mode. Disabled by default so CTMS ES256
+    # cannot be confused with the old parent shared-secret flow.
+    if not parent_access_token and str(os.getenv("LINKX_ENABLE_LEGACY_PARENT_TOKEN", "")).lower() not in {"1", "true", "yes", "on"}:
+        return jsonify({"error": "access_token is required"}), 400
     if not parent_access_token and not data.get("username") and not data.get("sub"):
         return jsonify({"error": "access_token is required"}), 400
 
