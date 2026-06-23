@@ -94,50 +94,99 @@ def claim_job(conn, queues, worker_name):
         return job
 
 
-def graph_stale_seconds():
+DEFAULT_JOB_TIMEOUT_SECONDS = {
+    "search": 300,
+    "graph": 300,
+    "dataframe": 3600,
+    "analysis": 7200,
+    "ingestion": 7200,
+}
+
+
+def _env_int(name, default):
     try:
-        return int(os.getenv("WORKER_GRAPH_STALE_SECONDS", "300"))
+        return int(os.getenv(name, str(default)))
     except (TypeError, ValueError):
-        return 300
+        return default
 
 
-def recover_stale_graph_jobs(conn, queues, worker_name):
-    if "graph" not in queues:
-        return 0
-    stale_seconds = graph_stale_seconds()
-    if stale_seconds <= 0:
-        return 0
+def _timeout_env_names(job_type=None, queue_name=None):
+    names = []
+    if job_type:
+        normalized_job_type = str(job_type).upper().replace("-", "_")
+        names.append(f"WORKER_JOB_TIMEOUT_SECONDS_{normalized_job_type}")
+    if queue_name:
+        normalized_queue = str(queue_name).upper().replace("-", "_")
+        names.append(f"WORKER_JOB_TIMEOUT_SECONDS_{normalized_queue}")
+    return names
 
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            UPDATE jobs
-            SET status = 'failed',
-                finished_at = NOW(),
-                locked_by = NULL,
-                locked_at = NULL,
-                error_message = 'stale graph_fetch recovered by worker'
-            WHERE queue_name = 'graph'
-              AND job_type = 'graph_fetch'
-              AND status = 'running'
-              AND started_at < NOW() - (%s * INTERVAL '1 second')
-            RETURNING id::text, session_id
-            """,
-            (stale_seconds,),
-        )
-        rows = cur.fetchall()
-        for job_id, session_id in rows:
-            emit_event(
-                cur,
-                {"id": job_id, "session_id": session_id},
-                "job_failed",
-                "stale graph_fetch recovered by worker",
-                {"worker": worker_name, "stale_seconds": stale_seconds},
+
+def job_timeout_seconds(job):
+    payload = job.get("payload") or {}
+    for key in ("timeout_seconds", "job_timeout_seconds"):
+        if payload.get(key) is not None:
+            try:
+                return int(payload[key])
+            except (TypeError, ValueError):
+                pass
+
+    queue_name = job.get("queue_name")
+    default = DEFAULT_JOB_TIMEOUT_SECONDS.get(queue_name, _env_int("WORKER_JOB_TIMEOUT_SECONDS_DEFAULT", 3600))
+    if queue_name == "graph":
+        default = _env_int("WORKER_GRAPH_STALE_SECONDS", default)
+
+    for env_name in _timeout_env_names(job.get("job_type"), queue_name):
+        if os.getenv(env_name) is not None:
+            return _env_int(env_name, default)
+    return default
+
+
+def recover_stale_jobs(conn, queues, worker_name):
+    recovered = 0
+
+    for queue_name in queues:
+        timeout_seconds = job_timeout_seconds({"queue_name": queue_name, "payload": {}})
+        if timeout_seconds <= 0:
+            continue
+        error_message = f"stale {queue_name} job recovered by worker after {timeout_seconds}s"
+
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE jobs
+                SET status = 'failed',
+                    finished_at = NOW(),
+                    locked_by = NULL,
+                    locked_at = NULL,
+                    error_message = %s
+                WHERE queue_name = %s
+                  AND status = 'running'
+                  AND started_at < NOW() - (%s * INTERVAL '1 second')
+                RETURNING id::text, session_id, job_type
+                """,
+                (error_message, queue_name, timeout_seconds),
             )
-        conn.commit()
+            rows = cur.fetchall()
+            for job_id, session_id, job_type in rows:
+                emit_event(
+                    cur,
+                    {"id": job_id, "session_id": session_id},
+                    "job_failed",
+                    error_message,
+                    {
+                        "worker": worker_name,
+                        "queue": queue_name,
+                        "job_type": job_type,
+                        "timeout_seconds": timeout_seconds,
+                    },
+                )
+            conn.commit()
+
         if rows:
-            print(f"[worker] recovered stale graph_fetch jobs count={len(rows)}", flush=True)
-        return len(rows)
+            recovered += len(rows)
+            print(f"[worker] recovered stale {queue_name} jobs count={len(rows)} timeout={timeout_seconds}s", flush=True)
+
+    return recovered
 
 
 def finish_job(conn, job, ok, result=None, error=None):
@@ -311,7 +360,7 @@ def run_loop(queues, poll_interval, once=False, concurrency=1):
         with connect() as conn:
             now_monotonic = time.monotonic()
             if now_monotonic - last_stale_recovery >= 30:
-                recover_stale_graph_jobs(conn, queues, worker_name)
+                recover_stale_jobs(conn, queues, worker_name)
                 last_stale_recovery = now_monotonic
 
             # First, free slots by handling completed or cancelled child jobs.
@@ -319,26 +368,27 @@ def run_loop(queues, poll_interval, once=False, concurrency=1):
                 job = active_job["job"]
                 process = active_job["process"]
                 if process.is_alive():
-                    stale_seconds = graph_stale_seconds()
+                    timeout_seconds = job_timeout_seconds(job)
                     elapsed = time.monotonic() - float(active_job.get("started_monotonic") or 0)
-                    if (
-                        job.get("queue_name") == "graph"
-                        and job.get("job_type") == "graph_fetch"
-                        and stale_seconds > 0
-                        and elapsed > stale_seconds
-                    ):
+                    if timeout_seconds > 0 and elapsed > timeout_seconds:
                         _terminate_child(process)
                         finish_job(
                             conn,
                             job,
                             False,
                             error={
-                                "error": "graph_fetch timed out",
-                                "stale_seconds": stale_seconds,
+                                "error": "job timed out",
+                                "queue": job.get("queue_name"),
+                                "job_type": job.get("job_type"),
+                                "timeout_seconds": timeout_seconds,
                             },
                         )
                         active_jobs.remove(active_job)
-                        print(f"[worker] timed out graph_fetch job_id={job['id']}", flush=True)
+                        print(
+                            f"[worker] timed out job_id={job['id']} type={job.get('job_type')} "
+                            f"queue={job.get('queue_name')} timeout={timeout_seconds}s",
+                            flush=True,
+                        )
                     elif is_cancel_requested(conn, session_id=job.get("session_id"), job_id=job.get("id")):
                         _cancel_job(conn, job, active_job=active_job)
                         active_jobs.remove(active_job)

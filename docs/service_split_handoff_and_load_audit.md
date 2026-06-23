@@ -652,9 +652,24 @@ If ordinary terminate creates `cleanup_type = session` or deletes `/mnt/linkx-ar
 | 2 | Reboot persistence test for server 3 and server 4 NFS mounts | Ensure worker/cleanup still see shared artifacts after restart/reboot | Done, both NFS mounts and services survived reboot |
 | 3 | Cleanup Neo4j startup retry | Avoid transient post-reboot routing failures before Neo4j is fully ready | Done in cleanup task retry helper |
 | 4 | Remove old local artifact backups | Avoid confusion and stale duplicate files after NFS migration | Done on server 3 and server 4 |
-| 5 | Continue moving heavy API routes to worker jobs | API should remain orchestration/auth/socket layer only | Ongoing, get_graph relationship fetch now queues graph_fetch on worker |
+| 5 | Continue moving heavy API routes to worker jobs | API should remain orchestration/auth/socket layer only | Ongoing, get_graph relationship fetch now queues graph_fetch on worker; worker runner has generic stale/running job timeout recovery |
 | 6 | Keep `neo4j_residue_scan` report-only until reviewed over time | Avoid deleting non-LinkX data accidentally | Active, report-only, currently clean |
 | 7 | Eventually add an admin cleanup/audit UI endpoint for manual session cleanup and residue review | Makes operations safer for admins | Pending |
+
+### Worker Timeout Recovery
+
+Server 3 worker runner now protects all queues from stuck running jobs, not only graph fetches. Active child processes are terminated and marked failed when they exceed their configured timeout, and stale `running` rows left by dead workers are recovered on the next worker scan. Defaults are conservative and can be tuned per service:
+
+```bash
+WORKER_JOB_TIMEOUT_SECONDS_SEARCH=300
+WORKER_JOB_TIMEOUT_SECONDS_GRAPH=300
+WORKER_JOB_TIMEOUT_SECONDS_DATAFRAME=3600
+WORKER_JOB_TIMEOUT_SECONDS_ANALYSIS=7200
+WORKER_JOB_TIMEOUT_SECONDS_INGESTION=7200
+WORKER_GRAPH_STALE_SECONDS=300
+```
+
+Use `0` only for controlled debugging; production workers should keep timeout recovery enabled so queued work cannot be blocked forever by a lost child process.
 
 ### Quick Health Checklist
 
