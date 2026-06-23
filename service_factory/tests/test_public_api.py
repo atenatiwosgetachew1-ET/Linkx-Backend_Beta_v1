@@ -225,7 +225,7 @@ class STRLinkAnalysisApiTest(unittest.TestCase):
             "active_tool_protocol": "neo4j://172.21.22.88",
             "tool_protocol_port": "7687",
             "active_tool_username": "neo4j",
-            "active_tool_password": "neo4j123",
+            "active_tool_password": "test-neo4j-password",
             "default_source_col": "accountno",
             "default_target_col": "benaccountno",
             "default_relationship": "TRANSACTS_TO",
@@ -247,7 +247,7 @@ class STRLinkAnalysisApiTest(unittest.TestCase):
         self.assertEqual(link_payload["dataframe_dir"], "public/temp_dfParts/merged_dfpart_499767/")
         self.assertEqual(link_payload["tool"], "neo4j")
         self.assertEqual(link_payload["tool_credentials"]["url"], "neo4j://172.21.22.88:7687")
-        self.assertEqual(link_payload["tool_credentials"]["password"], "neo4j123")
+        self.assertEqual(link_payload["tool_credentials"]["password"], "test-neo4j-password")
         self.assertEqual(link_payload["action"], "Link Analysis")
         self.assertEqual(link_payload["rule"], "bank transactions")
         self.assertEqual(relationship_payload["action"], "Source / Target Relationship")
@@ -263,7 +263,7 @@ class STRLinkAnalysisApiTest(unittest.TestCase):
             "active_tool_protocol": "neo4j://172.21.22.88",
             "tool_protocol_port": "7687",
             "active_tool_username": "neo4j",
-            "active_tool_password": "neo4j123",
+            "active_tool_password": "test-neo4j-password",
             "default_source_col": "sender_account",
             "default_target_col": "receiver_account",
             "default_relationship": "SENDS_TO",

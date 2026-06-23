@@ -318,6 +318,30 @@ Cleanup recommendation:
 - Verify the final runtime env with `systemctl show linkx-api -p Environment` before testing parent-token again.
 - Final SSO proof requires a real CTMS access JWT with `alg=ES256`, `kid=ctms-auth-v1`, `token_type=access`, future `exp`, valid UUID `sub`, and CTMS `role`.
 
+## P0 Secret Hygiene Status
+
+Code-side hardening now redacts sensitive job-event payloads and high-volume dataframe/search logs. Worker/API Elastic logs no longer print raw search payloads, keywords, response bodies, or row data; dataframe routing logs avoid full local paths and DataFrame contents. Runtime defaults no longer fall back to the old hardcoded Neo4j password.
+
+Still required on the live environment after any exposed value has appeared in chat, shell history, screenshots, or journals:
+
+1. Rotate PostgreSQL `linkx` password and update Server 1 API, Server 3 workers, and Server 4 cleanup env files.
+2. Rotate Neo4j password and update API/worker/cleanup env files.
+3. Rotate `LINKX_FLASK_SECRET_KEY`; expect current LinkX-issued tokens/sessions to expire.
+4. Change the built-in/admin user password and avoid placing it directly in pasted curl commands.
+5. Remove any stale `LINKX_PARENT_SHARED_SECRET` drop-ins unless legacy parent-token mode is explicitly re-enabled.
+6. Keep `/opt/linkx-*/.env` owned by the service owner/root and set to `chmod 600`; do not commit real env files.
+7. Keep CTMS SSO on ES256/JWKS only; do not accept HS256/shared-secret tokens for CTMS.
+
+Recommended post-rotation verification:
+
+```bash
+# Server 1 / Server 3 / Server 4 as applicable
+sudo find /opt -maxdepth 3 -name '.env' -exec ls -l {} \;
+sudo journalctl -u linkx-api -u linkx-search-worker -u linkx-dataframe-worker -u linkx-analysis-worker -u linkx-graph-worker -n 300 --no-pager | grep -Ei 'password|secret|token|authorization|postgresql://|neo4j://.*@'
+```
+
+The grep should not show raw credential values. It may show safe field names or redacted `***` values.
+
 ## 2026-06-22 CTMS Deployment Note
 
 The current Server 1 CTMS rollout failed on startup because the deployed venv did not yet have PyJWT installed. The error surfaced as `ModuleNotFoundError: No module named 'jwt'` while importing [auth/tokens.py](../service_factory/services/linkx-api/src/auth/tokens.py).

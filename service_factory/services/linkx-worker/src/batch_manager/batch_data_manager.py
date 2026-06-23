@@ -17,6 +17,7 @@ from globals import load_temp_config, save_temp_config
 from batch_manager.utils.artifact_utils import ensure_artifact_dir
 import re
 from werkzeug.utils import secure_filename
+from security.redaction import redact_value
 
 def _is_kafka_batch_topic(topic):
     topic_name = str(topic or "")
@@ -309,12 +310,12 @@ def batch_data_manager(payload):
                                 candidates.append(f)
                         if candidates:
                             local_path = os.path.join(uploads_dir, candidates[0])
-                            print("Fallback: matched upload file:", local_path)
+                            print("Fallback: matched upload file:", os.path.basename(local_path))
                             break
 
                     if not local_path:
                         attempted = [os.path.join(d, f"{s}_{safe_name}") for s, d in upload_dirs]
-                        print("No matching uploaded file found. Checked:", attempted)
+                        print("No matching uploaded file found. Checked count:", len(attempted))
                         return None
 
                     df = load_file(local_path, session_id, use_spark)
@@ -368,7 +369,7 @@ def batch_data_manager(payload):
                         max_rows=max_rows,
                         from_beginning=from_beginning,
                     )
-                print("df:", df)
+                print("df loaded:", type(df).__name__, getattr(df, "shape", None))
                 return df
             except Exception as e:
                 print("Error in address source handler:", e)
@@ -426,7 +427,7 @@ def batch_data_manager(payload):
                 spark_port = load_temp_config("spark_port", session_id)
                 spark = get_spark_session(storage_ip, spark_port, hdfs_uri=storage_hdfs_uri)            
                 hdfs_categories = _normalize_raw_hdfs_paths(hdfs_categories, storage_hdfs_uri)
-                print("Consists hdfs file values",hdfs_categories)                               
+                print("Consists hdfs file values", redact_value(hdfs_categories))                               
                 try:
                     df = load_hdfs_files(spark,hdfs_categories)
                     if df:
@@ -446,7 +447,7 @@ def batch_data_manager(payload):
                         failed_sources.append(_source_failure(item, "Raw HDFS source failed", e))                    
             # ---------------------------------------------------------------- Elastic DFs (default limit 100,000)
             if len(elastic_categories) > 0: #Consists an elastic datas
-                print("Consists elastic values",elastic_categories)               
+                print("Consists elastic values", redact_value(elastic_categories))               
                 for file in elastic_categories:      
                     id = "fetch"
                     search_column = file.get('column')    
@@ -546,7 +547,7 @@ def batch_data_manager(payload):
                         failed_sources.append(_source_failure(file, "Hive source failed", e))
 
             if failed_sources and not allow_partial_dataframe:
-                print("Selected dataframe sources failed:", failed_sources)
+                print("Selected dataframe sources failed:", redact_value(failed_sources))
                 return {
                     "status": "failed",
                     "message": "Selected dataframe sources failed. No partial dataframe was saved.",
@@ -620,7 +621,7 @@ def batch_data_manager(payload):
             #--------------------------------------------------------------------------            
             #print("search params:","keyword:",keyword,"date:",date,"offset:",offset,"limit:",limit,"hybrid:",hybrid,"strict:",strict,"api_search_endpoint:",api_search_endpoint,"search_columns_elastic:",search_columns_elastic,"search_columns_hive:",search_columns_hive)
             response = es_keyword_search(action_id, API_URL, keyword, search_columns_elastic, strict, date_column, date, limit=limit, offset=offset) #Overrides to hive (Result out of bound)        
-            print("es_response:",response)
+            print("es_response:", redact_value(response))
         else:#Staric Row files search
             normalized_keyword = str(keyword or "").strip()
             if normalized_keyword and not re.search(r"[A-Za-z0-9]", normalized_keyword):

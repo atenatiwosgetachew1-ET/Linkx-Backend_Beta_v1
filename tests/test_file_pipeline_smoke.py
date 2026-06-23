@@ -19,7 +19,7 @@ class FilePipelineSmokeTest(unittest.TestCase):
         import main
 
         client = main.app.test_client()
-        login_response = client.post("/auth/login", json={"username": "admin", "password": "Admin@12345"})
+        login_response = client.post("/auth/login", json={"username": "admin", "password": "TestAdminPassword123!"})
         self.assertEqual(login_response.status_code, 200)
         token = login_response.get_json()["token"]
         init_response = client.post("/init", json={}, headers={"Authorization": f"Bearer {token}"})

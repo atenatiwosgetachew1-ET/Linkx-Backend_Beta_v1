@@ -2,11 +2,30 @@ import requests
 import os
 import shutil
 import logging
+from urllib.parse import urlsplit
 from pyspark.sql import Row
 import polars as pl
 import pandas as pd
 from batch_manager.utils.hive_utils import hive_keyword_search
 from batch_manager.utils.spark_utils import ensure_spark_df
+from security.redaction import redact_value
+
+
+def _safe_api_label(url):
+    try:
+        parsed = urlsplit(str(url or ""))
+        return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+    except Exception:
+        return "<invalid-url>"
+
+
+def _log_es_request(label, api_url, payload):
+    safe_payload = dict(payload or {})
+    for key in list(safe_payload.keys()):
+        if str(key).lower() not in {"limit", "offset", "size", "from", "batch_size", "page_size", "scroll_size"}:
+            safe_payload[key] = "***"
+    print(f"{label}: api={_safe_api_label(api_url)} payload={redact_value(safe_payload)}", flush=True)
+
 
 def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_column, date=None, fetch_columns=None, timeout=30, limit=None, offset=0, batch_size=None):
     if not search_column:
@@ -27,7 +46,7 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
             if id == "fetch":
                 if strict_mood:
                     used_payload = {column: keyword}
-                    print("DF payload ES:", used_payload)
+                    _log_es_request("DF payload ES", API_URL, used_payload)
                     response = requests.post(API_URL, json=used_payload, timeout=timeout)
                     response.raise_for_status()
                     result = response.json()
@@ -56,7 +75,7 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
                         request_offset = 0
                     request_offset = max(0, request_offset)
                     payload.update({"limit": request_limit, "offset": request_offset, "size": request_limit, "from": request_offset})
-                print("DF payload ES:", payload)
+                _log_es_request("DF payload ES", API_URL, payload)
                 response = requests.post(API_URL, json=payload, timeout=timeout)
                 response.raise_for_status()
                 result = response.json()
@@ -81,7 +100,7 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
             ]
 
         if not results:
-            print("result not found1:", API_URL, payload, timeout, result, results)
+            print("Elastic result not found", {"api": _safe_api_label(API_URL), "timeout": timeout, "result_keys": list(result.keys()) if isinstance(result, dict) else type(result).__name__}, flush=True)
             return None
 
         if len(results) >= 100000:
@@ -148,8 +167,7 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
 
     except requests.exceptions.HTTPError as e:
         status_code = e.response.status_code if e.response is not None else None
-        response_text = e.response.text[:500] if e.response is not None else ""
-        print("Elastic error:", str(e), response_text)
+        print("Elastic error:", type(e).__name__, {"status_code": status_code, "api": _safe_api_label(API_URL)}, flush=True)
         if id == "search" and not strict_mood and status_code and status_code >= 500:
             column = search_columns[0] if search_columns else search_column
             return {
@@ -215,7 +233,7 @@ def _fetch_es_pages(API_URL, column, keyword, limit=None, offset=0, batch_size=N
         }
         if scroll_id:
             payload["scroll_id"] = scroll_id
-        print("DF payload ES:", payload)
+        _log_es_request("DF payload ES", API_URL, payload)
         response = requests.post(API_URL, json=payload, timeout=timeout)
         response.raise_for_status()
         result = response.json()
@@ -257,7 +275,7 @@ def _row_value(row, key):
 
 
 def load_elastic_rows(API_URL, keyword, search_column, fetch_columns, date=None, timeout=30):
-    print(API_URL, keyword, search_column, fetch_columns, date=None, timeout=30)
+    print("load_elastic_rows", {"api": _safe_api_label(API_URL), "search_column": search_column, "fetch_columns_count": len(fetch_columns or []), "timeout": timeout}, flush=True)
     if not search_column:
         return {"error": "search_column must be provided"}
 
@@ -321,7 +339,7 @@ def load_elastic_rows(API_URL, keyword, search_column, fetch_columns, date=None,
         print("error:","API server not reachable")
         return None
     except requests.exceptions.HTTPError:
-        print("error:", "API returned an error",response.text)
+        print("error:", "API returned an error", {"api": _safe_api_label(API_URL), "status_code": response.status_code}, flush=True)
         return None
 
 
@@ -405,7 +423,7 @@ def es_keyword_search_spark_chunks(
         try:
             if strict_mood:
                 payload = {column: keyword}
-                print("DF payload ES chunk:", payload)
+                _log_es_request("DF payload ES chunk", API_URL, payload)
                 response = requests.post(API_URL, json=payload, timeout=timeout)
                 response.raise_for_status()
                 last_result = response.json()
@@ -445,7 +463,7 @@ def es_keyword_search_spark_chunks(
                 }
                 if scroll_id:
                     payload["scroll_id"] = scroll_id
-                print("DF payload ES chunk:", payload)
+                _log_es_request("DF payload ES chunk", API_URL, payload)
                 response = requests.post(API_URL, json=payload, timeout=timeout)
                 response.raise_for_status()
                 last_result = response.json()
@@ -471,13 +489,12 @@ def es_keyword_search_spark_chunks(
             if total_written:
                 break
         except requests.exceptions.HTTPError as exc:
-            text = exc.response.text[:500] if exc.response is not None else ""
-            print("Elastic chunk fetch HTTP error:", exc, text)
+            print("Elastic chunk fetch HTTP error:", type(exc).__name__, {"api": _safe_api_label(API_URL), "status_code": exc.response.status_code if exc.response is not None else None}, flush=True)
         except Exception as exc:
             print("Elastic chunk fetch error:", exc)
 
     if total_written <= 0 or not page_spark_dfs:
-        print("Elastic chunk fetch produced no rows", API_URL, keyword, search_column, last_result)
+        print("Elastic chunk fetch produced no rows", {"api": _safe_api_label(API_URL), "search_column": search_column, "result_keys": list(last_result.keys()) if isinstance(last_result, dict) else type(last_result).__name__}, flush=True)
         return None
 
     try:

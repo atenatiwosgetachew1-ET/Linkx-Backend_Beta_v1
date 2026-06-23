@@ -1,38 +1,49 @@
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 *.pyd
+.pytest_cache/
+.mypy_cache/
 
-# Virtual env
+# Virtual envs
 venv/
+.venv/
+
+# Local environment and secret material
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.secret
+secrets/
+private/
 
 # Runtime / temp data
+runtime/
+logs/
+*.log
 public/temp_*
+public/temp_config/
 public/temp_logs/
 public/temp_dfParts/
 public/temp_uploads/
+public/temp_rules/
 
-# Editors
-*.swp
-*.swo
-
-# OS
-.DS_Store
-1~# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Virtual env
-venv/
-
-# Runtime / temp data
-public/temp_*
-public/temp_logs/
-public/temp_dfParts/
-public/temp_uploads/
+# Deployment artifacts / large local data
+*.parquet
+*.csv
+*.xlsx
+*.jsonl
+*.dump
+*.sql
 
 # Editors
 *.swp

@@ -48,7 +48,7 @@ Body:
 ```json
 {
   "username": "admin",
-  "password": "Admin@12345"
+  "password": "<admin-password>"
 }
 ```
 
