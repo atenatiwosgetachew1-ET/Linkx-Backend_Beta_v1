@@ -154,17 +154,27 @@ class JWKSClient:
 
 # Global CTMS JWKS client (lazy-loaded on first use)
 _ctms_jwks_client = None
+_ctms_jwks_client_url = None
 
 
 def get_ctms_jwks_client() -> Optional[JWKSClient]:
     """Get or create the CTMS JWKS client."""
-    global _ctms_jwks_client
-    
-    ctms_jwks_url = os.getenv("LINKX_CTMS_JWKS_URL")
+    global _ctms_jwks_client, _ctms_jwks_client_url
+
+    ctms_jwks_url = (
+        os.getenv("LINKX_CTMS_JWKS_URL")
+        or os.getenv("LINKX_PARENT_JWT_JWKS_URL")
+    )
     if not ctms_jwks_url:
         return None
-    
-    if _ctms_jwks_client is None:
-        _ctms_jwks_client = JWKSClient(ctms_jwks_url)
-    
+
+    cache_ttl = int(
+        os.getenv("LINKX_CTMS_JWKS_CACHE_SECONDS")
+        or os.getenv("LINKX_PARENT_JWKS_CACHE_SECONDS")
+        or "3600"
+    )
+    if _ctms_jwks_client is None or _ctms_jwks_client_url != ctms_jwks_url:
+        _ctms_jwks_client = JWKSClient(ctms_jwks_url, cache_ttl_seconds=cache_ttl)
+        _ctms_jwks_client_url = ctms_jwks_url
+
     return _ctms_jwks_client

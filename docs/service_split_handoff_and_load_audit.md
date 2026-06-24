@@ -425,10 +425,15 @@ sudo systemctl stop linkx-api
 sudo systemctl reset-failed linkx-api
 ```
 
-The CTMS environment is now known and should be configured for LinkX API runtime:
+The CTMS environment is now known and should be configured for LinkX API runtime. Prefer JWKS because it supports key rotation:
 
 ```bash
 LINKX_CTMS_JWKS_URL=http://172.27.23.213:3001/.well-known/jwks.json
+LINKX_PARENT_AUTH_BASE_URL=http://172.27.23.213:3001
+LINKX_PARENT_AUTH_ALLOWED_HOSTS=172.27.23.213
+LINKX_PARENT_AUTH_ALLOW_HTTP=true
+LINKX_PARENT_JWT_JWKS_URL=http://172.27.23.213:3001/.well-known/jwks.json
+LINKX_PARENT_JWKS_CACHE_SECONDS=3600
 LINKX_CTMS_ORIGIN=http://172.27.23.107
 LINKX_AUTH_TOKEN_SECONDS=1800
 LINKX_ENABLE_LEGACY_PARENT_TOKEN=false
@@ -436,7 +441,22 @@ LINKX_FRAME_OPTIONS=
 LINKX_CONTENT_SECURITY_POLICY=default-src 'self'; frame-ancestors 'self' http://172.27.23.107
 ```
 
-The only remaining CTMS-side dependency is a real CTMS ES256 access JWT for final `/auth/parent-token` verification.
+CTMS also provided the matching ES256 public key. This is a public verifier key, not a shared secret and not a token. Keep it only as a fallback if JWKS is unavailable:
+
+```text
+-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEjM98cnQ+950yGc1dtiXRdFj0tsrt
++zfFs0gRGyJZfWagqcb/aW9oFmxgjikMJdA8AYsFARX8b+OZCqgNdkvjDQ==
+-----END PUBLIC KEY-----
+```
+
+Fallback file path if needed:
+
+```bash
+LINKX_PARENT_JWT_PUBLIC_KEY_FILE=/etc/linkx/ctms-es256-public.pem
+```
+
+The only remaining CTMS-side dependency is a real CTMS ES256 access JWT for final `/auth/parent-token` verification. Do not test with the public key itself; public keys correctly return `Invalid parent token` when submitted as `access_token`.
 
 
 ## 2026-06-19 Operations Update
@@ -721,7 +741,7 @@ If ordinary terminate creates `cleanup_type = session` or deletes `/mnt/linkx-ar
 | 5 | Continue moving heavy API routes to worker jobs | API should remain orchestration/auth/socket layer only | Ongoing, get_graph relationship fetch now queues graph_fetch on worker; worker runner has generic stale/running job timeout recovery |
 | 6 | Keep `neo4j_residue_scan` report-only until reviewed over time | Avoid deleting non-LinkX data accidentally | Active, report-only, currently clean |
 | 7 | Eventually add an admin cleanup/audit UI endpoint for manual session cleanup and residue review | Makes operations safer for admins | API endpoints exist for cleanup/security audit; frontend UI still pending |
-| 8 | Backup/restore evidence | Production recovery must be proven, not assumed | Postgres and artifact restore drills verified; encrypted off-host target and Neo4j backup method still pending |
+| 8 | Backup/restore evidence | Production recovery must be proven, not assumed | Postgres, artifacts, and Neo4j offline dump/load drills verified; encrypted off-host target and future non-empty graph drill still pending |
 
 ### Worker Timeout Recovery
 
@@ -747,7 +767,7 @@ This is the current backup/restore baseline. Treat it as an operational control,
 |---|---|---|---|---|
 | PostgreSQL control DB | Server 2 `linkx-postgres` | Custom-format `pg_dump` into `/opt/linkx-backups/postgres` | Restore into `linkx_restore_test`, verify key table counts, then drop test DB | Verified 2026-06-23 with checksum OK and restore drill passed |
 | Shared artifacts | Server 1 `/mnt/linkx-artifacts` | Tar snapshot script into `/opt/linkx-backups/artifacts`; encrypted off-host target still preferred | Restore to an isolated empty directory and verify directory/file counts | Verified 2026-06-24 with checksum OK and restore drill passed; off-host target still pending |
-| Neo4j graph DB | Server 4 `linkx-neo4j` | Prefer Neo4j backup tooling if licensed; otherwise maintenance-window dump/export | Restore to an isolated Neo4j container and run count/query smoke tests | Requires final method selection |
+| Neo4j graph DB | Server 4 `linkx-neo4j` | Maintenance-window offline `neo4j-admin database dump` to `/opt/linkx-backups/neo4j`; online backup not enabled yet | Restore to an isolated Neo4j container and run count/query smoke tests | Verified 2026-06-24 with checksum and isolated load; repeat after non-empty ingestion data |
 | Redis queue/cache | Server 2 `linkx-redis` | Optional RDB snapshot if queued/running jobs must survive host loss | Restart Redis from copied RDB in a test container | Optional; Postgres remains the source of truth |
 | Secret material | `.env` files and `LINKX_SECRET_ENCRYPTION_KEY` | Store in a protected secret manager/offline escrow, never in Git | Prove API can decrypt one managed secret after restore | Required before production backup sign-off |
 
@@ -832,6 +852,20 @@ Recorded artifact restore evidence:
 | Restore target | `/opt/linkx-restore-tests/artifacts_20260624T075512Z` on Server 1 |
 | Verification checks | restored `linkx-artifacts` tree with `configs`, `dfparts`, `graphs`, `logs`, `reports`, `rules`, and `uploads`; file count `3`, directory count `10`, size `12M` |
 | Result | `passed`; restore was isolated from live `/mnt/linkx-artifacts` |
+
+
+Recorded Neo4j restore evidence:
+
+| Field | Value |
+|---|---|
+| Backup file/path | `/opt/linkx-backups/neo4j/20260624T092050Z/neo4j.dump` |
+| SHA256 | `0b3cffa0627dba287ab6c9fe1cddae6a41be27fead99c2113a801ebaf896a3f6` |
+| Backup timestamp UTC | `2026-06-24T09:20:50Z` |
+| Backup method | Offline maintenance-window `neo4j-admin database dump neo4j`; live Neo4j and cleanup services stopped during dump, then restarted |
+| Restore target | isolated Docker volume/container `linkx-neo4j-restore-test-20260624T092050Z` on ports `17474/17687` |
+| Verification checks | `neo4j-admin database load` processed `309/309` files; restored container started; count queries returned `nodes=0`, `relationships=0`, matching pre-backup live counts |
+| Result | `passed`; isolated restore container and volume removed after verification |
+| Caveat | Current live graph was empty. Repeat this restore drill after a representative ingestion creates nonzero nodes/relationships. |
 
 ### Quick Health Checklist
 
