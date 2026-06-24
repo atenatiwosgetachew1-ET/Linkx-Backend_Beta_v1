@@ -768,8 +768,8 @@ This is the current backup/restore baseline. Treat it as an operational control,
 | PostgreSQL control DB | Server 2 `linkx-postgres` | Custom-format `pg_dump` into `/opt/linkx-backups/postgres` | Restore into `linkx_restore_test`, verify key table counts, then drop test DB | Verified 2026-06-23 with checksum OK and restore drill passed |
 | Shared artifacts | Server 1 `/mnt/linkx-artifacts` | Tar snapshot script into `/opt/linkx-backups/artifacts`; encrypted off-host target still preferred | Restore to an isolated empty directory and verify directory/file counts | Verified 2026-06-24 with checksum OK and restore drill passed; off-host target still pending |
 | Neo4j graph DB | Server 4 `linkx-neo4j` | Maintenance-window offline `neo4j-admin database dump` to `/opt/linkx-backups/neo4j`; online backup not enabled yet | Restore to an isolated Neo4j container and run count/query smoke tests | Verified 2026-06-24 with checksum and isolated load; repeat after non-empty ingestion data |
-| Redis queue/cache | Server 2 `linkx-redis` | Optional RDB snapshot if queued/running jobs must survive host loss | Restart Redis from copied RDB in a test container | Optional; Postgres remains the source of truth |
-| Secret material | `.env` files and `LINKX_SECRET_ENCRYPTION_KEY` | Store in a protected secret manager/offline escrow, never in Git | Prove API can decrypt one managed secret after restore | Runbook added; escrow and decrypt proof pending |
+| Redis queue/cache | Server 2 `linkx-redis` | Treat as disposable coordination/cache state while workers claim durable jobs from Postgres | Restart Redis empty; optionally capture RDB if future Redis queues become durable | Policy: no required backup today; monitor key usage before changing |
+| Secret material | `.env` files and `LINKX_SECRET_ENCRYPTION_KEY` | Store in a protected secret manager/offline escrow, never in Git | Prove API can decrypt one managed secret after restore | Verified; escrow copy kept with developer, no secret values documented |
 
 Suggested RPO/RTO target until the business sets formal values:
 
@@ -779,6 +779,7 @@ Suggested RPO/RTO target until the business sets formal values:
 | Artifacts | 24h | 2-4h | Use incremental file backup where possible; artifact volume can grow quickly. |
 | Neo4j | 24h or before graph schema changes | 2-4h | Restore time depends on graph size and whether offline dump is required. |
 | Secrets | Immediate after rotation | 1h | Losing `LINKX_SECRET_ENCRYPTION_KEY` makes managed secret refs unrecoverable. |
+| Redis | Disposable unless durable queues are moved into Redis | Minutes | Current worker queue is Postgres-backed; Redis can restart empty unless future code stores durable work there. |
 
 Server 2 PostgreSQL backup:
 
@@ -930,12 +931,36 @@ Record evidence after the smoke test:
 
 | Field | Value |
 |---|---|
-| Escrow location | pending, do not write the secret value here |
-| Escrow owners | pending |
-| Server 1 key fingerprint | pending |
-| Server 3 key fingerprint | pending |
-| Decrypt smoke test | pending |
-| Result | pending |
+| Escrow location | kept separately with developer; no secret values documented here |
+| Escrow owners | developer-held recovery copy |
+| Server 1 key fingerprint | `2090083b86a828bb5934aef0b71092df686e64b915583e1da1049b5406035503` |
+| Server 3 key fingerprint | `2090083b86a828bb5934aef0b71092df686e64b915583e1da1049b5406035503` |
+| Decrypt smoke test | `decrypt_ok=True`, `secret_type=active_tool_password`, `plaintext_length=44`; secret id redacted |
+| Result | decrypt proof passed, Server 1/Server 3 key fingerprints match, and recovery copy is kept separately with developer |
+
+
+### P2 Redis Backup Policy
+
+Current policy: Redis is disposable coordination/cache state. Durable jobs, job events, sessions, artifacts, cleanup records, users, and managed secrets are stored in PostgreSQL and artifact/graph storage, not Redis.
+
+Operational check on Server 2:
+
+```bash
+sudo docker exec -it linkx-redis redis-cli INFO persistence
+sudo docker exec -it linkx-redis redis-cli DBSIZE
+sudo docker exec -it linkx-redis redis-cli --scan | head -50
+```
+
+If `DBSIZE` is near zero or keys are short-lived coordination/progress keys, no Redis backup is required. If future changes move durable queues or irreplaceable state into Redis, enable an RDB/AOF backup drill and add restore evidence here.
+
+Optional one-off Redis RDB capture if needed later:
+
+```bash
+sudo mkdir -p /opt/linkx-backups/redis
+sudo docker exec linkx-redis redis-cli BGSAVE
+sudo docker cp linkx-redis:/data/dump.rdb /opt/linkx-backups/redis/dump_$(date -u +%Y%m%dT%H%M%SZ).rdb
+sudo sha256sum /opt/linkx-backups/redis/*.rdb | tail
+```
 
 ### Quick Health Checklist
 
