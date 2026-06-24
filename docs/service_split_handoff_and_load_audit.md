@@ -973,6 +973,80 @@ Recorded Redis policy evidence:
 | Scan sample | no keys returned |
 | Result | no Redis backup required today; Redis can restart empty because durable state is Postgres/artifact/Neo4j-backed |
 
+
+### P2 Scheduled Backups And Retention
+
+Manual restore drills are proven. The next operational layer is scheduled local backups plus an off-host copy target. Timer templates are now in the repo; install them only after confirming paths on each server.
+
+| Server | Timer | Backup | Default Schedule | Retention |
+|---|---|---|---|---|
+| Server 2 | `linkx-postgres-backup.timer` | PostgreSQL custom dump | Daily `01:15 UTC` plus randomized delay | `14` days |
+| Server 1 | `linkx-artifacts-backup.timer` | `/mnt/linkx-artifacts` tar snapshot | Daily `01:45 UTC` plus randomized delay | `14` days |
+| Server 4 | `linkx-neo4j-backup.timer` | Offline Neo4j dump, stops Neo4j/cleanup briefly | Daily `02:30 UTC` plus randomized delay | `14` days |
+
+Install on Server 2:
+
+```bash
+cd /opt/linkx-backend-update
+sudo git pull
+sudo cp service_factory/services/linkx-control-data/deploy/systemd/linkx-postgres-backup.service /etc/systemd/system/
+sudo cp service_factory/services/linkx-control-data/deploy/systemd/linkx-postgres-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now linkx-postgres-backup.timer
+systemctl list-timers 'linkx-postgres-backup*'
+```
+
+Install on Server 1:
+
+```bash
+cd /opt/linkx-backend-update
+sudo git pull
+sudo cp service_factory/deploy/systemd/linkx-artifacts-backup.service /etc/systemd/system/
+sudo cp service_factory/deploy/systemd/linkx-artifacts-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now linkx-artifacts-backup.timer
+systemctl list-timers 'linkx-artifacts-backup*'
+```
+
+Install on Server 4:
+
+```bash
+cd /opt/linkx-backend-update
+sudo git pull
+sudo cp service_factory/services/linkx-graph-maintenance/deploy/systemd/linkx-neo4j-backup.service /etc/systemd/system/
+sudo cp service_factory/services/linkx-graph-maintenance/deploy/systemd/linkx-neo4j-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now linkx-neo4j-backup.timer
+systemctl list-timers 'linkx-neo4j-backup*'
+```
+
+Optional off-host sync target:
+
+```bash
+sudo systemctl edit linkx-artifacts-backup.service
+sudo systemctl edit linkx-neo4j-backup.service
+```
+
+Add an override when a real encrypted/off-host destination exists:
+
+```ini
+[Service]
+Environment="LINKX_BACKUP_OFFHOST_TARGET=backup-user@backup-host:/srv/linkx-backups/<server-name>"
+Environment="LINKX_BACKUP_RSYNC_OPTS=-aH --numeric-ids --delete --partial"
+```
+
+Do not enable off-host sync to an unencrypted or untrusted target. Until `LINKX_BACKUP_OFFHOST_TARGET` is set, the sync script exits cleanly and local backups continue.
+
+Verification after timer install:
+
+```bash
+systemctl list-timers 'linkx-*backup*'
+sudo journalctl -u linkx-postgres-backup -u linkx-artifacts-backup -u linkx-neo4j-backup --since today --no-pager
+sudo find /opt/linkx-backups -maxdepth 3 -type f | sort | tail -50
+```
+
+Current status: timer templates and retention scripts are ready; live timer installation and off-host target are still pending.
+
 ### Quick Health Checklist
 
 Server 1:

@@ -1,0 +1,14 @@
+[Unit]
+Description=LinkX PostgreSQL Backup
+Wants=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/linkx-backend-update/service_factory/services/linkx-control-data
+Environment=BACKUP_DIR=/opt/linkx-backups/postgres
+Environment=BACKUP_ROOT=/opt/linkx-backups/postgres
+Environment=RETENTION_DAYS=14
+ExecStart=/opt/linkx-backend-update/service_factory/services/linkx-control-data/scripts/backup-postgres.sh
+ExecStartPost=/opt/linkx-backend-update/service_factory/scripts/prune-backups.sh
+ExecStartPost=/opt/linkx-backend-update/service_factory/scripts/sync-backups-offhost.sh

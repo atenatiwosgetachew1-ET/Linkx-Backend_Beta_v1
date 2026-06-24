@@ -1,0 +1,13 @@
+[Unit]
+Description=LinkX Artifact Backup
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/linkx-backend-update/service_factory
+Environment=BACKUP_DIR=/opt/linkx-backups/artifacts
+Environment=BACKUP_ROOT=/opt/linkx-backups/artifacts
+Environment=LINKX_ARTIFACT_ROOT=/mnt/linkx-artifacts
+Environment=RETENTION_DAYS=14
+ExecStart=/opt/linkx-backend-update/service_factory/scripts/backup-artifacts.sh
+ExecStartPost=/opt/linkx-backend-update/service_factory/scripts/prune-backups.sh
+ExecStartPost=/opt/linkx-backend-update/service_factory/scripts/sync-backups-offhost.sh

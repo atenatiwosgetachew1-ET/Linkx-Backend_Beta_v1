@@ -1,0 +1,11 @@
+[Unit]
+Description=Run LinkX PostgreSQL Backup Daily
+
+[Timer]
+OnCalendar=*-*-* 01:15:00 UTC
+RandomizedDelaySec=15m
+Persistent=true
+Unit=linkx-postgres-backup.service
+
+[Install]
+WantedBy=timers.target
