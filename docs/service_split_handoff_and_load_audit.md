@@ -769,7 +769,7 @@ This is the current backup/restore baseline. Treat it as an operational control,
 | Shared artifacts | Server 1 `/mnt/linkx-artifacts` | Tar snapshot script into `/opt/linkx-backups/artifacts`; encrypted off-host target still preferred | Restore to an isolated empty directory and verify directory/file counts | Verified 2026-06-24 with checksum OK and restore drill passed; off-host target still pending |
 | Neo4j graph DB | Server 4 `linkx-neo4j` | Maintenance-window offline `neo4j-admin database dump` to `/opt/linkx-backups/neo4j`; online backup not enabled yet | Restore to an isolated Neo4j container and run count/query smoke tests | Verified 2026-06-24 with checksum and isolated load; repeat after non-empty ingestion data |
 | Redis queue/cache | Server 2 `linkx-redis` | Optional RDB snapshot if queued/running jobs must survive host loss | Restart Redis from copied RDB in a test container | Optional; Postgres remains the source of truth |
-| Secret material | `.env` files and `LINKX_SECRET_ENCRYPTION_KEY` | Store in a protected secret manager/offline escrow, never in Git | Prove API can decrypt one managed secret after restore | Required before production backup sign-off |
+| Secret material | `.env` files and `LINKX_SECRET_ENCRYPTION_KEY` | Store in a protected secret manager/offline escrow, never in Git | Prove API can decrypt one managed secret after restore | Runbook added; escrow and decrypt proof pending |
 
 Suggested RPO/RTO target until the business sets formal values:
 
@@ -866,6 +866,76 @@ Recorded Neo4j restore evidence:
 | Verification checks | `neo4j-admin database load` processed `309/309` files; restored container started; count queries returned `nodes=0`, `relationships=0`, matching pre-backup live counts |
 | Result | `passed`; isolated restore container and volume removed after verification |
 | Caveat | Current live graph was empty. Repeat this restore drill after a representative ingestion creates nonzero nodes/relationships. |
+
+
+### P2 Secret Escrow And Decrypt Proof
+
+`LINKX_SECRET_ENCRYPTION_KEY` protects the encrypted rows in `managed_secrets`. A successful Postgres restore is not enough without this key: the database can come back, but stored Neo4j/API/config secrets cannot be decrypted.
+
+Rules:
+
+- Do not commit `LINKX_SECRET_ENCRYPTION_KEY` to Git.
+- Do not paste it into chat, tickets, screenshots, or runbooks.
+- Store it in a real secret manager or offline escrow with access logging and at least two trusted recovery owners.
+- Store it immediately after every rotation. The RPO for this key is effectively zero.
+
+Server 1 fingerprint check without printing the key:
+
+```bash
+sudo sh -c "awk -F= '/^LINKX_SECRET_ENCRYPTION_KEY=/{print \$2}' /opt/linkx-backend-api/.env" | sha256sum
+```
+
+Server 3 worker fingerprint check should match Server 1:
+
+```bash
+sudo sh -c "awk -F= '/^LINKX_SECRET_ENCRYPTION_KEY=/{print \$2}' /opt/linkx-worker/.env" | sha256sum
+```
+
+Decrypt smoke test on Server 1 without printing any secret value:
+
+```bash
+cd /opt/linkx-backend-api/src
+PID=$(systemctl show -p MainPID --value linkx-api)
+
+sudo env $(sudo sh -c "tr '\0' '\n' < /proc/$PID/environ" | grep -E '^(DATABASE_URL|LINKX_POSTGRES_DSN|LINKX_SECRET_ENCRYPTION_KEY)=') \
+  /opt/linkx-backend-api/.venv/bin/python -c '
+import os
+import psycopg
+from security.secret_store import decrypt_secret
+
+dsn = os.getenv("DATABASE_URL") or os.getenv("LINKX_POSTGRES_DSN")
+if not dsn:
+    raise SystemExit("missing database DSN")
+with psycopg.connect(dsn) as conn:
+    with conn.cursor() as cur:
+        cur.execute("""
+            select id::text, secret_type, ciphertext
+            from managed_secrets
+            where deleted_at is null
+            order by created_at desc
+            limit 1
+        """)
+        row = cur.fetchone()
+if not row:
+    raise SystemExit("no managed secrets available to test")
+secret_id, secret_type, ciphertext = row
+plaintext = decrypt_secret(ciphertext)
+if not plaintext:
+    raise SystemExit("decrypt returned empty value")
+print({"decrypt_ok": True, "secret_id": secret_id, "secret_type": secret_type, "plaintext_length": len(plaintext)})
+'
+```
+
+Record evidence after the smoke test:
+
+| Field | Value |
+|---|---|
+| Escrow location | pending, do not write the secret value here |
+| Escrow owners | pending |
+| Server 1 key fingerprint | pending |
+| Server 3 key fingerprint | pending |
+| Decrypt smoke test | pending |
+| Result | pending |
 
 ### Quick Health Checklist
 
