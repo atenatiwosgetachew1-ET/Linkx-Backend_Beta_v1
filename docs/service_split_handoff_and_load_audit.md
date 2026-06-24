@@ -768,7 +768,7 @@ This is the current backup/restore baseline. Treat it as an operational control,
 | PostgreSQL control DB | Server 2 `linkx-postgres` | Custom-format `pg_dump` into `/opt/linkx-backups/postgres` | Restore into `linkx_restore_test`, verify key table counts, then drop test DB | Verified 2026-06-23 with checksum OK and restore drill passed |
 | Shared artifacts | Server 1 `/mnt/linkx-artifacts` | Tar snapshot script into `/opt/linkx-backups/artifacts`; encrypted off-host target still preferred | Restore to an isolated empty directory and verify directory/file counts | Verified 2026-06-24 with checksum OK and restore drill passed; off-host target still pending |
 | Neo4j graph DB | Server 4 `linkx-neo4j` | Maintenance-window offline `neo4j-admin database dump` to `/opt/linkx-backups/neo4j`; online backup not enabled yet | Restore to an isolated Neo4j container and run count/query smoke tests | Verified 2026-06-24 with checksum and isolated load; repeat after non-empty ingestion data |
-| Redis queue/cache | Server 2 `linkx-redis` | Treat as disposable coordination/cache state while workers claim durable jobs from Postgres | Restart Redis empty; optionally capture RDB if future Redis queues become durable | Policy: no required backup today; monitor key usage before changing |
+| Redis queue/cache | Server 2 `linkx-redis` | Treat as disposable coordination/cache state while workers claim durable jobs from Postgres | Restart Redis empty; optionally capture RDB if future Redis queues become durable | Verified disposable on 2026-06-24: `DBSIZE=0`, AOF enabled but empty |
 | Secret material | `.env` files and `LINKX_SECRET_ENCRYPTION_KEY` | Store in a protected secret manager/offline escrow, never in Git | Prove API can decrypt one managed secret after restore | Verified; escrow copy kept with developer, no secret values documented |
 
 Suggested RPO/RTO target until the business sets formal values:
@@ -961,6 +961,17 @@ sudo docker exec linkx-redis redis-cli BGSAVE
 sudo docker cp linkx-redis:/data/dump.rdb /opt/linkx-backups/redis/dump_$(date -u +%Y%m%dT%H%M%SZ).rdb
 sudo sha256sum /opt/linkx-backups/redis/*.rdb | tail
 ```
+
+
+Recorded Redis policy evidence:
+
+| Field | Value |
+|---|---|
+| Server | Server 2 `linkx-redis` |
+| Persistence | `aof_enabled=1`, `aof_current_size=0`, `rdb_last_bgsave_status=ok` |
+| Key count | `DBSIZE=0` |
+| Scan sample | no keys returned |
+| Result | no Redis backup required today; Redis can restart empty because durable state is Postgres/artifact/Neo4j-backed |
 
 ### Quick Health Checklist
 
