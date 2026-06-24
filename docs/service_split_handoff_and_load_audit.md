@@ -721,7 +721,7 @@ If ordinary terminate creates `cleanup_type = session` or deletes `/mnt/linkx-ar
 | 5 | Continue moving heavy API routes to worker jobs | API should remain orchestration/auth/socket layer only | Ongoing, get_graph relationship fetch now queues graph_fetch on worker; worker runner has generic stale/running job timeout recovery |
 | 6 | Keep `neo4j_residue_scan` report-only until reviewed over time | Avoid deleting non-LinkX data accidentally | Active, report-only, currently clean |
 | 7 | Eventually add an admin cleanup/audit UI endpoint for manual session cleanup and residue review | Makes operations safer for admins | API endpoints exist for cleanup/security audit; frontend UI still pending |
-| 8 | Backup/restore evidence | Production recovery must be proven, not assumed | Postgres backup/restore verified; artifact off-host target and Neo4j backup method still pending |
+| 8 | Backup/restore evidence | Production recovery must be proven, not assumed | Postgres and artifact restore drills verified; encrypted off-host target and Neo4j backup method still pending |
 
 ### Worker Timeout Recovery
 
@@ -746,7 +746,7 @@ This is the current backup/restore baseline. Treat it as an operational control,
 | Data | Source | Backup Method | Restore Proof | Current Status |
 |---|---|---|---|---|
 | PostgreSQL control DB | Server 2 `linkx-postgres` | Custom-format `pg_dump` into `/opt/linkx-backups/postgres` | Restore into `linkx_restore_test`, verify key table counts, then drop test DB | Verified 2026-06-23 with checksum OK and restore drill passed |
-| Shared artifacts | Server 1 `/mnt/linkx-artifacts` | Tar snapshot script into `/opt/linkx-backups/artifacts`; encrypted off-host target still preferred | Restore to an isolated empty directory and verify directory/file counts | Scripted, restore drill and off-host target still pending |
+| Shared artifacts | Server 1 `/mnt/linkx-artifacts` | Tar snapshot script into `/opt/linkx-backups/artifacts`; encrypted off-host target still preferred | Restore to an isolated empty directory and verify directory/file counts | Verified 2026-06-24 with checksum OK and restore drill passed; off-host target still pending |
 | Neo4j graph DB | Server 4 `linkx-neo4j` | Prefer Neo4j backup tooling if licensed; otherwise maintenance-window dump/export | Restore to an isolated Neo4j container and run count/query smoke tests | Requires final method selection |
 | Redis queue/cache | Server 2 `linkx-redis` | Optional RDB snapshot if queued/running jobs must survive host loss | Restart Redis from copied RDB in a test container | Optional; Postgres remains the source of truth |
 | Secret material | `.env` files and `LINKX_SECRET_ENCRYPTION_KEY` | Store in a protected secret manager/offline escrow, never in Git | Prove API can decrypt one managed secret after restore | Required before production backup sign-off |
@@ -822,16 +822,16 @@ Recorded Postgres restore evidence:
 | Result | `passed`; test DB dropped after verification |
 
 
-Pending artifact restore evidence:
+Recorded artifact restore evidence:
 
 | Field | Value |
 |---|---|
-| Backup file/path | pending |
-| SHA256 | pending |
-| Backup timestamp UTC | pending |
-| Restore target | isolated directory under `/opt/linkx-restore-tests` |
-| Verification queries/checks | directory listing plus sample file count |
-| Result | pending |
+| Backup file/path | `/opt/linkx-backups/artifacts/linkx-artifacts_20260624T075512Z.tar.gz` |
+| SHA256 | `sha256sum -c` returned `OK` |
+| Backup timestamp UTC | `2026-06-24T07:55:12Z` |
+| Restore target | `/opt/linkx-restore-tests/artifacts_20260624T075512Z` on Server 1 |
+| Verification checks | restored `linkx-artifacts` tree with `configs`, `dfparts`, `graphs`, `logs`, `reports`, `rules`, and `uploads`; file count `3`, directory count `10`, size `12M` |
+| Result | `passed`; restore was isolated from live `/mnt/linkx-artifacts` |
 
 ### Quick Health Checklist
 
