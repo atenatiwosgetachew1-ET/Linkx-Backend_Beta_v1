@@ -118,18 +118,19 @@ def create_neo4j_driver(credentials):
 
 
 def credentials_for_cleanup(credentials=None):
-    if str(os.getenv("LINKX_STORE_CLEANUP_CREDENTIALS", "false")).lower() not in {"1", "true", "yes", "on"}:
-        credentials = dict(credentials or {})
-        database = neo4j_database_name(credentials)
-        return {"neo4j_database": database} if database else {}
-
-    resolved = resolve_neo4j_credentials(credentials or {})
-    database = neo4j_database_name(resolved)
+    credentials = dict(credentials or {})
+    database = neo4j_database_name(credentials)
     payload = {
-        "neo4j_url": resolved.get("url") or resolved.get("neo4j_url"),
-        "neo4j_username": resolved.get("username") or resolved.get("neo4j_username"),
-        "neo4j_password": resolved.get("password") or resolved.get("neo4j_password"),
+        "neo4j_url": credentials.get("url") or credentials.get("neo4j_url"),
+        "neo4j_username": credentials.get("username") or credentials.get("neo4j_username"),
+        "neo4j_password_ref": credentials.get("password_ref") or credentials.get("neo4j_password_ref"),
     }
     if database:
         payload["neo4j_database"] = database
+
+    if str(os.getenv("LINKX_STORE_CLEANUP_CREDENTIALS", "false")).lower() not in {"1", "true", "yes", "on"}:
+        return {key: value for key, value in payload.items() if value}
+
+    resolved = resolve_neo4j_credentials(credentials or {})
+    payload["neo4j_password"] = resolved.get("password") or resolved.get("neo4j_password")
     return {key: value for key, value in payload.items() if value}

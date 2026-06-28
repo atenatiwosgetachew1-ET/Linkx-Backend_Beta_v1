@@ -4,7 +4,13 @@ import time
 from datetime import datetime, timezone
 
 from batch_manager.utils.neo4j_cleanup import clean_existing_session
-from batch_manager.utils.neo4j_utils import create_neo4j_driver, neo4j_database_name
+from batch_manager.utils.neo4j_utils import (
+    Neo4jCredentialConfigError,
+    create_neo4j_driver,
+    neo4j_database_name,
+    redacted_neo4j_credentials,
+    resolve_neo4j_credentials,
+)
 from linkx_cleanup.artifacts import artifact_root, delete_filesystem_artifact
 from linkx_cleanup.db import connect
 
@@ -19,25 +25,52 @@ def _neo4j_credentials(payload=None):
         "url": payload.get("neo4j_url") or payload.get("url") or os.getenv("LINKX_NEO4J_URL") or os.getenv("LINKX_CLEANUP_NEO4J_URL"),
         "username": payload.get("neo4j_username") or payload.get("username") or os.getenv("LINKX_NEO4J_USERNAME") or os.getenv("LINKX_CLEANUP_NEO4J_USERNAME"),
         "password": payload.get("neo4j_password") or payload.get("password") or os.getenv("LINKX_NEO4J_PASSWORD") or os.getenv("LINKX_CLEANUP_NEO4J_PASSWORD"),
+        "password_ref": payload.get("neo4j_password_ref") or payload.get("password_ref"),
         "database": payload.get("neo4j_database") or payload.get("database") or os.getenv("LINKX_NEO4J_DATABASE") or os.getenv("LINKX_CLEANUP_NEO4J_DATABASE"),
     }
+
+
+def _is_retryable_neo4j_connect_error(exc):
+    code = getattr(exc, "code", None) or getattr(exc, "neo4j_code", None)
+    text = f"{code or ''} {exc}"
+    non_retryable_markers = (
+        "AuthenticationRateLimit",
+        "Authentication",
+        "Unauthorized",
+        "Security.",
+    )
+    if any(marker in text for marker in non_retryable_markers):
+        return False
+    retryable_markers = (
+        "ServiceUnavailable",
+        "SessionExpired",
+        "DatabaseUnavailable",
+        "Connection refused",
+        "Connection reset",
+        "timed out",
+        "Temporary",
+        "TransientError",
+    )
+    return any(marker in text for marker in retryable_markers)
 
 
 def _create_neo4j_driver_with_retry(creds, payload=None):
     payload = payload or {}
     attempts = int(payload.get("neo4j_retry_attempts") or os.getenv("LINKX_NEO4J_RETRY_ATTEMPTS", "6"))
     delay = float(payload.get("neo4j_retry_delay_seconds") or os.getenv("LINKX_NEO4J_RETRY_DELAY_SECONDS", "5"))
+    resolved = resolve_neo4j_credentials(creds)
+    print(f"[cleanup] Neo4j credential source creds={redacted_neo4j_credentials(resolved)}", flush=True)
     last_error = None
     for attempt in range(1, max(1, attempts) + 1):
-        driver = create_neo4j_driver(creds)
+        driver = create_neo4j_driver(resolved)
         try:
-            with driver.session(database=neo4j_database_name(creds)) as session:
+            with driver.session(database=neo4j_database_name(resolved)) as session:
                 session.run("RETURN 1 AS ok").single()
             return driver
         except Exception as exc:
             last_error = exc
             driver.close()
-            if attempt >= attempts:
+            if attempt >= attempts or not _is_retryable_neo4j_connect_error(exc):
                 break
             print(f"[cleanup] Neo4j not ready attempt={attempt}/{attempts}: {exc}", flush=True)
             time.sleep(delay)
@@ -48,9 +81,12 @@ def cleanup_neo4j_session(session_id, run_id=None, batch_size=10000, dry_run=Fal
     if dry_run:
         return {"neo4j": "dry_run", "session_id": session_id, "run_id": run_id}
     creds = _neo4j_credentials(payload)
-    if not creds["url"] or not creds["username"] or not creds["password"]:
+    if not creds["url"] or not creds["username"] or not (creds.get("password") or creds.get("password_ref")):
         return {"neo4j": "skipped_missing_credentials", "session_id": session_id, "run_id": run_id}
-    driver = _create_neo4j_driver_with_retry(creds, payload=payload)
+    try:
+        driver = _create_neo4j_driver_with_retry(creds, payload=payload)
+    except Neo4jCredentialConfigError as exc:
+        return {"neo4j": "invalid_credentials", "session_id": session_id, "run_id": run_id, "error": str(exc)}
     try:
         result = clean_existing_session(driver, session_id, batch_size=batch_size, run_id=run_id)
     finally:

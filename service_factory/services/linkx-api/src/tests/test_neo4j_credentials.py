@@ -112,6 +112,24 @@ class Neo4jCredentialTests(unittest.TestCase):
         self.assertEqual(payload['password_ref'], 'secret-123')
         self.assertEqual(payload['database'], '')
 
+    def test_credentials_for_cleanup_preserves_password_ref_without_plaintext(self):
+        from batch_manager.utils.neo4j_utils import credentials_for_cleanup
+
+        with patch.dict('os.environ', {'LINKX_STORE_CLEANUP_CREDENTIALS': 'false'}, clear=False):
+            payload = credentials_for_cleanup({
+                'url': 'bolt://172.27.23.85:7687',
+                'username': 'neo4j',
+                'password': '***',
+                'password_ref': 'secret-123',
+                'database': 'neo4j',
+            })
+
+        self.assertEqual(payload['neo4j_url'], 'bolt://172.27.23.85:7687')
+        self.assertEqual(payload['neo4j_username'], 'neo4j')
+        self.assertEqual(payload['neo4j_password_ref'], 'secret-123')
+        self.assertEqual(payload['neo4j_database'], 'neo4j')
+        self.assertNotIn('neo4j_password', payload)
+
     def test_resolve_neo4j_credentials_rejects_masked_password_without_ref(self):
         from batch_manager.utils.neo4j_utils import Neo4jCredentialConfigError, resolve_neo4j_credentials
 
