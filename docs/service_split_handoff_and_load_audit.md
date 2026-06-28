@@ -1,6 +1,6 @@
 # LinkX Service Split Handoff And Load Audit
 
-Last updated: 2026-06-25
+Last updated: 2026-06-28
 
 This document is a handoff summary for a new chat/session. It captures the current four-server LinkX backend split, how the services communicate, how deployments are updated, and what work is still running on each server. The goal of the split is to keep the current working system stable while gradually moving heavy analysis and ingestion work out of the API server and into worker/maintenance services.
 
@@ -13,6 +13,30 @@ CTMS SSO is implemented as an ES256/JWKS flow. LinkX should verify CTMS access J
 P2 recovery evidence is now mostly proven: PostgreSQL backup/restore passed, artifact backup/restore passed, Neo4j offline dump/load passed against the current empty graph, Redis was verified disposable, and the `LINKX_SECRET_ENCRYPTION_KEY` recovery copy is kept separately by the developer. The remaining P2 follow-ups are to install/enable the scheduled backup timers, configure an encrypted/off-host backup target, and repeat the Neo4j restore drill after a representative ingestion creates nonzero nodes/relationships.
 
 Current repo-side follow-up: backup timer units and retention/off-host helper scripts are present in the repo but still need deployment to the relevant servers. Treat the uninstalled timer work as ready for ops rollout, not yet live production automation.
+
+## 2026-06-28 Ingestion/Graph Debug Status
+
+Current reported regressions after security hardening:
+- Realtime ingestion connects to broker/topic/tool, but Link Analysis, Source/Target mapping, and Store Data all fail with Neo4j `AuthenticationRateLimit`, meaning the runtime is repeatedly presenting invalid Neo4j credentials.
+- Batch Source/Target mapping loads far enough to start, then writes `Neo4j driver not found` and the frontend shows `Streaming could not start` / `analysis failed or was cancelled`.
+
+Finding: the most likely backend cause is masked-secret echo/overwrite. `tool_credentials.password` is intentionally stored and returned as `***` with a separate `password_ref`, but a later frontend/config save can send back only the masked `password: "***"`. Before the latest fix, `save_session_config(..., merge=True)` used a shallow merge, so `tool_credentials` could be replaced and lose `password_ref`. Once that happened, workers could reload `***` instead of decrypting the real password from `managed_secrets`, causing Neo4j auth failures and then `Neo4j driver not found`.
+
+Backend mitigation now present in both API and worker service copies:
+- [session_config_store.py](../service_factory/services/linkx-api/src/session_config_store.py) and [session_config_store.py](../service_factory/services/linkx-worker/src/session_config_store.py) use recursive `_merge_config()` for session config saves, preserving nested `password_ref` fields when masked values are echoed back.
+- [analyzer.py](../service_factory/services/linkx-api/src/batch_manager/analyzing/analyzer.py) and [analyzer.py](../service_factory/services/linkx-worker/src/batch_manager/analyzing/analyzer.py) now validate `payload["tool_credentials"]` directly before falling back to `tools("neo4j", "check", {"session_id": ...})`. This prevents a valid decrypted job payload from being discarded only because the separate config lookup is stale or window-mismatched.
+
+Security/privacy posture remains intact: raw passwords still stay in `managed_secrets`, frontend/API responses can remain masked, and logs should continue redacting credentials. This fix preserves secret refs; it does not reintroduce plaintext config storage.
+
+Frontend alignment still recommended: when saving config, do not send masked secret values as real updates. If a password/token field is unchanged, omit that field or preserve the backend-provided `*_ref`; only send a real secret value when the user intentionally changes it.
+
+Next verification after deploying the fix:
+1. Deploy API `session_config_store.py` and analyzer copy to Server 1, worker `session_config_store.py` and analyzer copy to Server 3.
+2. Restart `linkx-api`, `linkx-analysis-worker`, and relevant worker services.
+3. Reconnect Neo4j once from the frontend so a clean `tool_credentials.password_ref` is saved.
+4. Query `session_configs` and confirm `tool_credentials.password='***'` and `tool_credentials.password_ref` exists for the active source/window.
+5. Retry realtime Store Data, realtime Link Analysis, realtime Source/Target, and batch Source/Target.
+6. Watch logs for absence of `AuthenticationRateLimit` and `Neo4j driver not found`.
 
 ## Current Server Map
 
