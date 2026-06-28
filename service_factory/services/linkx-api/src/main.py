@@ -1211,6 +1211,15 @@ def connect_to_tool():
     tool_name = data.get('tool_name')
     source_id = str(data.get('source_id') or '').strip()
     session_id = str(data.get('session_id') or source_id).strip()
+    current_app.logger.info(
+        "connect_to_tool request tool=%s session_id=%s source_id=%s has_password=%s has_password_ref=%s database_empty=%s",
+        redact_value(tool_name),
+        redact_value(session_id),
+        redact_value(source_id),
+        bool(data.get('password')),
+        bool(data.get('password_ref')),
+        data.get('database') in (None, ''),
+    )
     if session_id and source_id and session_id != source_id:
         detail = 'session_id_and_source_id_must_match_for_connect_to_tool'
         _log_connect_to_tool_validation_failure(detail, field='session_id', payload=data, session_id=session_id, source_id=source_id)
@@ -1279,7 +1288,22 @@ def connect_to_tool():
             payload["password_ref"] = validation_payload.get("password_ref")
 
     if url and username and password:
-        if tools(tool_name, "connect", payload) is True:
+        current_app.logger.info(
+            "connect_to_tool attempting connection tool=%s session_id=%s source_id=%s creds=%s",
+            redact_value(tool_name),
+            redact_value(session_id),
+            redact_value(source_id),
+            redacted_neo4j_credentials(payload) if tool_name == "neo4j" else None,
+        )
+        connected = tools(tool_name, "connect", payload) is True
+        current_app.logger.info(
+            "connect_to_tool connection result tool=%s session_id=%s source_id=%s connected=%s",
+            redact_value(tool_name),
+            redact_value(session_id),
+            redact_value(source_id),
+            connected,
+        )
+        if connected:
             if tool_name == "neo4j":
                 persisted = save_session_config(
                     source_id,
@@ -1293,6 +1317,14 @@ def connect_to_tool():
                 )
                 persisted_config = load_session_config(source_id) if persisted else None
                 persisted_credentials = (persisted_config or {}).get("tool_credentials") if isinstance(persisted_config, dict) else None
+                current_app.logger.info(
+                    "connect_to_tool persistence result session_id=%s source_id=%s persisted=%s has_config=%s creds=%s",
+                    redact_value(session_id),
+                    redact_value(source_id),
+                    bool(persisted),
+                    isinstance(persisted_config, dict),
+                    redacted_neo4j_credentials(persisted_credentials) if isinstance(persisted_credentials, dict) else None,
+                )
                 if not persisted or not isinstance(persisted_credentials, dict) or not persisted_credentials.get("password_ref"):
                     current_app.logger.error(
                         "connect_to_tool canonical credential persistence failed session_id=%s source_id=%s persisted=%s creds=%s",
