@@ -1015,17 +1015,19 @@ def analyzer(payload):
                     log_writer(payload.get("log_file"), f"[{datetime.now()}] [Error] - Invalid Neo4j credential configuration: {exc}")
                     return False
                 except Exception as exc:
-                    print(f"[{session_id}] Payload Neo4j credential check failed: {exc}")
+                    print(f"[{session_id}] Payload Neo4j credential check failed creds={redacted_neo4j_credentials(tool_credentials)} error={exc}")
+                    log_writer(payload.get("log_file"), f"[{datetime.now()}] [Error] - Neo4j connection verification failed: {exc}")
                     try:
                         if driver:
                             driver.close()
                     finally:
                         driver = None
-            if not driver:
+                    return False
+            else:
                 driver = tools("neo4j", "check", {"session_id": session_id})
             if not driver:
-                print(f"[{session_id}] Neo4j driver not found!")
-                log_writer(payload.get("log_file"), f"[{datetime.now()}] [Error] - Neo4j driver not found")
+                print(f"[{session_id}] Neo4j driver not found in session config")
+                log_writer(payload.get("log_file"), f"[{datetime.now()}] [Error] - Neo4j driver not found in session config")
                 return False
 
             driver.close()
