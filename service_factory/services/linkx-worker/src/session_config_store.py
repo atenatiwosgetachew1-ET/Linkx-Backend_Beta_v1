@@ -321,7 +321,7 @@ def load_session_config(session_id, window_id=None):
             row = cur.fetchone()
             if row:
                 if target_window and base_config is not None:
-                    return _resolve_config_secrets({**base_config, **(row[0] or {})}, cur)
+                    return _resolve_config_secrets(_merge_config(base_config or {}, row[0] or {}), cur)
                 return _resolve_config_secrets(row[0] or {}, cur)
             if target_window:
                 return _resolve_config_secrets(base_config, cur)

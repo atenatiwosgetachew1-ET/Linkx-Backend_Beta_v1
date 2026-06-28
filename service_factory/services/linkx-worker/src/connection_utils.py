@@ -6,7 +6,7 @@ from kafka import KafkaConsumer
 from hdfs import InsecureClient
 import json
 from globals import create_file,save_temp_config,load_temp_config,sockets_registry
-from batch_manager.utils.neo4j_utils import create_neo4j_driver, neo4j_database_name
+from batch_manager.utils.neo4j_utils import create_neo4j_driver, neo4j_database_name, redacted_neo4j_credentials
 
 
 
@@ -102,7 +102,7 @@ def tools(id,action,payload):
             username=credentials["username"]
             password=credentials["password"]
             session_id=credentials["session_id"]
-            print("creds_to_connect:", {"url": url, "username": username, "session_id": session_id, "password": "***"})
+            print("creds_to_connect:", {**redacted_neo4j_credentials(credentials), "session_id": session_id})
             try:
                 # response=[]
                 neo4j_driver=create_neo4j_driver(credentials)
@@ -140,7 +140,7 @@ def tools(id,action,payload):
             session_id = payload["session_id"]
             print("session_id:",session_id)
             creds = load_temp_config("tool_credentials", session_id)
-            print("creds:", {**creds, "password": "***"} if isinstance(creds, dict) else creds)
+            print("creds:", redacted_neo4j_credentials(creds) if isinstance(creds, dict) else creds)
             if not creds:
                 return False
             url = creds["url"]

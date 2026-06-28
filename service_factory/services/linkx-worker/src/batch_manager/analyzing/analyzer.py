@@ -11,7 +11,7 @@ import importlib.util
 from connection_utils import tools
 from logger import log_writer
 from batch_manager.processing.file_source_loader import load_file
-from batch_manager.utils.neo4j_utils import create_neo4j_driver
+from batch_manager.utils.neo4j_utils import Neo4jCredentialConfigError, create_neo4j_driver, redacted_neo4j_credentials
 from batch_manager.utils.neo4j_cleanup import clean_existing_session
 from batch_manager.utils.artifact_utils import ensure_artifact_dir
 from batch_manager.processing.realtime_source_loader import records_to_dataframe, iter_kafka_messages, iter_api_messages
@@ -379,7 +379,11 @@ def neo4j_row_data_injector(payload, batch_size=500):
         log_writer(log_file, f"[{datetime.now()}] [Stop] Stop signal received — terminating injector")
         return
 
-    driver = create_neo4j_driver(tool_credentials)
+    try:
+        driver = create_neo4j_driver(tool_credentials)
+    except Neo4jCredentialConfigError as exc:
+        log_writer(log_file, f"[{datetime.now()}] [Error] - Invalid Neo4j credential configuration for graph write: {exc}")
+        return
     set_session_status(driver, session_id, "INGESTING", run_id=run_id)
     try:
         log_writer(log_file, f"[{datetime.now()}] [Info] - Injection started for action '{action}'")
@@ -792,7 +796,11 @@ def realtime_neo4j_message_ingest(payload, df, batch_number):
     if stop_event and stop_event.is_set():
         return
 
-    driver = create_neo4j_driver(tool_credentials)
+    try:
+        driver = create_neo4j_driver(tool_credentials)
+    except Neo4jCredentialConfigError as exc:
+        log_writer(log_file, f"[{datetime.now()}] [Error] - Invalid Neo4j realtime credential configuration: {exc}")
+        return
     batch_id = f"{session_id}_rt_{batch_number}"
     try:
         set_session_status(driver, session_id, "INGESTING", rule=rule, run_id=run_id)
@@ -894,6 +902,7 @@ def realtime_analyzer(payload):
     if not payload.get("tool_credentials"):
         log_writer(log_file, f"[{datetime.now()}] [Error] - Neo4j credentials not found")
         return
+    log_writer(log_file, f"[{datetime.now()}] [Info] - Realtime Neo4j credential source: {redacted_neo4j_credentials(payload.get('tool_credentials'))}")
 
     if source_type == "kafka":
         broker_url = payload.get("broker_url")
@@ -1002,6 +1011,9 @@ def analyzer(payload):
                     driver = create_neo4j_driver(tool_credentials)
                     with driver.session() as session:
                         session.run("RETURN 1 AS ok").consume()
+                except Neo4jCredentialConfigError as exc:
+                    log_writer(payload.get("log_file"), f"[{datetime.now()}] [Error] - Invalid Neo4j credential configuration: {exc}")
+                    return False
                 except Exception as exc:
                     print(f"[{session_id}] Payload Neo4j credential check failed: {exc}")
                     try:
