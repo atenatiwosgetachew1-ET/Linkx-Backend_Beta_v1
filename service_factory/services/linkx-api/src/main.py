@@ -41,7 +41,7 @@ from logger import log_writer,log_stream_background
 from io_sockets import register_socket_handlers
 from api.STR_link_analysis import STR_link_analysis_api
 from api.ai_service import ai_service_api
-from session_config_store import create_session_config, duplicate_window_config, get_user_config, get_workspace_layout, save_user_config, save_workspace_layout
+from session_config_store import create_session_config, duplicate_window_config, get_user_config, get_workspace_layout, load_session_config, save_session_config, save_user_config, save_workspace_layout
 from service_orchestration import enqueue_cleanup_run, enqueue_worker_job, get_active_session_lock, get_any_active_actor_lock, get_worker_job, list_cleanup_audit, public_lock_state, reactivate_analysis_session, request_session_cancellation
 from auth.decorators import auth_required, current_actor_from_request, permission_required
 from auth.repository import actor_has_permission, bind_analysis_session_actor, can_access_analysis_session_actor, get_postgres_connection, record_security_event
@@ -1280,8 +1280,36 @@ def connect_to_tool():
 
     if url and username and password:
         if tools(tool_name, "connect", payload) is True:
-            save_temp_config("tool", tool_name, source_id)
-            save_temp_config("active_tool_database", database or "", source_id)
+            if tool_name == "neo4j":
+                persisted = save_session_config(
+                    source_id,
+                    {
+                        "tool": tool_name,
+                        "active_tool": tool_name,
+                        "active_tool_database": database or "",
+                        "tool_credentials": dict(payload),
+                    },
+                    merge=True,
+                )
+                persisted_config = load_session_config(source_id) if persisted else None
+                persisted_credentials = (persisted_config or {}).get("tool_credentials") if isinstance(persisted_config, dict) else None
+                if not persisted or not isinstance(persisted_credentials, dict) or not persisted_credentials.get("password_ref"):
+                    current_app.logger.error(
+                        "connect_to_tool canonical credential persistence failed session_id=%s source_id=%s persisted=%s creds=%s",
+                        redact_value(session_id),
+                        redact_value(source_id),
+                        bool(persisted),
+                        redacted_neo4j_credentials(persisted_credentials) if isinstance(persisted_credentials, dict) else None,
+                    )
+                    return jsonify({
+                        'status': 'error',
+                        'message': 'Not connected!',
+                        'detail': 'neo4j_credential_persistence_failed',
+                        'session_id': source_id,
+                    }), 500
+            else:
+                save_temp_config("tool", tool_name, source_id)
+                save_temp_config("active_tool_database", database or "", source_id)
             return jsonify({'status': 'success', 'message': 'Connected!', 'url': url, 'session_id': source_id}), 200
         return jsonify({'status': 'error', 'message': 'Not connected!', 'detail': 'neo4j_connection_failed'}), 200
 
