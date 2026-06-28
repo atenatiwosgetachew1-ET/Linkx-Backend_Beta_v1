@@ -1605,6 +1605,23 @@ def live_batch_files():
         if data.get("use_dataframe") is True:
             values.setdefault("use_dataframe", True)
 
+        stream_tool = values.get("tool") or load_temp_config("active_tool", session_id) or load_temp_config("tool", session_id)
+        if str(stream_tool or "").lower() == "neo4j":
+            try:
+                stream_credentials = load_temp_config("tool_credentials", session_id)
+                resolve_neo4j_credentials(stream_credentials)
+            except Neo4jCredentialConfigError as exc:
+                current_app.logger.warning(
+                    "stream rejected missing/invalid neo4j credentials session_id=%s detail=%s",
+                    redact_value(session_id),
+                    str(exc),
+                )
+                return jsonify({
+                    "message": "neo4j_not_connected_for_session",
+                    "detail": str(exc),
+                    "session_id": session_id,
+                }), 400
+
         if _async_worker_jobs_enabled():
             reactivation = reactivate_analysis_session(session_id)
             if reactivation.get("reactivated"):
