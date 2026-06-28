@@ -36,6 +36,7 @@ from batch_manager.processing.rules_validator import validate_rules_json
 from batch_manager.processing.rules_compiler import generate_python_rule, normalize_rule_key
 from batch_manager.analyzing.LA_graphs_script import fetch_graph
 from batch_manager.analyzing.analyzer import analyzer
+from batch_manager.utils.neo4j_utils import Neo4jCredentialConfigError, neo4j_database_name, redacted_neo4j_credentials, resolve_neo4j_credentials
 from logger import log_writer,log_stream_background
 from io_sockets import register_socket_handlers
 from api.STR_link_analysis import STR_link_analysis_api
@@ -1173,41 +1174,120 @@ def disconnect_source():
         print(e)
         return jsonify({'status': 'error', 'message': 'Disconnecting failed!'}), 500
 
+def _log_connect_to_tool_validation_failure(detail, field=None, *, payload=None, session_id=None, source_id=None):
+    payload = payload if isinstance(payload, dict) else {}
+    current_app.logger.warning(
+        "connect_to_tool validation failed endpoint=%s session_id=%s source_id=%s field=%s detail=%s database_empty=%s",
+        request.path,
+        redact_value(session_id or payload.get("session_id")),
+        redact_value(source_id or payload.get("source_id")),
+        field,
+        detail,
+        payload.get("database") == "",
+    )
+
+
 @app.route('/connect_to_tool', methods=['POST'])
 @auth_required
 @permission_required("graph:create")
-@validate_json_payload(COMMON_SCHEMAS["connect_to_tool"])
 def connect_to_tool():
-    data = validated_json()
+    raw_data = request.get_json(silent=True)
+    if raw_data is None:
+        _log_connect_to_tool_validation_failure("json_body_required")
+        return jsonify({'message': 'validation_error', 'detail': 'json_body_required', 'endpoint': request.path}), 400
+    if not isinstance(raw_data, dict):
+        _log_connect_to_tool_validation_failure("json_object_required")
+        return jsonify({'message': 'validation_error', 'detail': 'json_object_required', 'endpoint': request.path}), 400
+    try:
+        data = validate_payload(raw_data, COMMON_SCHEMAS["connect_to_tool"])
+    except PayloadValidationError as exc:
+        _log_connect_to_tool_validation_failure(exc.message, field=exc.field, payload=raw_data)
+        body = {'message': 'validation_error', 'detail': exc.message, 'endpoint': request.path}
+        if exc.field:
+            body['field'] = exc.field
+            body['invalid_fields'] = [exc.field]
+        return jsonify(body), 400
+
     tool_name = data.get('tool_name')
+    source_id = str(data.get('source_id') or '').strip()
+    session_id = str(data.get('session_id') or source_id).strip()
+    if session_id and source_id and session_id != source_id:
+        detail = 'session_id_and_source_id_must_match_for_connect_to_tool'
+        _log_connect_to_tool_validation_failure(detail, field='session_id', payload=data, session_id=session_id, source_id=source_id)
+        return jsonify({
+            'message': 'validation_error',
+            'detail': detail,
+            'field': 'session_id',
+            'invalid_fields': ['session_id', 'source_id'],
+            'endpoint': request.path,
+        }), 400
+
     url = data.get('url')
     username = data.get('username')
     password = data.get('password')
-    session_id = data.get('source_id')
-    database = data.get('database') or load_temp_config("active_tool_database", session_id)
+    password_ref = data.get('password_ref')
+    database_input = data.get('database')
+    database = str(database_input).strip() if database_input is not None else ''
+    if not database:
+        database = neo4j_database_name(load_temp_config("tool_credentials", source_id) or {}) or ''
     if tool_name == "neo4j":
         url = _normalize_neo4j_url(url)
     if url:
         blocked = _reject_unsafe_network_target(url)
         if blocked:
             return blocked
-    payload = {"url": url, "username": username, "password": password, "session_id": session_id}
+
+    payload = {"url": url, "username": username, "password": password, "session_id": source_id}
     if database:
         payload["database"] = database
+    if password_ref:
+        payload["password_ref"] = password_ref
+
+    if tool_name == "neo4j":
+        stored_credentials = load_temp_config("tool_credentials", source_id)
+        if not isinstance(stored_credentials, dict):
+            stored_credentials = {}
+        validation_payload = dict(stored_credentials)
+        validation_payload.update({"url": url, "username": username, "session_id": source_id})
+        if database:
+            validation_payload["database"] = database
+        if password == "***":
+            validation_payload["password"] = "***"
+            validation_payload["password_ref"] = password_ref or stored_credentials.get("password_ref")
+        else:
+            validation_payload["password"] = password
+            if password_ref:
+                validation_payload["password_ref"] = password_ref
+        try:
+            resolved = resolve_neo4j_credentials(validation_payload)
+        except Neo4jCredentialConfigError as exc:
+            _log_connect_to_tool_validation_failure(str(exc), field='password', payload=data, session_id=session_id, source_id=source_id)
+            return jsonify({
+                'message': 'validation_error',
+                'detail': str(exc),
+                'field': 'password',
+                'invalid_fields': ['password'],
+                'endpoint': request.path,
+            }), 400
+        current_app.logger.info(
+            "connect_to_tool credential source session_id=%s source_id=%s creds=%s",
+            redact_value(session_id),
+            redact_value(source_id),
+            redacted_neo4j_credentials(resolved),
+        )
+        if password == "***" and validation_payload.get("password_ref"):
+            payload["password_ref"] = validation_payload.get("password_ref")
+
     if url and username and password:
         if tools(tool_name, "connect", payload) is True:
-            parent_session_id = _parent_session_id(session_id)
-            if parent_session_id:
-                parent_payload = {**payload, "session_id": parent_session_id}
-                save_temp_config("tool", tool_name, parent_session_id)
-                save_temp_config("tool_credentials", parent_payload, parent_session_id)
-                if database:
-                    save_temp_config("active_tool_database", database, parent_session_id)
-            return jsonify({'status': 'success', 'message': 'Connected!', 'url': url}), 200
-        else:
-            return jsonify({'status': 'error', 'message': 'Not connected!'}), 200
-    else:
-        return jsonify({'status': 'error', 'message': 'Not connected!'}), 400
+            save_temp_config("tool", tool_name, source_id)
+            save_temp_config("active_tool_database", database or "", source_id)
+            return jsonify({'status': 'success', 'message': 'Connected!', 'url': url, 'session_id': source_id}), 200
+        return jsonify({'status': 'error', 'message': 'Not connected!', 'detail': 'neo4j_connection_failed'}), 200
+
+    detail = 'missing_required_connection_fields'
+    _log_connect_to_tool_validation_failure(detail, payload=data, session_id=session_id, source_id=source_id)
+    return jsonify({'message': 'validation_error', 'detail': detail, 'endpoint': request.path}), 400
 
 @app.route('/disconnect_tool', methods=['POST'])
 @auth_required

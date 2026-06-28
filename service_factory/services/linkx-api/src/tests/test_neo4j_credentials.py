@@ -94,6 +94,37 @@ class Neo4jCredentialTests(unittest.TestCase):
         self.assertEqual(loaded['tool_credentials']['password_ref'], 'secret-123')
         self.assertEqual(loaded['tool_credentials']['username'], 'neo4j')
 
+    def test_connect_to_tool_schema_accepts_session_id_and_password_ref(self):
+        from security.payload_validation import COMMON_SCHEMAS, validate_payload
+
+        payload = validate_payload({
+            'tool_name': 'neo4j',
+            'url': 'bolt://172.27.23.85:7687',
+            'username': 'neo4j',
+            'password': '***',
+            'password_ref': 'secret-123',
+            'database': '',
+            'source_id': '1_196295',
+            'session_id': '1_196295',
+        }, COMMON_SCHEMAS['connect_to_tool'])
+
+        self.assertEqual(payload['session_id'], '1_196295')
+        self.assertEqual(payload['password_ref'], 'secret-123')
+        self.assertEqual(payload['database'], '')
+
+    def test_resolve_neo4j_credentials_rejects_masked_password_without_ref(self):
+        from batch_manager.utils.neo4j_utils import Neo4jCredentialConfigError, resolve_neo4j_credentials
+
+        with self.assertRaises(Neo4jCredentialConfigError) as exc:
+            resolve_neo4j_credentials({
+                'url': 'bolt://172.27.23.85:7687',
+                'username': 'neo4j',
+                'password': '***',
+                'session_id': '1_196295',
+            })
+
+        self.assertIn('password_ref', str(exc.exception))
+
     def test_analyzer_does_not_fallback_when_payload_credentials_are_masked(self):
         import batch_manager.analyzing.analyzer as analyzer_module
         from batch_manager.utils.neo4j_utils import Neo4jCredentialConfigError
