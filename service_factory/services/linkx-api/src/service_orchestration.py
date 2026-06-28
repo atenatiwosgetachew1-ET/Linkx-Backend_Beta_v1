@@ -245,6 +245,7 @@ def request_session_cancellation(session_id, reason="client_requested", requeste
                     END
                 WHERE session_id = %s
                   AND status NOT IN ('succeeded', 'failed', 'cancelled')
+                  AND (%s OR status = 'running')
                   AND (
                       %s
                       OR queue_name IN ('analysis', 'ingestion')
@@ -252,7 +253,7 @@ def request_session_cancellation(session_id, reason="client_requested", requeste
                   )
                 RETURNING id::text, status, run_id
                 """,
-                (reason, str(session_id), bool(cancel_session)),
+                (reason, str(session_id), bool(cancel_session), bool(cancel_session)),
             )
             jobs = [{"id": row[0], "status": row[1], "run_id": row[2]} for row in cur.fetchall()]
             cleanup_id = None
