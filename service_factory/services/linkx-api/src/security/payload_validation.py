@@ -456,7 +456,7 @@ COMMON_SCHEMAS = {
             "source_id": {"type": ["string", "integer", "null"], "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]*$"},
             "session_id": {"type": ["string", "integer", "null"], "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]*$"},
             "window_id": {"type": ["string", "integer", "null"], "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]*$"},
-            "relationship": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_:-]+$"},
+            "relationship": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^(\\*|[A-Za-z0-9_:-]+)$"},
         },
         "anyOf": [
             {"required": ["source_id"]},

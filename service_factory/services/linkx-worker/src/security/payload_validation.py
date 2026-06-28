@@ -371,7 +371,7 @@ COMMON_SCHEMAS = {
         "properties": {
             "id": {"type": "string", "enum": ["relationship"]},
             "source_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
-            "relationship": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_:-]+$"},
+            "relationship": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^(\\*|[A-Za-z0-9_:-]+)$"},
         },
     },
     "socket_connect": {

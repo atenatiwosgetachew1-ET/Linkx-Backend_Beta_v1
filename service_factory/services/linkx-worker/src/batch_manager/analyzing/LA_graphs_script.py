@@ -94,7 +94,8 @@ def fetch_graph(id,action,source_id,value,batch):
             if not rel_type:
                 print("No relationship type provided")
                 return {"nodes": [], "edges": [], "error": "No relationship type provided"}
-            if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", rel_type):
+            fetch_all_relationships = rel_type == "*"
+            if not fetch_all_relationships and not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", rel_type):
                 return {"nodes": [], "edges": [], "error": "Invalid relationship type"}
             try:
                 graph_limit = int(
@@ -117,8 +118,9 @@ def fetch_graph(id,action,source_id,value,batch):
             #         """
             # Scope graph fetches to the exact window/source instance stored on the relationship.
             limit_clause = "LIMIT $limit" if graph_limit > 0 else ""
+            relationship_clause = "" if fetch_all_relationships else f":{rel_type}"
             query = f"""
-                    MATCH (a)-[r:{rel_type}]->(b)
+                    MATCH (a)-[r{relationship_clause}]->(b)
                     WHERE r.session_id = $source_id
                     RETURN a, r, b
                     {limit_clause}
