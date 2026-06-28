@@ -1,5 +1,5 @@
 from globals import create_file,save_temp_config,load_temp_config
-from connection_utils import tools
+from batch_manager.utils.neo4j_utils import Neo4jCredentialConfigError, create_neo4j_driver, load_session_neo4j_credentials
 import json
 import os
 import re
@@ -82,9 +82,14 @@ def fetch_graph(id,action,source_id,value,batch):
         driver = None
         try:
             tool = load_temp_config("tool", source_id) or load_temp_config("active_tool", source_id) or "neo4j"
-            driver = tools(str(tool).lower(), "check", {"session_id": source_id})
-            if not driver:
-                return {"nodes": [], "edges": [], "error": "Neo4j credentials not found for graph session"}
+            if str(tool).lower() != "neo4j":
+                return {"nodes": [], "edges": [], "error": "Graph fetch requires Neo4j tool credentials"}
+            try:
+                credentials = load_session_neo4j_credentials(source_id, purpose="graph_fetch")
+                driver = create_neo4j_driver(credentials)
+            except Neo4jCredentialConfigError as exc:
+                print(f"[graph_fetch] credential configuration failed session={source_id}: {exc}", flush=True)
+                return {"nodes": [], "edges": [], "error": str(exc)}
 
             nodes = {}
             edges = []

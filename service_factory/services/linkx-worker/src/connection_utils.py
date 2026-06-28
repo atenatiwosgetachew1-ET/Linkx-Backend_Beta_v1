@@ -6,7 +6,7 @@ from kafka import KafkaConsumer
 from hdfs import InsecureClient
 import json
 from globals import create_file,save_temp_config,load_temp_config,sockets_registry
-from batch_manager.utils.neo4j_utils import create_neo4j_driver, neo4j_database_name, redacted_neo4j_credentials
+from batch_manager.utils.neo4j_utils import Neo4jCredentialConfigError, create_neo4j_driver, load_session_neo4j_credentials, neo4j_database_name, redacted_neo4j_credentials
 
 
 
@@ -138,26 +138,23 @@ def tools(id,action,payload):
             return True
         if action == "check":
             session_id = payload["session_id"]
-            print("session_id:",session_id)
-            creds = load_temp_config("tool_credentials", session_id)
-            print("creds:", redacted_neo4j_credentials(creds) if isinstance(creds, dict) else creds)
-            if not creds:
-                return False
-            url = creds["url"]
-            username = creds["username"]
-            password = creds["password"]
+            print("session_id:", session_id)
             try:
-                neo4j_driver=create_neo4j_driver(creds)
+                creds = load_session_neo4j_credentials(session_id, purpose="tools_check")
+                neo4j_driver = create_neo4j_driver(creds)
                 query = "RETURN 1 AS ok"  # Sample query to test credentials/database
                 with neo4j_driver.session() as session:
                     try:
-                        result = session.run(query)
-                        tool_driver_registry[session_id]=neo4j_driver
+                        session.run(query).consume()
+                        tool_driver_registry[session_id] = neo4j_driver
                         return neo4j_driver
                     except Exception as e:
-                        # response={"state":"failed","message":"Entered wrong credentials!"}
+                        print(f"Neo4j check query failed for session {session_id}: {e}")
+                        neo4j_driver.close()
                         return False
+            except Neo4jCredentialConfigError as e:
+                print(f"Neo4j credential configuration failed for session {session_id}: {e}")
+                return False
             except Exception as e:
-                print(e)
-                #response={"state":"failed","message":"URI scheme not supported!"}
+                print(f"Neo4j check failed for session {session_id}: {e}")
                 return False
