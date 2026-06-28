@@ -25,13 +25,15 @@ TRANSACTION_RELATIONSHIPS = [
     "DORMANT_TO_ACTIVE",
     "HIGH_RISK_LINK",
     "ABNORMAL_BALANCE_CHANGE",
+    "HUB_AND_SPOKE",
+    "SHARED_IDENTIFIER",
 ]
 
 
 def _create_transaction_indexes(session, label):
     index_prefix = _safe_index_name(label)
     safe_label = _safe_label(label)
-    for prop in ["batch_id", "session_id", "ACCOUNTNO", "BENACCOUNTNO", "TRANSACTIONDATE"]:
+    for prop in ["batch_id", "session_id", "ACCOUNTNO", "BENACCOUNTNO", "TRANSACTIONDATE", "BUSINESSMOBILENO", "BENTELNO"]:
         index_name = _safe_index_name("idx", index_prefix, prop)
         session.run(f"CREATE INDEX {index_name} IF NOT EXISTS FOR (n:{safe_label}) ON (n.{prop})")
 
@@ -241,6 +243,90 @@ def batch_graph_analysis_transactions(
             r.threshold_multiplier = $threshold
         """, threshold=threshold_multiplier, session_id=session_param)
 
+        # ----------------------------
+        # 7. HUB_AND_SPOKE: one account fans out to, or receives from, many counterparties
+        # ----------------------------
+        session.run(f"""
+        MATCH (t:{label})
+        WHERE ($session_id IS NULL OR {_session_scope_clause("t")})
+          AND t.TRANSACTIONDATE IS NOT NULL
+          AND t.TRANSACTIONDATE <> ''
+          AND t.BENACCOUNTNO IS NOT NULL
+          AND t.BENACCOUNTNO <> ''
+        WITH t.ACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day, collect(t) AS txns, count(DISTINCT t.BENACCOUNTNO) AS spoke_count
+        WHERE hub IS NOT NULL
+          AND hub <> ''
+          AND spoke_count >= $min_tx_count
+        UNWIND range(0, size(txns)-2) AS i
+        WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
+        MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
+        SET r.bgcolor = '#6f42c1',
+            r.textcolor = '#eeeeee',
+            r.provisional = false,
+            r.reason = 'account connects with multiple counterparties on same day',
+            r.hub_account = hub,
+            r.direction = 'outgoing',
+            r.tx_day = tx_day,
+            r.spoke_count = spoke_count
+        """, session_id=session_param, min_tx_count=min_tx_count)
+
+        session.run(f"""
+        MATCH (t:{label})
+        WHERE ($session_id IS NULL OR {_session_scope_clause("t")})
+          AND t.TRANSACTIONDATE IS NOT NULL
+          AND t.TRANSACTIONDATE <> ''
+          AND t.ACCOUNTNO IS NOT NULL
+          AND t.ACCOUNTNO <> ''
+        WITH t.BENACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day, collect(t) AS txns, count(DISTINCT t.ACCOUNTNO) AS spoke_count
+        WHERE hub IS NOT NULL
+          AND hub <> ''
+          AND spoke_count >= $min_tx_count
+        UNWIND range(0, size(txns)-2) AS i
+        WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
+        MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
+        SET r.bgcolor = '#6f42c1',
+            r.textcolor = '#eeeeee',
+            r.provisional = false,
+            r.reason = 'account connects with multiple counterparties on same day',
+            r.hub_account = hub,
+            r.direction = 'incoming',
+            r.tx_day = tx_day,
+            r.spoke_count = spoke_count
+        """, session_id=session_param, min_tx_count=min_tx_count)
+
+        # ----------------------------
+        # 8. SHARED_IDENTIFIER: same phone identifier appears on multiple accounts
+        # ----------------------------
+        session.run(f"""
+        MATCH (t:{label})
+        WHERE ($session_id IS NULL OR {_session_scope_clause("t")})
+        WITH t,
+             [
+               {{kind:'BUSINESSMOBILENO', value:t.BUSINESSMOBILENO, account:t.ACCOUNTNO}},
+               {{kind:'BENTELNO', value:t.BENTELNO, account:t.BENACCOUNTNO}}
+             ] AS identifiers
+        UNWIND identifiers AS identifier
+        WITH identifier.kind AS identifier_type,
+             trim(toString(identifier.value)) AS identifier_value,
+             identifier.account AS account,
+             t
+        WHERE identifier_value <> ''
+          AND account IS NOT NULL
+          AND account <> ''
+        WITH identifier_type, identifier_value, collect(DISTINCT account) AS accounts, collect(DISTINCT t) AS txns
+        WHERE size(accounts) >= 2
+        UNWIND range(0, size(txns)-2) AS i
+        WITH txns[i] AS a, txns[i+1] AS b, identifier_type, identifier_value, accounts
+        MERGE (a)-[r:SHARED_IDENTIFIER {{session_id:$session_id}}]->(b)
+        SET r.bgcolor = '#0b7285',
+            r.textcolor = '#eeeeee',
+            r.provisional = false,
+            r.reason = 'same identifier appears on multiple accounts',
+            r.identifier_type = identifier_type,
+            r.identifier_value = identifier_value,
+            r.account_count = size(accounts)
+        """, session_id=session_param)
+
         counts = _count_transaction_relationships(session, session_param) if session_param else {}
         _write_gds_metrics(session, f"{session_param}_transactions", nodes_label, session_param, TRANSACTION_RELATIONSHIPS, log_file)
 
@@ -424,6 +510,104 @@ def incremental_graph_analysis_transactions(
             r.average_recent_change = avg_change,
             r.threshold_multiplier = $threshold
         """, batch_id=batch_id, session_id=session_param, threshold=threshold_multiplier)
+
+        # Hub-and-spoke: recalculate account fans touched by this batch.
+        session.run(f"""
+        MATCH (seed:{label})
+        WHERE seed.batch_id = $batch_id
+        WITH DISTINCT seed.ACCOUNTNO AS hub, seed.TRANSACTIONDATE AS tx_day
+        WHERE hub IS NOT NULL AND hub <> ''
+          AND tx_day IS NOT NULL AND tx_day <> ''
+        MATCH (t:{label})
+        WHERE {_session_scope_clause("t")}
+          AND t.ACCOUNTNO = hub
+          AND t.TRANSACTIONDATE = tx_day
+          AND t.BENACCOUNTNO IS NOT NULL
+          AND t.BENACCOUNTNO <> ''
+        WITH hub, tx_day, collect(t) AS txns, count(DISTINCT t.BENACCOUNTNO) AS spoke_count
+        WHERE spoke_count >= $min_tx_count
+        UNWIND range(0, size(txns)-2) AS i
+        WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
+        MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
+        SET r.bgcolor = '#6f42c1',
+            r.textcolor = '#eeeeee',
+            r.provisional = true,
+            r.reason = 'account connects with multiple counterparties on same day',
+            r.hub_account = hub,
+            r.direction = 'outgoing',
+            r.tx_day = tx_day,
+            r.spoke_count = spoke_count
+        """, batch_id=batch_id, session_id=session_param, min_tx_count=min_tx_count)
+
+        session.run(f"""
+        MATCH (seed:{label})
+        WHERE seed.batch_id = $batch_id
+        WITH DISTINCT seed.BENACCOUNTNO AS hub, seed.TRANSACTIONDATE AS tx_day
+        WHERE hub IS NOT NULL AND hub <> ''
+          AND tx_day IS NOT NULL AND tx_day <> ''
+        MATCH (t:{label})
+        WHERE {_session_scope_clause("t")}
+          AND t.BENACCOUNTNO = hub
+          AND t.TRANSACTIONDATE = tx_day
+          AND t.ACCOUNTNO IS NOT NULL
+          AND t.ACCOUNTNO <> ''
+        WITH hub, tx_day, collect(t) AS txns, count(DISTINCT t.ACCOUNTNO) AS spoke_count
+        WHERE spoke_count >= $min_tx_count
+        UNWIND range(0, size(txns)-2) AS i
+        WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
+        MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
+        SET r.bgcolor = '#6f42c1',
+            r.textcolor = '#eeeeee',
+            r.provisional = true,
+            r.reason = 'account connects with multiple counterparties on same day',
+            r.hub_account = hub,
+            r.direction = 'incoming',
+            r.tx_day = tx_day,
+            r.spoke_count = spoke_count
+        """, batch_id=batch_id, session_id=session_param, min_tx_count=min_tx_count)
+
+        # Shared identifier: recalculate phone identifiers touched by this batch.
+        session.run(f"""
+        MATCH (seed:{label})
+        WHERE seed.batch_id = $batch_id
+        WITH [
+               {{kind:'BUSINESSMOBILENO', value:seed.BUSINESSMOBILENO}},
+               {{kind:'BENTELNO', value:seed.BENTELNO}}
+             ] AS identifiers
+        UNWIND identifiers AS seed_identifier
+        WITH DISTINCT seed_identifier.kind AS identifier_type, trim(toString(seed_identifier.value)) AS identifier_value
+        WHERE identifier_value <> ''
+        MATCH (t:{label})
+        WHERE {_session_scope_clause("t")}
+        WITH identifier_type, identifier_value, t,
+             [
+               {{kind:'BUSINESSMOBILENO', value:t.BUSINESSMOBILENO, account:t.ACCOUNTNO}},
+               {{kind:'BENTELNO', value:t.BENTELNO, account:t.BENACCOUNTNO}}
+             ] AS identifiers
+        UNWIND identifiers AS identifier
+        WITH identifier_type,
+             identifier_value,
+             identifier.account AS account,
+             t,
+             identifier.kind AS matched_type,
+             trim(toString(identifier.value)) AS matched_value
+        WHERE matched_type = identifier_type
+          AND matched_value = identifier_value
+          AND account IS NOT NULL
+          AND account <> ''
+        WITH identifier_type, identifier_value, collect(DISTINCT account) AS accounts, collect(DISTINCT t) AS txns
+        WHERE size(accounts) >= 2
+        UNWIND range(0, size(txns)-2) AS i
+        WITH txns[i] AS a, txns[i+1] AS b, identifier_type, identifier_value, accounts
+        MERGE (a)-[r:SHARED_IDENTIFIER {{session_id:$session_id}}]->(b)
+        SET r.bgcolor = '#0b7285',
+            r.textcolor = '#eeeeee',
+            r.provisional = true,
+            r.reason = 'same identifier appears on multiple accounts',
+            r.identifier_type = identifier_type,
+            r.identifier_value = identifier_value,
+            r.account_count = size(accounts)
+        """, batch_id=batch_id, session_id=session_param)
 
         counts = _count_transaction_relationships(session, session_param)
 
