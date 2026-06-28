@@ -128,6 +128,19 @@ def _protect_config_secrets(value, cur, scope_type, scope_id, prefix=""):
     return value
 
 
+def _merge_config(current, incoming):
+    if not isinstance(current, dict) or not isinstance(incoming, dict):
+        return incoming
+    merged = dict(current or {})
+    for key, value in incoming.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_config(merged.get(key) or {}, value)
+        else:
+            merged[key] = value
+    return merged
+
+
+
 def _resolve_config_secrets(value, cur):
     if isinstance(value, dict):
         resolved = {}
@@ -330,7 +343,7 @@ def save_session_config(session_id, config, window_id=None, merge=True):
             )
             row = cur.fetchone()
             current = row[0] if row else {}
-            new_config = {**(current or {}), **incoming} if merge else incoming
+            new_config = _merge_config(current or {}, incoming) if merge else incoming
             new_config = _protect_config_secrets(new_config, cur, "session", f"{base_session}:{target_window}")
             if row:
                 cur.execute(

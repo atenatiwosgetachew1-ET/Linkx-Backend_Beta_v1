@@ -1,8 +1,18 @@
 # LinkX Service Split Handoff And Load Audit
 
-Last updated: 2026-06-19
+Last updated: 2026-06-25
 
 This document is a handoff summary for a new chat/session. It captures the current four-server LinkX backend split, how the services communicate, how deployments are updated, and what work is still running on each server. The goal of the split is to keep the current working system stable while gradually moving heavy analysis and ingestion work out of the API server and into worker/maintenance services.
+
+## Latest Status Snapshot
+
+As of 2026-06-25, the P0 security cleanup and main P1 hardening work are functionally complete on the backend side. Runtime secrets were moved out of raw config JSON into encrypted `managed_secrets`, old hardcoded/default credentials were rotated, `.env` files were locked down, legacy parent shared-secret SSO was disabled, request body limits and security audit events were added, and service hardening/UFW restrictions were applied across the four servers.
+
+CTMS SSO is implemented as an ES256/JWKS flow. LinkX should verify CTMS access JWTs from `http://172.27.23.213:3001/.well-known/jwks.json`; the PEM public key provided by CTMS is only a fallback verifier key, not a token and not a shared secret. Final end-to-end proof is still waiting on a real short-lived CTMS ES256 access JWT with `kid=ctms-auth-v1`, `token_type=access`, future `exp`, UUID `sub`, and a known CTMS `role`.
+
+P2 recovery evidence is now mostly proven: PostgreSQL backup/restore passed, artifact backup/restore passed, Neo4j offline dump/load passed against the current empty graph, Redis was verified disposable, and the `LINKX_SECRET_ENCRYPTION_KEY` recovery copy is kept separately by the developer. The remaining P2 follow-ups are to install/enable the scheduled backup timers, configure an encrypted/off-host backup target, and repeat the Neo4j restore drill after a representative ingestion creates nonzero nodes/relationships.
+
+Current repo-side follow-up: backup timer units and retention/off-host helper scripts are present in the repo but still need deployment to the relevant servers. Treat the uninstalled timer work as ready for ops rollout, not yet live production automation.
 
 ## Current Server Map
 
@@ -298,24 +308,22 @@ Deployment touches Server 1 API and Server 3 worker. No database migration is re
 
 ## 2026-06-22 Runtime Config Cleanup Note
 
-Server 1 currently has auth-related settings split across multiple runtime layers, which is why the setup can feel duplicated.
+Server 1 auth configuration was previously split across `.env`, direct unit `Environment=` lines, and a drop-in with `LINKX_PARENT_SHARED_SECRET`. That duplication caused confusion while testing CTMS ES256 SSO.
 
-Observed sources of configuration:
+Current intended configuration:
 - The deployed service unit reads [EnvironmentFile=/opt/linkx-backend-api/.env](../service_factory/services/linkx-api/deploy/systemd/linkx-api.service).
-- The service unit sets `LINKX_CTMS_JWKS_URL` and `LINKX_CTMS_ORIGIN` directly.
-- A systemd drop-in sets `LINKX_PARENT_SHARED_SECRET`.
-- The runtime code reads `LINKX_PARENT_SHARED_SECRET` in [auth/routes.py](../service_factory/services/linkx-api/src/auth/routes.py) and `LINKX_CTMS_JWKS_URL` in [auth/jwks_client.py](../service_factory/services/linkx-api/src/auth/jwks_client.py).
+- CTMS settings should live in one place, preferably `/opt/linkx-backend-api/.env`, with `LINKX_CTMS_JWKS_URL=http://172.27.23.213:3001/.well-known/jwks.json` and `LINKX_CTMS_ORIGIN=http://172.27.23.107`.
+- Runtime code accepts the CTMS variable names and the older parent-JWKS aliases for compatibility, but CTMS naming is preferred going forward.
+- `LINKX_ENABLE_LEGACY_PARENT_TOKEN=false` is the expected production value.
+- `LINKX_PARENT_SHARED_SECRET` was removed from runtime and should stay absent unless a separate, explicitly approved legacy integration is re-enabled.
 
 Current behavior:
-- CTMS mode is the primary `/auth/parent-token` path and depends on `LINKX_CTMS_JWKS_URL` plus `LINKX_CTMS_ORIGIN`.
-- CTMS tokens must be ES256 access JWTs signed by CTMS and verified through JWKS. Placeholder strings or the JWKS/public key itself correctly return `Invalid parent token`.
-- Legacy parent-token shared-secret mode is disabled by default and only runs when `LINKX_ENABLE_LEGACY_PARENT_TOKEN=true`. This prevents CTMS ES256 testing from being confused with `X-Linkx-Parent-Secret`.
-- `LINKX_PARENT_SHARED_SECRET` should be removed from systemd drop-ins after CTMS SSO is confirmed, unless a separate legacy integration still needs it.
+- CTMS mode is the primary `/auth/parent-token` path and depends on the CTMS JWKS URL plus CTMS origin configuration.
+- CTMS tokens must be ES256 access JWTs signed by CTMS and verified through JWKS. Placeholder strings, the PEM public key, or the JWKS public key itself correctly return `Invalid parent token` when submitted as `access_token`.
+- Legacy parent-token shared-secret mode only runs when `LINKX_ENABLE_LEGACY_PARENT_TOKEN=true`, which should remain disabled for the CTMS integration.
 
-Cleanup recommendation:
-- Keep CTMS settings in one place only, preferably `/opt/linkx-backend-api/.env` or one clearly named systemd drop-in.
-- Remove malformed or duplicated `Environment=` lines from systemd drop-ins.
-- Verify the final runtime env with `systemctl show linkx-api -p Environment` before testing parent-token again.
+Verification recommendation:
+- Verify the final runtime env from the live process, not only `systemctl show`, because `EnvironmentFile=` values may not appear in `systemctl show linkx-api -p Environment`.
 - Final SSO proof requires a real CTMS access JWT with `alg=ES256`, `kid=ctms-auth-v1`, `token_type=access`, future `exp`, valid UUID `sub`, and CTMS `role`.
 
 ## P0 Secret Hygiene Status
@@ -812,7 +820,7 @@ sudo ./scripts/restore-artifacts-to-dir.sh "$ARTIFACT_ARCHIVE" /opt/linkx-restor
 
 The restore script refuses `/`, `/mnt`, and `/mnt/linkx-artifacts` as targets and requires an empty restore directory. For large production artifact volume, prefer an encrypted off-host `rsync` target over repeated full tar archives. Keep backups off the same disk/host where possible.
 
-Server 4 Neo4j backup method still needs final confirmation against the live compose file and license mode. Before choosing the final command, inspect the actual mounts:
+Server 4 Neo4j backup method is confirmed as an offline maintenance-window dump. The live container must be stopped for consistency, cleanup services should be stopped while dumping, and the backup directory must be writable by the Neo4j container user (`7474:7474`) or the dump should be written through the tested helper script. Inspect mounts again before changing the method:
 
 ```bash
 sudo docker inspect linkx-neo4j --format '{{json .Mounts}}' | python3 -m json.tool
@@ -976,7 +984,7 @@ Recorded Redis policy evidence:
 
 ### P2 Scheduled Backups And Retention
 
-Manual restore drills are proven. The next operational layer is scheduled local backups plus an off-host copy target. Timer templates are now in the repo; install them only after confirming paths on each server.
+Manual restore drills are proven. The next operational layer is scheduled local backups plus an off-host copy target. Timer templates and helper scripts are now in the repo, but they are not yet installed/enabled on the live servers.
 
 | Server | Timer | Backup | Default Schedule | Retention |
 |---|---|---|---|---|

@@ -995,7 +995,22 @@ def analyzer(payload):
 
         if payload.get("tool") == "neo4j":
             print(2)
-            driver = tools("neo4j", "check", {"session_id": session_id})
+            driver = None
+            tool_credentials = payload.get("tool_credentials")
+            if tool_credentials:
+                try:
+                    driver = create_neo4j_driver(tool_credentials)
+                    with driver.session() as session:
+                        session.run("RETURN 1 AS ok").consume()
+                except Exception as exc:
+                    print(f"[{session_id}] Payload Neo4j credential check failed: {exc}")
+                    try:
+                        if driver:
+                            driver.close()
+                    finally:
+                        driver = None
+            if not driver:
+                driver = tools("neo4j", "check", {"session_id": session_id})
             if not driver:
                 print(f"[{session_id}] Neo4j driver not found!")
                 log_writer(payload.get("log_file"), f"[{datetime.now()}] [Error] - Neo4j driver not found")
