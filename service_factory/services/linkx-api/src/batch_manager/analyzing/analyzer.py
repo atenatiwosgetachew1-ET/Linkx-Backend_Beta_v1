@@ -8,10 +8,9 @@ import time
 import uuid
 import os
 import importlib.util
-from connection_utils import tools
 from logger import log_writer
 from batch_manager.processing.file_source_loader import load_file
-from batch_manager.utils.neo4j_utils import Neo4jCredentialConfigError, create_neo4j_driver, redacted_neo4j_credentials
+from batch_manager.utils.neo4j_utils import Neo4jCredentialConfigError, create_neo4j_driver, load_session_neo4j_credentials, redacted_neo4j_credentials
 from batch_manager.utils.neo4j_cleanup import clean_existing_session
 from batch_manager.utils.artifact_utils import ensure_artifact_dir
 from batch_manager.processing.realtime_source_loader import records_to_dataframe, iter_kafka_messages, iter_api_messages
@@ -1022,10 +1021,27 @@ def analyzer(payload):
                     finally:
                         driver = None
             if not driver:
-                driver = tools("neo4j", "check", {"session_id": session_id})
+                try:
+                    tool_credentials = load_session_neo4j_credentials(session_id, purpose="api_batch_analysis")
+                    driver = create_neo4j_driver(tool_credentials)
+                    with driver.session() as session:
+                        session.run("RETURN 1 AS ok").consume()
+                    payload["tool_credentials"] = tool_credentials
+                except Neo4jCredentialConfigError as exc:
+                    log_writer(payload.get("log_file"), f"[{datetime.now()}] [Error] - Invalid Neo4j credential configuration: {exc}")
+                    return False
+                except Exception as exc:
+                    print(f"[{session_id}] Session Neo4j credential check failed error={exc}")
+                    log_writer(payload.get("log_file"), f"[{datetime.now()}] [Error] - Neo4j connection verification failed: {exc}")
+                    try:
+                        if driver:
+                            driver.close()
+                    finally:
+                        driver = None
+                    return False
             if not driver:
-                print(f"[{session_id}] Neo4j driver not found!")
-                log_writer(payload.get("log_file"), f"[{datetime.now()}] [Error] - Neo4j driver not found")
+                print(f"[{session_id}] Neo4j driver not found after credential resolution")
+                log_writer(payload.get("log_file"), f"[{datetime.now()}] [Error] - Neo4j driver not found after credential resolution")
                 return False
 
             driver.close()

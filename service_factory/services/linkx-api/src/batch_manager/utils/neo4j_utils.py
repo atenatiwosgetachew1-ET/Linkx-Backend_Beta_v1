@@ -2,7 +2,7 @@ import os
 from neo4j import GraphDatabase
 
 from security.secret_store import MASKED_SECRET
-from session_config_store import _connect, _load_managed_secret, db_enabled
+from session_config_store import _connect, _load_managed_secret, db_enabled, load_session_config
 
 
 class Neo4jCredentialConfigError(ValueError):
@@ -115,6 +115,38 @@ def create_neo4j_driver(credentials):
         auth=(credentials["username"], credentials["password"]),
     )
     return DatabaseScopedDriver(driver, neo4j_database_name(credentials))
+
+
+def load_session_neo4j_credentials(session_id, purpose="neo4j"):
+    if not session_id:
+        raise Neo4jCredentialConfigError(f"Neo4j session_id is required for {purpose}")
+    if not db_enabled():
+        raise Neo4jCredentialConfigError(
+            f"Session config database is not enabled for {purpose}; DATABASE_URL or LINKX_POSTGRES_DSN is required"
+        )
+
+    config = load_session_config(session_id)
+    if config is None:
+        raise Neo4jCredentialConfigError(f"Session config not found for {session_id}")
+    if not isinstance(config, dict):
+        raise Neo4jCredentialConfigError(f"Session config is invalid for {session_id}")
+
+    credentials = config.get("tool_credentials")
+    print(
+        "neo4j_session_credentials:",
+        {
+            "session_id": str(session_id),
+            "purpose": purpose,
+            "config_found": True,
+            "creds": redacted_neo4j_credentials(credentials) if isinstance(credentials, dict) else None,
+        },
+        flush=True,
+    )
+    if not credentials:
+        raise Neo4jCredentialConfigError(f"Neo4j tool_credentials missing for session {session_id}")
+    if not isinstance(credentials, dict):
+        raise Neo4jCredentialConfigError(f"Neo4j tool_credentials invalid for session {session_id}")
+    return resolve_neo4j_credentials(credentials)
 
 
 def credentials_for_cleanup(credentials=None):
