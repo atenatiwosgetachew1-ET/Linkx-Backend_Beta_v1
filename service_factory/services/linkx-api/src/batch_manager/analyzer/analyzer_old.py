@@ -291,7 +291,7 @@ def analyzer(param):  # Only called with a thread
                 except Exception as e:
                     print(f"[{session_id}] Batch analysis failed: {e}")
             else:
-                print(f"[{session_id}] Neo4j driver not found!")
+                print(f"[{session_id}] Neo4j driver not found in legacy analyzer path")
 
     elif payload.get("id") == "fetch_data" and payload.get("type") == "relationships":
         driver = payload.get("driver")
