@@ -138,10 +138,17 @@ def batch_graph_analysis_transactions(
           AND a.BENACCOUNTNO <> ''
           AND elementId(a) < elementId(b)
           AND coalesce(a.TRANSACTIONDATE, '') = coalesce(b.TRANSACTIONDATE, '')
-        MERGE (a)-[r1:CIRCULAR_FLOW {{session_id:$session_id}}]->(b)
-        SET r1.bgcolor = '#e6e6e6', r1.provisional = false, r1.reason = 'same-day reverse transfer pair'
-        MERGE (b)-[r2:CIRCULAR_FLOW {{session_id:$session_id}}]->(a)
-        SET r2.bgcolor = '#e6e6e6', r2.provisional = false, r2.reason = 'same-day reverse transfer pair'
+        MERGE (a)-[r1:CIRCULAR_FLOW {session_id:$session_id}]->(b)
+        SET r1.bgcolor = '#e6e6e6',
+            r1.textcolor = '#111111',
+            r1.provisional = false,
+            r1.reason = 'same-day reverse transfer pair'
+
+        MERGE (b)-[r2:CIRCULAR_FLOW {session_id:$session_id}]->(a)
+        SET r2.bgcolor = '#e6e6e6',
+            r2.textcolor = '#111111',
+            r2.provisional = false,
+            r2.reason = 'same-day reverse transfer pair'
         """, session_id=session_param)
 
         # ----------------------------
