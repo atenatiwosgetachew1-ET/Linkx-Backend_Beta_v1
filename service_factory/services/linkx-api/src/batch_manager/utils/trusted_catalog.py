@@ -1,3 +1,5 @@
+from session_config_store import load_session_config
+
 TRUSTED_CATALOG_MAX_ENTRIES = 500
 TRUSTED_CATALOG_MAX_FIELDS_PER_ENTRY = 20
 TRUSTED_CATALOG_MAX_KEY_LENGTH = 128
@@ -61,3 +63,13 @@ def normalize_trusted_catalog(value):
                 normalized_entry[key] = raw_value
         normalized.append(normalized_entry)
     return normalized
+
+
+def load_session_trusted_catalog(session_id):
+    config = load_session_config(session_id) or {}
+    return normalize_trusted_catalog(config.get('trusted_catalog'))
+
+
+def trusted_catalog_cypher_entries(value):
+    entries = normalize_trusted_catalog(value)
+    return [{key: str(item) for key, item in entry.items()} for entry in entries]
