@@ -94,7 +94,7 @@ def prepare_graph_data_full(records):
 
     return list(nodes_dict.values()), edges
 
-def fetch_graph(id,action,source_id,value,batch):        
+def fetch_graph(id,action,source_id,value,batch, chunk_callback=None, chunk_size=None):        
     print(id,source_id,value)
     if id == "relationship":
         driver = None
@@ -111,6 +111,12 @@ def fetch_graph(id,action,source_id,value,batch):
 
             nodes = {}
             edges = []
+            chunk_nodes = {}
+            chunk_edges = []
+            emitted_node_ids = set()
+            node_ids = set()
+            chunk_count = 0
+            total_edges = 0
             rel_type = str(value or "").strip()
             batch_id = batch
             
@@ -170,26 +176,80 @@ def fetch_graph(id,action,source_id,value,batch):
                     a_props = _json_safe_properties(dict(a))
                     b_props = _json_safe_properties(dict(b))
                     r_props = _json_safe_properties(dict(r))
-                    nodes[a.id] = {
+                    a_node = {
                         "id": a.id,
                         "label": a_props.get("NodeId", str(a.id)),
                         **a_props
                     }
-                    nodes[b.id] = {
+                    b_node = {
                         "id": b.id,
                         "label": b_props.get("NodeId", str(b.id)),
                         **b_props
                     }
+                    if chunk_callback:
+                        node_ids.add(a.id)
+                        node_ids.add(b.id)
+                    else:
+                        nodes[a.id] = a_node
+                        nodes[b.id] = b_node
 
                     # include all relationship properties
-                    edges.append({
+                    edge = {
                         "from": a.id,
                         "to": b.id,
                         "label": r.type,  # or type(r).__name__
                         **r_props
+                    }
+                    if not chunk_callback:
+                        edges.append(edge)
+                    total_edges += 1
+
+                    if chunk_callback:
+                        if a.id not in emitted_node_ids:
+                            chunk_nodes[a.id] = a_node
+                            emitted_node_ids.add(a.id)
+                        if b.id not in emitted_node_ids:
+                            chunk_nodes[b.id] = b_node
+                            emitted_node_ids.add(b.id)
+                        chunk_edges.append(edge)
+                        if len(chunk_edges) >= max(1, int(chunk_size or 250)):
+                            chunk_count += 1
+                            chunk_callback({
+                                "chunk_index": chunk_count,
+                                "source_id": str(source_id),
+                                "relationship": rel_type,
+                                "nodes": list(chunk_nodes.values()),
+                                "edges": chunk_edges,
+                                "partial": True,
+                            })
+                            chunk_nodes = {}
+                            chunk_edges = []
+
+                if chunk_callback and (chunk_nodes or chunk_edges):
+                    chunk_count += 1
+                    chunk_callback({
+                        "chunk_index": chunk_count,
+                        "source_id": str(source_id),
+                        "relationship": rel_type,
+                        "nodes": list(chunk_nodes.values()),
+                        "edges": chunk_edges,
+                        "partial": True,
                     })
 
-            print(f"[graph_fetch] query done session={source_id} relationship={rel_type} nodes={len(nodes)} edges={len(edges)} timed_out={timed_out}", flush=True)
+            total_nodes = len(node_ids) if chunk_callback else len(nodes)
+            print(f"[graph_fetch] query done session={source_id} relationship={rel_type} nodes={total_nodes} edges={total_edges} timed_out={timed_out}", flush=True)
+            if chunk_callback:
+                return {
+                    "nodes": [],
+                    "edges": [],
+                    "total_nodes": total_nodes,
+                    "total_edges": total_edges,
+                    "chunk_count": chunk_count,
+                    "partial": timed_out,
+                    "timed_out": timed_out,
+                    "fetch_timeout_seconds": fetch_timeout_seconds,
+                    "graph_limit": graph_limit,
+                }
             return {
                 "nodes": list(nodes.values()),
                 "edges": edges,

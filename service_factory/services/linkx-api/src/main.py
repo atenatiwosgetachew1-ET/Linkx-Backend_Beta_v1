@@ -558,7 +558,8 @@ def _graph_accessible_source(source_id, actor):
 @permission_required("session:read")
 def worker_job_status(job_id):
     actor = current_actor_from_request()
-    job = get_worker_job(job_id)
+    include_chunks = str(request.args.get("include_chunks") or "").lower() in {"1", "true", "yes", "on"}
+    job = get_worker_job(job_id, include_chunks=include_chunks, after_event_id=request.args.get("after_event_id"))
     if not job:
         return jsonify({"message": "not_found"}), 404
     session_id = job.get("session_id")

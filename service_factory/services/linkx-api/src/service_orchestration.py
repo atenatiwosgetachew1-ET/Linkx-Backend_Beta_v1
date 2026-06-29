@@ -17,6 +17,13 @@ def connect(application_name="linkx-api-orchestration"):
     return psycopg.connect(dsn, application_name=application_name)
 
 
+def _env_int(name, default):
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
 def enqueue_cleanup_run(cleanup_type, session_id=None, run_id=None, reason="event_requested", neo4j_credentials=None, payload=None, dry_run=False):
     cleanup_payload = dict(payload or {})
     if session_id is not None:
@@ -96,7 +103,7 @@ def enqueue_worker_job(queue_name, job_type, session_id=None, run_id=None, paylo
     }
 
 
-def get_worker_job(job_id):
+def get_worker_job(job_id, include_chunks=False, after_event_id=None):
     with connect(application_name="linkx-api-get-worker-job") as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -113,7 +120,7 @@ def get_worker_job(job_id):
                 return None
             cur.execute(
                 """
-                SELECT event_type, message, payload, created_at
+                SELECT id, event_type, message, payload, created_at
                 FROM job_events
                 WHERE job_id = %s
                 ORDER BY created_at DESC
@@ -123,24 +130,58 @@ def get_worker_job(job_id):
             )
             raw_events = [
                 {
-                    "event_type": event[0],
-                    "message": event[1],
-                    "payload": event[2] or {},
-                    "created_at": event[3].isoformat() if event[3] else None,
+                    "event_id": event[0],
+                    "event_type": event[1],
+                    "message": event[2],
+                    "payload": event[3] or {},
+                    "created_at": event[4].isoformat() if event[4] else None,
                 }
                 for event in cur.fetchall()
             ]
     result = _extract_job_result(raw_events)
     is_graph_job = row[3] in {"graph_fetch", "get_graph"} or row[4] == "graph"
+    chunks = []
+    next_chunk_after_event_id = after_event_id
     if is_graph_job:
         events = [
             {
+                "event_id": event.get("event_id"),
                 "event_type": event.get("event_type"),
                 "message": event.get("message"),
                 "created_at": event.get("created_at"),
             }
             for event in raw_events
         ]
+        if include_chunks:
+            chunk_limit = _env_int("LINKX_GRAPH_CHUNK_POLL_LIMIT", 25)
+            chunk_limit = max(1, min(chunk_limit, 100))
+            try:
+                after_id = int(after_event_id or 0)
+            except (TypeError, ValueError):
+                after_id = 0
+            with connect(application_name="linkx-api-get-graph-chunks") as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT id, payload, created_at
+                        FROM job_events
+                        WHERE job_id = %s
+                          AND event_type = 'graph_chunk'
+                          AND id > %s
+                        ORDER BY id ASC
+                        LIMIT %s
+                        """,
+                        (str(job_id), after_id, chunk_limit),
+                    )
+                    for event_id, payload, created_at in cur.fetchall():
+                        chunk = dict(payload or {})
+                        chunk["event_id"] = event_id
+                        chunk["created_at"] = created_at.isoformat() if created_at else None
+                        chunks.append(chunk)
+            if chunks:
+                next_chunk_after_event_id = chunks[-1].get("event_id")
+            else:
+                next_chunk_after_event_id = after_id
     else:
         events = raw_events
     return {
@@ -161,6 +202,8 @@ def get_worker_job(job_id):
         "payload": row[14] or {},
         "result": result,
         "events": events,
+        "chunks": chunks,
+        "next_chunk_after_event_id": next_chunk_after_event_id,
     }
 
 
