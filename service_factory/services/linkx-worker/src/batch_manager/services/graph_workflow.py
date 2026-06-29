@@ -7,18 +7,51 @@ def fetch_graph_result(payload):
     relationship = payload.get("relationship")
 
     if not source_id:
-        return {"status": "failed", "message": "source_id_required", "nodes": [], "edges": []}
+        return {
+            "status": "failed",
+            "message": "source_id_required",
+            "source_id": source_id,
+            "graph_session_id": source_id,
+            "relationship": relationship,
+            "nodes": [],
+            "edges": [],
+            "partial": False,
+            "timed_out": False,
+            "graph_limit": 0,
+        }
     if action != "relationship":
-        return {"status": "failed", "message": "unsupported_graph_action", "nodes": [], "edges": []}
+        return {
+            "status": "failed",
+            "message": "unsupported_graph_action",
+            "source_id": source_id,
+            "graph_session_id": source_id,
+            "relationship": relationship,
+            "nodes": [],
+            "edges": [],
+            "partial": False,
+            "timed_out": False,
+            "graph_limit": 0,
+        }
 
     graph = fetch_graph(action, "generate", source_id, relationship, "html")
     if isinstance(graph, tuple):
-        return {"status": "failed", "message": "unexpected_graph_response", "response": graph}
+        return {
+            "status": "failed",
+            "message": "unexpected_graph_response",
+            "source_id": source_id,
+            "graph_session_id": source_id,
+            "relationship": relationship,
+            "nodes": [],
+            "edges": [],
+            "partial": False,
+            "timed_out": False,
+            "graph_limit": 0,
+            "response": graph,
+        }
 
     graph = dict(graph or {})
     graph.setdefault("nodes", [])
     graph.setdefault("edges", [])
-    graph["file"] = "graphs_template"
     if graph.get("error"):
         graph.setdefault("status", "failed")
         graph.setdefault("message", graph["error"])
@@ -26,21 +59,15 @@ def fetch_graph_result(payload):
         graph.setdefault("status", "succeeded")
         graph.setdefault("message", "success")
 
-    result = {
-        **graph,
-        "source_id": source_id,
-        "graph_session_id": source_id,
-        "relationship": relationship,
-        "graph": graph,
-    }
-    result["results"] = {
-        "source_id": source_id,
-        "graph_session_id": source_id,
-        "relationship": relationship,
-        "graph": graph,
-        "nodes": graph.get("nodes", []),
-        "edges": graph.get("edges", []),
+    return {
         "status": graph.get("status"),
         "message": graph.get("message"),
+        "source_id": source_id,
+        "graph_session_id": source_id,
+        "relationship": relationship,
+        "nodes": graph.get("nodes", []),
+        "edges": graph.get("edges", []),
+        "partial": bool(graph.get("partial")),
+        "timed_out": bool(graph.get("timed_out")),
+        "graph_limit": graph.get("graph_limit"),
     }
-    return result

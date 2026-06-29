@@ -121,7 +121,7 @@ def get_worker_job(job_id):
                 """,
                 (str(job_id),),
             )
-            events = [
+            raw_events = [
                 {
                     "event_type": event[0],
                     "message": event[1],
@@ -130,7 +130,19 @@ def get_worker_job(job_id):
                 }
                 for event in cur.fetchall()
             ]
-    result = _extract_job_result(events)
+    result = _extract_job_result(raw_events)
+    is_graph_job = row[3] in {"graph_fetch", "get_graph"} or row[4] == "graph"
+    if is_graph_job:
+        events = [
+            {
+                "event_type": event.get("event_type"),
+                "message": event.get("message"),
+                "created_at": event.get("created_at"),
+            }
+            for event in raw_events
+        ]
+    else:
+        events = raw_events
     return {
         "job_id": row[0],
         "session_id": row[1],
