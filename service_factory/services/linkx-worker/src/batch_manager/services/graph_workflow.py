@@ -59,6 +59,7 @@ def fetch_graph_result(payload):
 
     job_id = payload.get("job_id")
     chunk_size = max(1, _env_int("LINKX_GRAPH_CHUNK_SIZE", 250))
+    first_chunk_size = max(1, _env_int("LINKX_GRAPH_FIRST_CHUNK_SIZE", 100))
     chunk_conn = None
     chunk_cur = None
 
@@ -82,6 +83,7 @@ def fetch_graph_result(payload):
             "html",
             chunk_callback=emit_chunk if chunk_cur else None,
             chunk_size=chunk_size,
+            first_chunk_size=first_chunk_size,
         )
     finally:
         if chunk_cur:
@@ -128,5 +130,6 @@ def fetch_graph_result(payload):
         "total_edges": graph.get("total_edges", len(graph.get("edges", []))),
         "chunk_count": graph.get("chunk_count", 0),
         "chunk_size": chunk_size if job_id else None,
+        "first_chunk_size": first_chunk_size if job_id else None,
         "chunked": bool(job_id),
     }

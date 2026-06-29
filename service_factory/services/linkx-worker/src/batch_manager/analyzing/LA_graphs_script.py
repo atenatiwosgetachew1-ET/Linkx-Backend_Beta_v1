@@ -94,7 +94,7 @@ def prepare_graph_data_full(records):
 
     return list(nodes_dict.values()), edges
 
-def fetch_graph(id,action,source_id,value,batch, chunk_callback=None, chunk_size=None):        
+def fetch_graph(id,action,source_id,value,batch, chunk_callback=None, chunk_size=None, first_chunk_size=None):        
     print(id,source_id,value)
     if id == "relationship":
         driver = None
@@ -212,7 +212,8 @@ def fetch_graph(id,action,source_id,value,batch, chunk_callback=None, chunk_size
                             chunk_nodes[b.id] = b_node
                             emitted_node_ids.add(b.id)
                         chunk_edges.append(edge)
-                        if len(chunk_edges) >= max(1, int(chunk_size or 250)):
+                        target_chunk_size = first_chunk_size if chunk_count == 0 and first_chunk_size else chunk_size
+                        if len(chunk_edges) >= max(1, int(target_chunk_size or 250)):
                             chunk_count += 1
                             chunk_callback({
                                 "chunk_index": chunk_count,
