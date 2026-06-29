@@ -1,10 +1,32 @@
 from globals import create_file,save_temp_config,load_temp_config
-from connection_utils import tools
+from batch_manager.utils.neo4j_utils import Neo4jCredentialConfigError, create_neo4j_driver, load_session_neo4j_credentials
 import json
 import os
 import re
 import time
 from flask import jsonify
+try:
+    from neo4j import Query
+except Exception:
+    Query = None
+
+
+def _json_safe_value(value):
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(k): _json_safe_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe_value(item) for item in value]
+    if hasattr(value, "iso_format"):
+        return value.iso_format()
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+def _json_safe_properties(values):
+    return {str(k): _json_safe_value(v) for k, v in dict(values or {}).items()}
 
 def build_node_properties_full(node):
     # node is a Neo4j Node object
@@ -78,9 +100,14 @@ def fetch_graph(id,action,source_id,value,batch):
         driver = None
         try:
             tool = load_temp_config("tool", source_id) or load_temp_config("active_tool", source_id) or "neo4j"
-            driver = tools(str(tool).lower(), "check", {"session_id": source_id})
-            if not driver:
-                return {"nodes": [], "edges": [], "error": "Neo4j credentials not found for graph session"}
+            if str(tool).lower() != "neo4j":
+                return {"nodes": [], "edges": [], "error": "Graph fetch requires Neo4j tool credentials"}
+            try:
+                credentials = load_session_neo4j_credentials(source_id, purpose="graph_fetch")
+                driver = create_neo4j_driver(credentials)
+            except Neo4jCredentialConfigError as exc:
+                print(f"[graph_fetch] credential configuration failed session={source_id}: {exc}", flush=True)
+                return {"nodes": [], "edges": [], "error": str(exc)}
 
             nodes = {}
             edges = []
@@ -90,20 +117,21 @@ def fetch_graph(id,action,source_id,value,batch):
             if not rel_type:
                 print("No relationship type provided")
                 return {"nodes": [], "edges": [], "error": "No relationship type provided"}
-            if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", rel_type):
+            fetch_all_relationships = rel_type == "*"
+            if not fetch_all_relationships and not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", rel_type):
                 return {"nodes": [], "edges": [], "error": "Invalid relationship type"}
             try:
                 graph_limit = int(
                     load_temp_config("graph_fetch_limit", source_id)
-                    or os.getenv("LINKX_GRAPH_FETCH_LIMIT", "300000")
+                    or os.getenv("LINKX_GRAPH_FETCH_LIMIT", "5000")
                 )
             except (TypeError, ValueError):
-                graph_limit = 300000
+                graph_limit = 5000
             graph_limit = max(0, graph_limit)
             try:
-                fetch_timeout_seconds = int(os.getenv("LINKX_GRAPH_FETCH_TIMEOUT_SECONDS", "900"))
+                fetch_timeout_seconds = int(os.getenv("LINKX_GRAPH_FETCH_TIMEOUT_SECONDS", "90"))
             except (TypeError, ValueError):
-                fetch_timeout_seconds = 900
+                fetch_timeout_seconds = 90
             fetch_timeout_seconds = max(1, fetch_timeout_seconds)
             print("dawg:",source_id)
             # query = f"""
@@ -113,8 +141,9 @@ def fetch_graph(id,action,source_id,value,batch):
             #         """
             # Scope graph fetches to the exact window/source instance stored on the relationship.
             limit_clause = "LIMIT $limit" if graph_limit > 0 else ""
+            relationship_clause = "" if fetch_all_relationships else f":{rel_type}"
             query = f"""
-                    MATCH (a)-[r:{rel_type}]->(b)
+                    MATCH (a)-[r{relationship_clause}]->(b)
                     WHERE r.session_id = $source_id
                     RETURN a, r, b
                     {limit_clause}
@@ -125,8 +154,11 @@ def fetch_graph(id,action,source_id,value,batch):
             started_at = time.monotonic()
             timed_out = False
                   
+            query_to_run = Query(query, timeout=fetch_timeout_seconds) if Query else query
+            print(f"[graph_fetch] query start session={source_id} relationship={rel_type} limit={graph_limit} timeout={fetch_timeout_seconds}s", flush=True)
+
             with driver.session() as session:
-                for record in session.run(query, **query_params):
+                for record in session.run(query_to_run, **query_params):
                     if time.monotonic() - started_at >= fetch_timeout_seconds:
                         timed_out = True
                         break
@@ -134,16 +166,19 @@ def fetch_graph(id,action,source_id,value,batch):
                     b = record["b"]
                     r = record["r"]
 
-                    # include all Neo4j node properties
+                    # include all Neo4j node properties, normalized for job JSON storage
+                    a_props = _json_safe_properties(dict(a))
+                    b_props = _json_safe_properties(dict(b))
+                    r_props = _json_safe_properties(dict(r))
                     nodes[a.id] = {
                         "id": a.id,
-                        "label": a.get("NodeId", str(a.id)),
-                        **dict(a)  # flatten all node properties
+                        "label": a_props.get("NodeId", str(a.id)),
+                        **a_props
                     }
                     nodes[b.id] = {
                         "id": b.id,
-                        "label": b.get("NodeId", str(b.id)),
-                        **dict(b)
+                        "label": b_props.get("NodeId", str(b.id)),
+                        **b_props
                     }
 
                     # include all relationship properties
@@ -151,9 +186,10 @@ def fetch_graph(id,action,source_id,value,batch):
                         "from": a.id,
                         "to": b.id,
                         "label": r.type,  # or type(r).__name__
-                        **dict(r)  # flatten all relationship properties
+                        **r_props
                     })
 
+            print(f"[graph_fetch] query done session={source_id} relationship={rel_type} nodes={len(nodes)} edges={len(edges)} timed_out={timed_out}", flush=True)
             return {
                 "nodes": list(nodes.values()),
                 "edges": edges,

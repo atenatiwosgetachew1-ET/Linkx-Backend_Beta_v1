@@ -16,7 +16,7 @@ from linkx_worker.cancellation import (
     mark_job_cancelled,
 )
 from linkx_worker.handlers import run_job_safely
-from security.redaction import redact_value
+from security.redaction import is_sensitive_key, redact_value
 
 
 def utcnow():
@@ -36,13 +36,14 @@ def connect():
     return psycopg.connect(dsn, application_name=os.getenv("WORKER_NAME", "linkx-worker"))
 
 
-def emit_event(cur, job, event_type, message=None, payload=None):
+def emit_event(cur, job, event_type, message=None, payload=None, preserve_payload=False):
+    event_payload = _jsonable(payload or {}) if preserve_payload else redact_value(payload or {})
     cur.execute(
         """
         INSERT INTO job_events (job_id, session_id, event_type, message, payload)
         VALUES (%s, %s, %s, %s, %s::jsonb)
         """,
-        (job["id"], job.get("session_id"), event_type, message, json.dumps(redact_value(payload or {}))),
+        (job["id"], job.get("session_id"), event_type, message, json.dumps(event_payload)),
     )
 
 
@@ -200,7 +201,7 @@ def finish_job(conn, job, ok, result=None, error=None):
                 """,
                 (job["id"],),
             )
-            emit_event(cur, job, "job_succeeded", "Job completed", {"result": redact_value(_jsonable(result))})
+            emit_event(cur, job, "job_succeeded", "Job completed", {"result": result}, preserve_payload=True)
         else:
             next_status = "retry" if int(job.get("attempts") or 0) < int(job.get("max_attempts") or 0) else "failed"
             cur.execute(
@@ -218,12 +219,20 @@ def finish_job(conn, job, ok, result=None, error=None):
         conn.commit()
 
 
-def _jsonable(value):
-    try:
-        json.dumps(value)
+def _jsonable(value, key=None):
+    if is_sensitive_key(key):
+        return "***"
+    if value is None or isinstance(value, (str, int, float, bool)):
         return value
-    except TypeError:
-        return repr(value)
+    if isinstance(value, dict):
+        return {str(k): _jsonable(v, str(k)) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_jsonable(item, key) for item in value]
+    if hasattr(value, "iso_format"):
+        return value.iso_format()
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
 
 
 def _result_dir():

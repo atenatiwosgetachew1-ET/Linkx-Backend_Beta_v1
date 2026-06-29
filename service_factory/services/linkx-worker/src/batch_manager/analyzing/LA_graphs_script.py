@@ -10,6 +10,24 @@ try:
 except Exception:
     Query = None
 
+
+def _json_safe_value(value):
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(k): _json_safe_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe_value(item) for item in value]
+    if hasattr(value, "iso_format"):
+        return value.iso_format()
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+def _json_safe_properties(values):
+    return {str(k): _json_safe_value(v) for k, v in dict(values or {}).items()}
+
 def build_node_properties_full(node):
     # node is a Neo4j Node object
     if not node:
@@ -148,16 +166,19 @@ def fetch_graph(id,action,source_id,value,batch):
                     b = record["b"]
                     r = record["r"]
 
-                    # include all Neo4j node properties
+                    # include all Neo4j node properties, normalized for job JSON storage
+                    a_props = _json_safe_properties(dict(a))
+                    b_props = _json_safe_properties(dict(b))
+                    r_props = _json_safe_properties(dict(r))
                     nodes[a.id] = {
                         "id": a.id,
-                        "label": a.get("NodeId", str(a.id)),
-                        **dict(a)  # flatten all node properties
+                        "label": a_props.get("NodeId", str(a.id)),
+                        **a_props
                     }
                     nodes[b.id] = {
                         "id": b.id,
-                        "label": b.get("NodeId", str(b.id)),
-                        **dict(b)
+                        "label": b_props.get("NodeId", str(b.id)),
+                        **b_props
                     }
 
                     # include all relationship properties
@@ -165,7 +186,7 @@ def fetch_graph(id,action,source_id,value,batch):
                         "from": a.id,
                         "to": b.id,
                         "label": r.type,  # or type(r).__name__
-                        **dict(r)  # flatten all relationship properties
+                        **r_props
                     })
 
             print(f"[graph_fetch] query done session={source_id} relationship={rel_type} nodes={len(nodes)} edges={len(edges)} timed_out={timed_out}", flush=True)
