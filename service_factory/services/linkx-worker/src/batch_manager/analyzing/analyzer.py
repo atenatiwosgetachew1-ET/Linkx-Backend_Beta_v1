@@ -13,6 +13,7 @@ from batch_manager.processing.file_source_loader import load_file
 from batch_manager.utils.neo4j_utils import Neo4jCredentialConfigError, create_neo4j_driver, load_session_neo4j_credentials, redacted_neo4j_credentials
 from batch_manager.utils.neo4j_cleanup import clean_existing_session
 from batch_manager.utils.artifact_utils import ensure_artifact_dir
+from batch_manager.utils.trusted_catalog import load_session_trusted_catalog
 from batch_manager.processing.realtime_source_loader import records_to_dataframe, iter_kafka_messages, iter_api_messages
 from batch_manager.processing.rules_compiler import normalize_rule_key
 from batch_manager.analyzing import LA_rules_script
@@ -265,15 +266,25 @@ def run_incremental_rule(module, driver, session_id, node_label, batch_id, log_f
 
 
 class _BuiltinRuleModule:
-    def __init__(self, main_func, incremental_func):
+    def __init__(self, main_func, incremental_func, extra_kwargs_builder=None):
         self._main_func = main_func
         self._incremental_func = incremental_func
+        self._extra_kwargs_builder = extra_kwargs_builder
 
     def main(self, driver, session_id, node_label, log_file):
-        return self._main_func(driver, log_file, session_id=session_id, nodes_label=node_label)
+        extra_kwargs = self._extra_kwargs_builder(session_id, log_file) if self._extra_kwargs_builder else {}
+        return self._main_func(driver, log_file, session_id=session_id, nodes_label=node_label, **extra_kwargs)
 
     def incremental(self, driver, session_id, node_label, batch_id, log_file):
-        return self._incremental_func(driver, session_id, node_label, batch_id, log_file)
+        extra_kwargs = self._extra_kwargs_builder(session_id, log_file) if self._extra_kwargs_builder else {}
+        return self._incremental_func(driver, session_id, node_label, batch_id, log_file, **extra_kwargs)
+
+
+def _trusted_catalog_rule_kwargs(session_id, log_file):
+    trusted_catalog = load_session_trusted_catalog(session_id)
+    if log_file:
+        log_writer(log_file, f"[{datetime.now()}] [Info] - Trusted catalog entries loaded: {len(trusted_catalog)}")
+    return {"trusted_catalog": trusted_catalog}
 
 
 def _builtin_rule_module(rule_key):
@@ -281,10 +292,12 @@ def _builtin_rule_module(rule_key):
         "bank_transactions": _BuiltinRuleModule(
             LA_rules_script.batch_graph_analysis_transactions,
             LA_rules_script.incremental_graph_analysis_transactions,
+            extra_kwargs_builder=_trusted_catalog_rule_kwargs,
         ),
         "transactions": _BuiltinRuleModule(
             LA_rules_script.batch_graph_analysis_transactions,
             LA_rules_script.incremental_graph_analysis_transactions,
+            extra_kwargs_builder=_trusted_catalog_rule_kwargs,
         ),
         "social_media_tweeter": _BuiltinRuleModule(
             LA_rules_script.batch_graph_analysis_posts,

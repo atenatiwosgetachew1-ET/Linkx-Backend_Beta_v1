@@ -37,6 +37,7 @@ from batch_manager.processing.rules_compiler import generate_python_rule, normal
 from batch_manager.analyzing.LA_graphs_script import fetch_graph
 from batch_manager.analyzing.analyzer import analyzer
 from batch_manager.utils.neo4j_utils import Neo4jCredentialConfigError, neo4j_database_name, redacted_neo4j_credentials, resolve_neo4j_credentials
+from batch_manager.utils.trusted_catalog import TrustedCatalogValidationError, normalize_trusted_catalog
 from logger import log_writer,log_stream_background
 from io_sockets import register_socket_handlers
 from api.STR_link_analysis import STR_link_analysis_api
@@ -442,6 +443,7 @@ def _normalize_configuration(config):
     normalized.setdefault("elastic_scroll_enabled", False)
     normalized.setdefault("elastic_scroll_limit", normalized.get("dataframes_limit", 1000000))
     normalized.setdefault("elastic_scroll_batch_size", 10000)
+    normalized["trusted_catalog"] = normalize_trusted_catalog(normalized.get("trusted_catalog"))
 
     if normalized.get("active_tool") and normalized["active_tool"] not in normalized["tools"]:
         normalized["tools"] = [normalized["active_tool"], *[tool for tool in normalized["tools"] if tool != normalized["active_tool"]]]
@@ -747,7 +749,10 @@ def account_configuration_save():
     config = raw_data.get("configuration") or raw_data.get("config") or raw_data.get("data") or raw_data
     if not isinstance(config, dict):
         return jsonify({'message': 'validation_error', 'detail': 'config_object_required'}), 400
-    normalized_config = _normalize_configuration(config)
+    try:
+        normalized_config = _normalize_configuration(config)
+    except TrustedCatalogValidationError as exc:
+        return jsonify({'message': 'validation_error', 'detail': str(exc), 'field': 'trusted_catalog'}), 400
     save_user_config(actor.get("id"), normalized_config)
     _record_security_event_safe(
         "config.user.save",
@@ -921,7 +926,10 @@ def configuration():
                     config_dict[key] = value if isinstance(value, list) else [value]
                 else:
                     config_dict[key] = value
-            config_dict = _normalize_configuration(config_dict)
+            try:
+                config_dict = _normalize_configuration(config_dict)
+            except TrustedCatalogValidationError as exc:
+                return jsonify({'message': 'validation_error', 'detail': str(exc), 'field': 'trusted_catalog'}), 400
             if session_id:
                 save_temp_config("all", config_dict, session_id)
                 _record_security_event_safe(

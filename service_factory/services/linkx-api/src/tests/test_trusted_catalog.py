@@ -1,0 +1,32 @@
+import sys
+import unittest
+from pathlib import Path
+
+
+SRC_ROOT = Path(__file__).resolve().parents[1]
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+
+class TrustedCatalogTests(unittest.TestCase):
+    def test_normalize_trusted_catalog_accepts_dynamic_scalar_entries(self):
+        from batch_manager.utils.trusted_catalog import normalize_trusted_catalog
+
+        normalized = normalize_trusted_catalog([
+            {'ACCOUNTNO': '10002121212012'},
+            {'CUSTOM_FIELD': 42, 'FLAG': True},
+        ])
+
+        self.assertEqual(normalized[0]['ACCOUNTNO'], '10002121212012')
+        self.assertEqual(normalized[1]['CUSTOM_FIELD'], 42)
+        self.assertEqual(normalized[1]['FLAG'], True)
+
+    def test_normalize_trusted_catalog_rejects_nested_values(self):
+        from batch_manager.utils.trusted_catalog import TrustedCatalogValidationError, normalize_trusted_catalog
+
+        with self.assertRaises(TrustedCatalogValidationError):
+            normalize_trusted_catalog([{'ACCOUNTNO': {'nested': 'nope'}}])
+
+
+if __name__ == '__main__':
+    unittest.main()

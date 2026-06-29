@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from logger import log_writer
 from textblob import TextBlob
 import re
+from batch_manager.utils.trusted_catalog import trusted_catalog_cypher_entries
 
 
 def _safe_label(label):
@@ -16,6 +17,21 @@ def _safe_index_name(*parts):
     text = "_".join(str(part) for part in parts if part is not None)
     text = re.sub(r"[^A-Za-z0-9_]+", "_", text).strip("_").lower()
     return text or "idx"
+
+
+def _trusted_entry_match(alias):
+    return f"all(k IN keys(entry) WHERE toString(coalesce({alias}[k], \"\")) = toString(entry[k]))"
+
+
+def _trusted_node_clause(alias):
+    return f"NOT any(entry IN $trusted_entries WHERE {_trusted_entry_match(alias)})"
+
+
+def _trusted_pair_clause(left_alias, right_alias):
+    return (
+        "NOT any(entry IN $trusted_entries WHERE "
+        f"({_trusted_entry_match(left_alias)} OR {_trusted_entry_match(right_alias)}))"
+    )
 
 
 TRANSACTION_RELATIONSHIPS = [
@@ -67,6 +83,7 @@ def batch_graph_analysis_transactions(
     single_tx_threshold=10000,
     total_threshold=30000,
     min_tx_count=3,
+    trusted_catalog=None,
 ):
     if high_risk_accounts is None:
         high_risk_accounts = ['ACC6970109','ACC4659300','ACC8482897','ACC5960522','ACC2976147','ACC6802190']
@@ -74,6 +91,7 @@ def batch_graph_analysis_transactions(
     log_writer(log_file, f"[{datetime.now()}] [Info] Starting transactions analysis")
     label = _safe_label(nodes_label)
     session_param = str(session_id) if session_id else ""
+    trusted_entries = trusted_catalog_cypher_entries(trusted_catalog)
 
     with driver.session() as session:
         _create_transaction_indexes(session, nodes_label)
@@ -108,7 +126,8 @@ def batch_graph_analysis_transactions(
           AND total_amount >= $total_threshold
         UNWIND range(0, size(txns)-2) AS i
         WITH txns[i] AS a, txns[i+1] AS b, acc, beneficiary, tx_day, tx_count, total_amount
-        MERGE (a)-[r:SMURFING {{session_id:$session_id}}]->(b)
+        WHERE {_trusted_pair_clause('a', 'b')}
+        MERGE (a)-[r:SMURFING {session_id:$session_id}]->(b)
         SET r.bgcolor = '#d5d276',
             r.provisional = false,
             r.reason = 'multiple small same-day transfers below threshold',
@@ -120,6 +139,7 @@ def batch_graph_analysis_transactions(
             r.single_tx_threshold = $single_tx_threshold,
             r.total_threshold = $total_threshold
         """, session_id=session_param,
+             trusted_entries=trusted_entries,
              single_tx_threshold=single_tx_threshold,
              total_threshold=total_threshold,
              min_tx_count=min_tx_count)
@@ -138,18 +158,12 @@ def batch_graph_analysis_transactions(
           AND a.BENACCOUNTNO <> ''
           AND elementId(a) < elementId(b)
           AND coalesce(a.TRANSACTIONDATE, '') = coalesce(b.TRANSACTIONDATE, '')
+          AND {_trusted_pair_clause('a', 'b')}
         MERGE (a)-[r1:CIRCULAR_FLOW {session_id:$session_id}]->(b)
-        SET r1.bgcolor = '#e6e6e6',
-            r1.textcolor = '#111111',
-            r1.provisional = false,
-            r1.reason = 'same-day reverse transfer pair'
-
-        MERGE (b)-[r2:CIRCULAR_FLOW {session_id:$session_id}]->(a)
-        SET r2.bgcolor = '#e6e6e6',
-            r2.textcolor = '#111111',
-            r2.provisional = false,
-            r2.reason = 'same-day reverse transfer pair'
-        """, session_id=session_param)
+        SET r1.bgcolor = '#e6e6e6', r1.provisional = false, r1.reason = 'same-day reverse transfer pair'
+        MERGE (b)-[r2:CIRCULAR_FLOW {{session_id:$session_id}}]->(a)
+        SET r2.bgcolor = '#e6e6e6', r2.provisional = false, r2.reason = 'same-day reverse transfer pair'
+        """, session_id=session_param, trusted_entries=trusted_entries)
 
         # ----------------------------
         # 3. FUND_FLOW: beneficiary becomes sender in a later transaction
@@ -172,7 +186,8 @@ def batch_graph_analysis_transactions(
         ORDER BY a.TRANSACTIONDATE, a.TRANSACTIONTIME, b.TRANSACTIONDATE, b.TRANSACTIONTIME
         WITH a, collect(b)[0] AS b
         WHERE b IS NOT NULL
-        MERGE (a)-[r:FUND_FLOW {{session_id:$session_id}}]->(b)
+          AND {_trusted_pair_clause('a', 'b')}
+        MERGE (a)-[r:FUND_FLOW {session_id:$session_id}]->(b)
         SET r.bgcolor = '#d8a822',
             r.provisional = false,
             r.reason = 'beneficiary later acts as sender'
@@ -186,7 +201,8 @@ def batch_graph_analysis_transactions(
         WHERE ($session_id IS NULL OR {_session_scope_clause("t")})
           AND toLower(coalesce(t.ACCOUNTSTATE, '')) = 'dormant'
           AND toLower(coalesce(t.BENACCOUNTSTATE, '')) = 'active'
-        MERGE (t)-[r:DORMANT_TO_ACTIVE {{session_id:$session_id}}]->(t)
+          AND {_trusted_node_clause('t')}
+        MERGE (t)-[r:DORMANT_TO_ACTIVE {session_id:$session_id}]->(t)
         SET r.bgcolor = '#c20f0f',
             r.textcolor = '#eeeeee',
             r.provisional = false,
@@ -201,12 +217,13 @@ def batch_graph_analysis_transactions(
         MATCH (t:{label})
         WHERE ($session_id IS NULL OR {_session_scope_clause("t")})
           AND (t.ACCOUNTNO = acc OR t.BENACCOUNTNO = acc)
-        MERGE (t)-[r:HIGH_RISK_LINK {{session_id:$session_id}}]->(t)
+          AND {_trusted_node_clause('t')}
+        MERGE (t)-[r:HIGH_RISK_LINK {session_id:$session_id}]->(t)
         SET r.bgcolor = '#de7d07',
             r.provisional = false,
             r.reason = 'configured high-risk account appears in transaction',
             r.account = acc
-        """, accounts=high_risk_accounts, session_id=session_param)
+        """, accounts=high_risk_accounts, session_id=session_param, trusted_entries=trusted_entries)
 
         # ----------------------------
         # 6. ABNORMAL_BALANCE_CHANGE: current balance move is an outlier for the account
@@ -240,7 +257,8 @@ def batch_graph_analysis_transactions(
         WITH current, previous, current_change,
              reduce(s = 0.0, c IN valid_changes | s + c) / size(valid_changes) AS avg_change
         WHERE avg_change > 0 AND current_change >= avg_change * $threshold
-        MERGE (previous)-[r:ABNORMAL_BALANCE_CHANGE {{session_id:$session_id}}]->(current)
+          AND {_trusted_pair_clause('previous', 'current')}
+        MERGE (previous)-[r:ABNORMAL_BALANCE_CHANGE {session_id:$session_id}]->(current)
         SET r.bgcolor = '#196e08',
             r.textcolor = '#eeeeee',
             r.provisional = false,
@@ -248,7 +266,7 @@ def batch_graph_analysis_transactions(
             r.change = current_change,
             r.average_recent_change = avg_change,
             r.threshold_multiplier = $threshold
-        """, threshold=threshold_multiplier, session_id=session_param)
+        """, threshold=threshold_multiplier, session_id=session_param, trusted_entries=trusted_entries)
 
         # ----------------------------
         # 7. HUB_AND_SPOKE: one account fans out to, or receives from, many counterparties
@@ -266,7 +284,8 @@ def batch_graph_analysis_transactions(
           AND spoke_count >= $min_tx_count
         UNWIND range(0, size(txns)-2) AS i
         WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
-        MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
+        WHERE {_trusted_pair_clause('a', 'b')}
+        MERGE (a)-[r:HUB_AND_SPOKE {session_id:$session_id}]->(b)
         SET r.bgcolor = '#6f42c1',
             r.textcolor = '#eeeeee',
             r.provisional = false,
@@ -275,7 +294,7 @@ def batch_graph_analysis_transactions(
             r.direction = 'outgoing',
             r.tx_day = tx_day,
             r.spoke_count = spoke_count
-        """, session_id=session_param, min_tx_count=min_tx_count)
+        """, session_id=session_param, min_tx_count=min_tx_count, trusted_entries=trusted_entries)
 
         session.run(f"""
         MATCH (t:{label})
@@ -290,7 +309,8 @@ def batch_graph_analysis_transactions(
           AND spoke_count >= $min_tx_count
         UNWIND range(0, size(txns)-2) AS i
         WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
-        MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
+        WHERE {_trusted_pair_clause('a', 'b')}
+        MERGE (a)-[r:HUB_AND_SPOKE {session_id:$session_id}]->(b)
         SET r.bgcolor = '#6f42c1',
             r.textcolor = '#eeeeee',
             r.provisional = false,
@@ -324,7 +344,8 @@ def batch_graph_analysis_transactions(
         WHERE size(accounts) >= 2
         UNWIND range(0, size(txns)-2) AS i
         WITH txns[i] AS a, txns[i+1] AS b, identifier_type, identifier_value, accounts
-        MERGE (a)-[r:SHARED_IDENTIFIER {{session_id:$session_id}}]->(b)
+        WHERE {_trusted_pair_clause('a', 'b')}
+        MERGE (a)-[r:SHARED_IDENTIFIER {session_id:$session_id}]->(b)
         SET r.bgcolor = '#0b7285',
             r.textcolor = '#eeeeee',
             r.provisional = false,
@@ -352,12 +373,14 @@ def incremental_graph_analysis_transactions(
     single_tx_threshold=10000,
     total_threshold=30000,
     min_tx_count=3,
+    trusted_catalog=None,
 ):
     if high_risk_accounts is None:
         high_risk_accounts = ['ACC6970109','ACC4659300','ACC8482897','ACC5960522','ACC2976147','ACC6802190']
 
     session_param = str(session_id)
     label = _safe_label(nodes_label)
+    trusted_entries = trusted_catalog_cypher_entries(trusted_catalog)
     log_writer(log_file, f"[{datetime.now()}] [Info] Running incremental transaction analysis for batch {batch_id}")
 
     with driver.session() as session:
@@ -388,7 +411,8 @@ def incremental_graph_analysis_transactions(
           AND total_amount >= $total_threshold
         UNWIND range(0, size(txns)-2) AS i
         WITH txns[i] AS a, txns[i+1] AS b, acc, beneficiary, tx_day, tx_count, total_amount
-        MERGE (a)-[r:SMURFING {{session_id:$session_id}}]->(b)
+        WHERE {_trusted_pair_clause('a', 'b')}
+        MERGE (a)-[r:SMURFING {session_id:$session_id}]->(b)
         SET r.bgcolor = '#d5d276',
             r.provisional = true,
             r.reason = 'multiple small same-day transfers below threshold',
@@ -401,6 +425,7 @@ def incremental_graph_analysis_transactions(
             r.total_threshold = $total_threshold
         """, batch_id=batch_id,
              session_id=session_param,
+             trusted_entries=trusted_entries,
              single_tx_threshold=single_tx_threshold,
              total_threshold=total_threshold,
              min_tx_count=min_tx_count)
@@ -419,11 +444,12 @@ def incremental_graph_analysis_transactions(
           AND seed.BENACCOUNTNO <> ''
           AND elementId(seed) <> elementId(other)
           AND coalesce(seed.TRANSACTIONDATE, '') = coalesce(other.TRANSACTIONDATE, '')
-        MERGE (seed)-[r1:CIRCULAR_FLOW {{session_id:$session_id}}]->(other)
+          AND {_trusted_pair_clause('seed', 'other')}
+        MERGE (seed)-[r1:CIRCULAR_FLOW {session_id:$session_id}]->(other)
         SET r1.bgcolor = '#e6e6e6', r1.provisional = true, r1.reason = 'same-day reverse transfer pair'
         MERGE (other)-[r2:CIRCULAR_FLOW {{session_id:$session_id}}]->(seed)
         SET r2.bgcolor = '#e6e6e6', r2.provisional = true, r2.reason = 'same-day reverse transfer pair'
-        """, batch_id=batch_id, session_id=session_param)
+        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
 
         # Fund flow: new nodes can either precede or complete a downstream flow.
         session.run(f"""
@@ -442,7 +468,8 @@ def incremental_graph_analysis_transactions(
               AND coalesce(a.TRANSACTIONTIME, '') < coalesce(b.TRANSACTIONTIME, '')
             )
           )
-        MERGE (a)-[r:FUND_FLOW {{session_id:$session_id}}]->(b)
+          AND {_trusted_pair_clause('a', 'b')}
+        MERGE (a)-[r:FUND_FLOW {session_id:$session_id}]->(b)
         SET r.bgcolor = '#d8a822',
             r.provisional = true,
             r.reason = 'beneficiary later acts as sender'
@@ -454,7 +481,8 @@ def incremental_graph_analysis_transactions(
         WHERE t.batch_id = $batch_id
           AND toLower(coalesce(t.ACCOUNTSTATE, '')) = 'dormant'
           AND toLower(coalesce(t.BENACCOUNTSTATE, '')) = 'active'
-        MERGE (t)-[r:DORMANT_TO_ACTIVE {{session_id:$session_id}}]->(t)
+          AND {_trusted_node_clause('t')}
+        MERGE (t)-[r:DORMANT_TO_ACTIVE {session_id:$session_id}]->(t)
         SET r.bgcolor = '#c20f0f',
             r.textcolor = '#eeeeee',
             r.provisional = true,
@@ -466,12 +494,13 @@ def incremental_graph_analysis_transactions(
         MATCH (t:{label})
         WHERE t.batch_id = $batch_id
           AND (t.ACCOUNTNO = acc OR t.BENACCOUNTNO = acc)
-        MERGE (t)-[r:HIGH_RISK_LINK {{session_id:$session_id}}]->(t)
+          AND {_trusted_node_clause('t')}
+        MERGE (t)-[r:HIGH_RISK_LINK {session_id:$session_id}]->(t)
         SET r.bgcolor = '#de7d07',
             r.provisional = true,
             r.reason = 'configured high-risk account appears in transaction',
             r.account = acc
-        """, accounts=high_risk_accounts, batch_id=batch_id, session_id=session_param)
+        """, accounts=high_risk_accounts, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
 
         # Balance outlier: recalculate only accounts touched by this batch.
         session.run(f"""
@@ -508,7 +537,8 @@ def incremental_graph_analysis_transactions(
         WITH current, previous, current_change,
              reduce(s = 0.0, c IN valid_changes | s + c) / size(valid_changes) AS avg_change
         WHERE avg_change > 0 AND current_change >= avg_change * $threshold
-        MERGE (previous)-[r:ABNORMAL_BALANCE_CHANGE {{session_id:$session_id}}]->(current)
+          AND {_trusted_pair_clause('previous', 'current')}
+        MERGE (previous)-[r:ABNORMAL_BALANCE_CHANGE {session_id:$session_id}]->(current)
         SET r.bgcolor = '#196e08',
             r.textcolor = '#eeeeee',
             r.provisional = true,
@@ -516,7 +546,7 @@ def incremental_graph_analysis_transactions(
             r.change = current_change,
             r.average_recent_change = avg_change,
             r.threshold_multiplier = $threshold
-        """, batch_id=batch_id, session_id=session_param, threshold=threshold_multiplier)
+        """, batch_id=batch_id, session_id=session_param, threshold=threshold_multiplier, trusted_entries=trusted_entries)
 
         # Hub-and-spoke: recalculate account fans touched by this batch.
         session.run(f"""
@@ -544,7 +574,7 @@ def incremental_graph_analysis_transactions(
             r.direction = 'outgoing',
             r.tx_day = tx_day,
             r.spoke_count = spoke_count
-        """, batch_id=batch_id, session_id=session_param, min_tx_count=min_tx_count)
+        """, batch_id=batch_id, session_id=session_param, min_tx_count=min_tx_count, trusted_entries=trusted_entries)
 
         session.run(f"""
         MATCH (seed:{label})
@@ -606,7 +636,8 @@ def incremental_graph_analysis_transactions(
         WHERE size(accounts) >= 2
         UNWIND range(0, size(txns)-2) AS i
         WITH txns[i] AS a, txns[i+1] AS b, identifier_type, identifier_value, accounts
-        MERGE (a)-[r:SHARED_IDENTIFIER {{session_id:$session_id}}]->(b)
+        WHERE {_trusted_pair_clause('a', 'b')}
+        MERGE (a)-[r:SHARED_IDENTIFIER {session_id:$session_id}]->(b)
         SET r.bgcolor = '#0b7285',
             r.textcolor = '#eeeeee',
             r.provisional = true,
