@@ -93,10 +93,15 @@ This older shape is not correct for matching logic and should not be used:
   - lightweight event metadata for graph jobs
   - canonical `result`
   - optional progressive `chunks` when `include_chunks=1`
-- Current graph chunk behavior is controlled by environment variables on Server 1 API, including:
-  - `LINKX_GRAPH_FIRST_CHUNK_SIZE`
-  - `LINKX_GRAPH_CHUNK_SIZE`
-  - `LINKX_GRAPH_CHUNK_POLL_LIMIT`
+- Current graph chunk behavior is controlled by environment variables on both services:
+  - Server 3 worker emits chunks with `LINKX_GRAPH_FIRST_CHUNK_SIZE` and `LINKX_GRAPH_CHUNK_SIZE`
+  - Server 1 API limits chunk events per poll with `LINKX_GRAPH_CHUNK_POLL_LIMIT`
+- Graph relationship fetching now uses two layers:
+  - Neo4j fetch pages controlled by `LINKX_GRAPH_FETCH_PAGE_SIZE`, default `5000` relationships per page
+  - frontend delivery chunks controlled by `LINKX_GRAPH_FIRST_CHUNK_SIZE`, default `100`, then `LINKX_GRAPH_CHUNK_SIZE`, default `250`
+- The graph worker pages Neo4j by relationship cursor (`id(r)`) instead of running one large relationship query. This keeps the frontend chunk contract intact while reducing long-query pressure and improving cancellation responsiveness.
+- Graph job results/chunk metadata can include `fetch_page_size`, `pages_fetched`, `last_relationship_cursor`, `complete`, and `truncated_by`.
+- `LINKX_GRAPH_FETCH_LIMIT` remains the hard total relationship cap for an interactive graph request; when reached, the result is marked partial with `truncated_by=graph_limit`.
 
 ### Frontend alignment notes
 
@@ -104,6 +109,38 @@ This older shape is not correct for matching logic and should not be used:
 - Use `trusted_entities` rather than `trusted_catalog` in new payloads.
 - Save `trusted_entities` and `risk_entities` on the parent session.
 - Send classified entities as dynamic objects, not `{key, value}` wrappers.
+
+### Parent session reuse and timed rotation
+
+- `POST /init` no longer blindly creates a brand-new random parent session for the same user on every fresh login/bootstrap.
+- The API now first tries to reuse the actor's latest active parent session when it is still within the configured rotation age.
+- If the current parent session is older than the configured interval, the API rotates to a new parent session id and seeds the new parent session config from the previous parent session config before returning it.
+- This preserves session-scoped values such as classified entity lists across controlled parent-session rotation instead of dropping back to defaults.
+
+Current API behavior:
+- request provides `existing_session` or `session_id`: API tries that first
+- otherwise API checks the actor's latest active parent session
+- if that parent session is still fresh: API reuses it
+- if that parent session is too old: API creates a new parent session and copies config forward from the old parent session
+
+Current response additions from `/init`:
+- `session_rotated: true|false`
+- `rotated_from_session: <old_parent_session_id>` when rotation occurred
+
+Current environment knob on Server 1 API:
+
+```env
+LINKX_SESSION_ROTATION_SECONDS=43200
+```
+
+Notes:
+- `43200` means 12 hours
+- `0` disables timed rotation
+- the implementation also avoids relying on a single random-id attempt; parent-session creation now retries allocation before failing
+
+Scope note:
+- this improves continuity for session-scoped config, but it does not change the longer-term design split between user-scope config and parent-session-scope config
+- `trusted_entities` and `risk_entities` are still best treated as user-owned/shared-across-windows data even though parent-session continuity is now improved
 
 ## 2026-06-28 Ingestion/Graph Debug Status
 

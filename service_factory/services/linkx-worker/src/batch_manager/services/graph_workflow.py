@@ -58,6 +58,7 @@ def fetch_graph_result(payload):
         }
 
     job_id = payload.get("job_id")
+    stop_event = payload.get("stop_event")
     chunk_size = max(1, _env_int("LINKX_GRAPH_CHUNK_SIZE", 250))
     first_chunk_size = max(1, _env_int("LINKX_GRAPH_FIRST_CHUNK_SIZE", 100))
     chunk_conn = None
@@ -84,6 +85,7 @@ def fetch_graph_result(payload):
             chunk_callback=emit_chunk if chunk_cur else None,
             chunk_size=chunk_size,
             first_chunk_size=first_chunk_size,
+            stop_event=stop_event,
         )
     finally:
         if chunk_cur:
@@ -131,5 +133,10 @@ def fetch_graph_result(payload):
         "chunk_count": graph.get("chunk_count", 0),
         "chunk_size": chunk_size if job_id else None,
         "first_chunk_size": first_chunk_size if job_id else None,
+        "fetch_page_size": graph.get("fetch_page_size"),
+        "pages_fetched": graph.get("pages_fetched", 0),
+        "last_relationship_cursor": graph.get("last_relationship_cursor"),
+        "complete": bool(graph.get("complete")),
+        "truncated_by": graph.get("truncated_by"),
         "chunked": bool(job_id),
     }
