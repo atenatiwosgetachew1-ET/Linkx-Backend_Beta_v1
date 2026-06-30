@@ -37,7 +37,7 @@ from batch_manager.processing.rules_compiler import generate_python_rule, normal
 from batch_manager.analyzing.LA_graphs_script import fetch_graph
 from batch_manager.analyzing.analyzer import analyzer
 from batch_manager.utils.neo4j_utils import Neo4jCredentialConfigError, neo4j_database_name, redacted_neo4j_credentials, resolve_neo4j_credentials
-from batch_manager.utils.Classified_entities import TrustedCatalogValidationError, normalize_risk_entities, normalize_trusted_catalog
+from batch_manager.utils.Classified_entities import TrustedEntitiesValidationError, normalize_risk_entities, normalize_trusted_entities
 from logger import log_writer,log_stream_background
 from io_sockets import register_socket_handlers
 from api.STR_link_analysis import STR_link_analysis_api
@@ -443,7 +443,11 @@ def _normalize_configuration(config):
     normalized.setdefault("elastic_scroll_enabled", False)
     normalized.setdefault("elastic_scroll_limit", normalized.get("dataframes_limit", 1000000))
     normalized.setdefault("elastic_scroll_batch_size", 10000)
-    normalized["trusted_catalog"] = normalize_trusted_catalog(normalized.get("trusted_catalog"))
+    trusted_entities_value = normalized.get("trusted_entities")
+    if trusted_entities_value in (None, "", []):
+        trusted_entities_value = normalized.get("trusted_catalog")
+    normalized["trusted_entities"] = normalize_trusted_entities(trusted_entities_value)
+    normalized.pop("trusted_catalog", None)
     normalized["risk_entities"] = normalize_risk_entities(normalized.get("risk_entities"))
 
     if normalized.get("active_tool") and normalized["active_tool"] not in normalized["tools"]:
@@ -786,8 +790,8 @@ def account_configuration_save():
         return jsonify({'message': 'validation_error', 'detail': 'config_object_required'}), 400
     try:
         normalized_config = _normalize_configuration(config)
-    except TrustedCatalogValidationError as exc:
-        field_name = 'risk_entities' if 'risk_entities' in str(exc) else 'trusted_catalog'
+    except TrustedEntitiesValidationError as exc:
+        field_name = 'risk_entities' if 'risk_entities' in str(exc) else 'trusted_entities'
         return jsonify({'message': 'validation_error', 'detail': str(exc), 'field': field_name}), 400
     save_user_config(actor.get("id"), normalized_config)
     _record_security_event_safe(
@@ -930,6 +934,8 @@ def configuration():
             defaults = get_default_session_config(actor.get("id") if actor else "default")
             config_dict = get_user_config(actor.get("id"), default_config=defaults) if actor and actor.get("actor_type") == "user" else defaults
         incoming_config = _configuration_payload(data)
+        if isinstance(incoming_config, dict) and "trusted_catalog" in incoming_config and "trusted_entities" not in incoming_config:
+            incoming_config["trusted_entities"] = incoming_config.pop("trusted_catalog")
         incoming_config = _preserve_runtime_connection_fields(config_dict, incoming_config)
         if incoming_config:
             sensitive_paths = _sensitive_config_paths(incoming_config)
@@ -965,8 +971,8 @@ def configuration():
                     config_dict[key] = value
             try:
                 config_dict = _normalize_configuration(config_dict)
-            except TrustedCatalogValidationError as exc:
-                field_name = 'risk_entities' if 'risk_entities' in str(exc) else 'trusted_catalog'
+            except TrustedEntitiesValidationError as exc:
+                field_name = 'risk_entities' if 'risk_entities' in str(exc) else 'trusted_entities'
                 return jsonify({'message': 'validation_error', 'detail': str(exc), 'field': field_name}), 400
             if session_id:
                 save_temp_config("all", config_dict, session_id)

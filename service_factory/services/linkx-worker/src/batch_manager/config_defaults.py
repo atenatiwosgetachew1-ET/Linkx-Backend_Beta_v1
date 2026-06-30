@@ -74,7 +74,7 @@ def get_default_session_config(session_id):
         "rule_names": ["bank transactions", "social media (tweeter)", "call data records"],
         "rule_file_names": ["bank_transactions_rules", "social_media_(tweeter)_rules", "call_data_records_rules"],
         "active_rule": ["bank transactions"],
-        "trusted_catalog": [],
+        "trusted_entities": [],
         "risk_entities": [],
         "automation": os.getenv("LINKX_AUTOMATION", "true"),
         "remote": os.getenv("LINKX_REMOTE", "false"),

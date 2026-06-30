@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from logger import log_writer
 from textblob import TextBlob
 import re
-from batch_manager.utils.Classified_entities import risk_entities_cypher_entries, trusted_catalog_cypher_entries
+from batch_manager.utils.Classified_entities import risk_entities_cypher_entries, trusted_entities_cypher_entries
 
 
 def _safe_label(label):
@@ -87,7 +87,7 @@ def batch_graph_analysis_transactions(
     single_tx_threshold=10000,
     total_threshold=30000,
     min_tx_count=3,
-    trusted_catalog=None,
+    trusted_entities=None,
     risk_entities=None,
 ):
     if high_risk_accounts is None:
@@ -96,7 +96,7 @@ def batch_graph_analysis_transactions(
     log_writer(log_file, f"[{datetime.now()}] [Info] Starting transactions analysis")
     label = _safe_label(nodes_label)
     session_param = str(session_id) if session_id else ""
-    trusted_entries = trusted_catalog_cypher_entries(trusted_catalog)
+    trusted_entries = trusted_entities_cypher_entries(trusted_entities)
     risk_entries = risk_entities_cypher_entries(risk_entities)
 
     with driver.session() as session:
@@ -392,7 +392,7 @@ def incremental_graph_analysis_transactions(
     single_tx_threshold=10000,
     total_threshold=30000,
     min_tx_count=3,
-    trusted_catalog=None,
+    trusted_entities=None,
     risk_entities=None,
 ):
     if high_risk_accounts is None:
@@ -400,7 +400,7 @@ def incremental_graph_analysis_transactions(
 
     session_param = str(session_id)
     label = _safe_label(nodes_label)
-    trusted_entries = trusted_catalog_cypher_entries(trusted_catalog)
+    trusted_entries = trusted_entities_cypher_entries(trusted_entities)
     risk_entries = risk_entities_cypher_entries(risk_entities)
     log_writer(log_file, f"[{datetime.now()}] [Info] Running incremental transaction analysis for batch {batch_id}")
 

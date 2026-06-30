@@ -13,7 +13,7 @@ from batch_manager.processing.file_source_loader import load_file
 from batch_manager.utils.neo4j_utils import Neo4jCredentialConfigError, create_neo4j_driver, load_session_neo4j_credentials, redacted_neo4j_credentials
 from batch_manager.utils.neo4j_cleanup import clean_existing_session
 from batch_manager.utils.artifact_utils import ensure_artifact_dir
-from batch_manager.utils.Classified_entities import load_session_risk_entities, load_session_trusted_catalog
+from batch_manager.utils.Classified_entities import load_session_risk_entities, load_session_trusted_entities
 from batch_manager.processing.realtime_source_loader import records_to_dataframe, iter_kafka_messages, iter_api_messages
 from batch_manager.processing.rules_compiler import normalize_rule_key
 from batch_manager.analyzing import LA_rules_script
@@ -280,13 +280,13 @@ class _BuiltinRuleModule:
         return self._incremental_func(driver, session_id, node_label, batch_id, log_file, **extra_kwargs)
 
 
-def _trusted_catalog_rule_kwargs(session_id, log_file):
-    trusted_catalog = load_session_trusted_catalog(session_id)
+def _trusted_entities_rule_kwargs(session_id, log_file):
+    trusted_entities = load_session_trusted_entities(session_id)
     risk_entities = load_session_risk_entities(session_id)
     if log_file:
-        log_writer(log_file, f"[{datetime.now()}] [Info] - Trusted catalog entries loaded: {len(trusted_catalog)}")
+        log_writer(log_file, f"[{datetime.now()}] [Info] - Trusted entities loaded: {len(trusted_entities)}")
         log_writer(log_file, f"[{datetime.now()}] [Info] - Risk entities loaded: {len(risk_entities)}")
-    return {"trusted_catalog": trusted_catalog, "risk_entities": risk_entities}
+    return {"trusted_entities": trusted_entities, "risk_entities": risk_entities}
 
 
 def _builtin_rule_module(rule_key):
@@ -294,12 +294,12 @@ def _builtin_rule_module(rule_key):
         "bank_transactions": _BuiltinRuleModule(
             LA_rules_script.batch_graph_analysis_transactions,
             LA_rules_script.incremental_graph_analysis_transactions,
-            extra_kwargs_builder=_trusted_catalog_rule_kwargs,
+            extra_kwargs_builder=_trusted_entities_rule_kwargs,
         ),
         "transactions": _BuiltinRuleModule(
             LA_rules_script.batch_graph_analysis_transactions,
             LA_rules_script.incremental_graph_analysis_transactions,
-            extra_kwargs_builder=_trusted_catalog_rule_kwargs,
+            extra_kwargs_builder=_trusted_entities_rule_kwargs,
         ),
         "social_media_tweeter": _BuiltinRuleModule(
             LA_rules_script.batch_graph_analysis_posts,
