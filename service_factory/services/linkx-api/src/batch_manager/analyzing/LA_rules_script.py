@@ -215,7 +215,7 @@ def batch_graph_analysis_transactions(
             r.reason = 'dormant source account transacts with active beneficiary'
         """, session_id=session_param, trusted_entries=trusted_entries)
 
-        # ----------------------------
+        # ---------------------------- 
         # 5. HIGH_RISK_LINK: configured risky account directly appears in transaction
         # ----------------------------
         session.run(f"""
