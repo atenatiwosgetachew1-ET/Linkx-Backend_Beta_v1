@@ -10,7 +10,10 @@ class Neo4jCredentialConfigError(ValueError):
 
 
 def neo4j_database_name(credentials=None):
-    credentials = credentials or {}
+    if not isinstance(credentials, dict):
+        credentials = {}
+    else:
+        credentials = credentials or {}
     database = (
         credentials.get("database")
         or credentials.get("db")
@@ -39,6 +42,8 @@ class DatabaseScopedDriver:
 
 
 def neo4j_credential_source(credentials=None):
+    if not isinstance(credentials, dict):
+        return "invalid"
     credentials = credentials or {}
     source = credentials.get("_credential_source")
     if source:
@@ -51,6 +56,15 @@ def neo4j_credential_source(credentials=None):
 
 
 def redacted_neo4j_credentials(credentials=None):
+    if not isinstance(credentials, dict):
+        return {
+            "url": None,
+            "username": None,
+            "database": None,
+            "password": None,
+            "password_ref": "missing",
+            "source": "invalid",
+        }
     credentials = credentials or {}
     return {
         "url": credentials.get("url") or credentials.get("neo4j_url"),
@@ -74,6 +88,8 @@ def _managed_secret_password(credentials):
 def resolve_neo4j_credentials(credentials):
     if not credentials:
         raise Neo4jCredentialConfigError("Neo4j credentials are required")
+    if not isinstance(credentials, dict):
+        raise Neo4jCredentialConfigError("Neo4j credentials are invalid; expected an object")
     resolved = dict(credentials)
     resolved["url"] = resolved.get("url") or resolved.get("neo4j_url")
     resolved["username"] = resolved.get("username") or resolved.get("neo4j_username")

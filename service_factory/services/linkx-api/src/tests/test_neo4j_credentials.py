@@ -143,6 +143,19 @@ class Neo4jCredentialTests(unittest.TestCase):
 
         self.assertIn('password_ref', str(exc.exception))
 
+    def test_resolve_neo4j_credentials_rejects_string_payload(self):
+        from batch_manager.utils.neo4j_utils import Neo4jCredentialConfigError, resolve_neo4j_credentials
+
+        with self.assertRaises(Neo4jCredentialConfigError) as exc:
+            resolve_neo4j_credentials("invalid")
+
+        self.assertIn("expected an object", str(exc.exception))
+
+    def test_neo4j_database_name_ignores_string_credentials(self):
+        from batch_manager.utils.neo4j_utils import neo4j_database_name
+
+        self.assertIsNone(neo4j_database_name("invalid"))
+
     def test_analyzer_does_not_fallback_when_payload_credentials_are_masked(self):
         import batch_manager.analyzing.analyzer as analyzer_module
         from batch_manager.utils.neo4j_utils import Neo4jCredentialConfigError

@@ -134,7 +134,7 @@ def tools(id,action,payload):
         if action == "disconnect":  
             session_id=payload["session_id"]                  
             tool_driver_registry[payload["session_id"]]=None
-            save_temp_config("tool_credentials", "",session_id)
+            save_temp_config("tool_credentials", None,session_id)
             return True
         if action == "check":
             session_id = payload["session_id"]

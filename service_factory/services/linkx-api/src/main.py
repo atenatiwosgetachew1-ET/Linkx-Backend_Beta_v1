@@ -1249,8 +1249,11 @@ def connect_to_tool():
     password_ref = data.get('password_ref')
     database_input = data.get('database')
     database = str(database_input).strip() if database_input is not None else ''
+    stored_tool_credentials = load_temp_config("tool_credentials", source_id)
+    if not isinstance(stored_tool_credentials, dict):
+        stored_tool_credentials = {}
     if not database:
-        database = neo4j_database_name(load_temp_config("tool_credentials", source_id) or {}) or ''
+        database = neo4j_database_name(stored_tool_credentials) or ''
     if tool_name == "neo4j":
         url = _normalize_neo4j_url(url)
     if url:
@@ -1265,7 +1268,7 @@ def connect_to_tool():
         payload["password_ref"] = password_ref
 
     if tool_name == "neo4j":
-        stored_credentials = load_temp_config("tool_credentials", source_id)
+        stored_credentials = stored_tool_credentials
         if not isinstance(stored_credentials, dict):
             stored_credentials = {}
         validation_payload = dict(stored_credentials)
@@ -1621,6 +1624,8 @@ def live_batch_files():
         if str(stream_tool or "").lower() == "neo4j":
             try:
                 stream_credentials = load_temp_config("tool_credentials", session_id)
+                if not isinstance(stream_credentials, dict):
+                    raise Neo4jCredentialConfigError("Neo4j credentials are invalid or missing for this session")
                 resolve_neo4j_credentials(stream_credentials)
             except Neo4jCredentialConfigError as exc:
                 current_app.logger.warning(
