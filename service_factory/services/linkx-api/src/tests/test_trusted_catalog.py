@@ -10,7 +10,7 @@ if str(SRC_ROOT) not in sys.path:
 
 class TrustedCatalogTests(unittest.TestCase):
     def test_normalize_trusted_catalog_accepts_dynamic_scalar_entries(self):
-        from batch_manager.utils.trusted_catalog import normalize_trusted_catalog
+        from batch_manager.utils.Classified_entities import normalize_trusted_catalog
 
         normalized = normalize_trusted_catalog([
             {'ACCOUNTNO': '10002121212012'},
@@ -22,10 +22,23 @@ class TrustedCatalogTests(unittest.TestCase):
         self.assertEqual(normalized[1]['FLAG'], True)
 
     def test_normalize_trusted_catalog_rejects_nested_values(self):
-        from batch_manager.utils.trusted_catalog import TrustedCatalogValidationError, normalize_trusted_catalog
+        from batch_manager.utils.Classified_entities import TrustedCatalogValidationError, normalize_trusted_catalog
 
         with self.assertRaises(TrustedCatalogValidationError):
             normalize_trusted_catalog([{'ACCOUNTNO': {'nested': 'nope'}}])
+
+
+    def test_normalize_risk_entities_accepts_dynamic_scalar_entries(self):
+        from batch_manager.utils.Classified_entities import normalize_risk_entities
+
+        normalized = normalize_risk_entities([
+            {'ACCOUNTNO': '900001'},
+            {'BENACCOUNTNO': '900002', 'FLAG': True},
+        ])
+
+        self.assertEqual(normalized[0]['ACCOUNTNO'], '900001')
+        self.assertEqual(normalized[1]['BENACCOUNTNO'], '900002')
+        self.assertEqual(normalized[1]['FLAG'], True)
 
 
 if __name__ == '__main__':
