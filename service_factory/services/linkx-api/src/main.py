@@ -43,7 +43,7 @@ from io_sockets import register_socket_handlers
 from api.STR_link_analysis import STR_link_analysis_api
 from api.ai_service import ai_service_api
 from session_config_store import create_session_config, duplicate_window_config, get_user_config, get_workspace_layout, load_session_config, save_session_config, save_user_config, save_workspace_layout
-from service_orchestration import enqueue_cleanup_run, enqueue_worker_job, get_active_session_lock, get_any_active_actor_lock, get_worker_job, list_cleanup_audit, public_lock_state, reactivate_analysis_session, request_session_cancellation
+from service_orchestration import enqueue_cleanup_run, enqueue_worker_job, get_active_session_lock, get_actor_main_session_info, get_any_active_actor_lock, get_worker_job, list_cleanup_audit, public_lock_state, reactivate_analysis_session, request_session_cancellation
 from auth.decorators import auth_required, current_actor_from_request, permission_required
 from auth.repository import actor_has_permission, bind_analysis_session_actor, can_access_analysis_session_actor, get_postgres_connection, record_security_event
 from auth.routes import auth_api
@@ -730,6 +730,79 @@ def workspace_layout_save():
     return jsonify({"message": "success", "results": {"session_id": session_id, "layout": saved}}), 200
 
 
+def _session_rotation_seconds():
+    try:
+        return max(0, int(os.getenv("LINKX_SESSION_ROTATION_SECONDS", "43200")))
+    except (TypeError, ValueError):
+        return 43200
+
+
+def _session_age_seconds(session_info):
+    if not isinstance(session_info, dict):
+        return None
+    created_at = session_info.get("created_at")
+    if not created_at:
+        return None
+    now = datetime.now(created_at.tzinfo) if getattr(created_at, "tzinfo", None) else datetime.utcnow()
+    age = now - created_at
+    return max(0, int(age.total_seconds()))
+
+
+def _new_parent_session_id(current_actor, attempts=32):
+    for _ in range(max(1, attempts)):
+        session_id = random.randint(0, 999999)
+        if bind_analysis_session_actor(session_id, current_actor):
+            return session_id
+    raise RuntimeError("session_id_allocation_failed")
+
+
+def _load_reusable_parent_session(current_actor, requested_session=None):
+    candidate_session = str(requested_session or "").strip()
+    if candidate_session:
+        if bind_analysis_session_actor(candidate_session, current_actor):
+            configs = load_temp_config("data", candidate_session)
+            if configs is not None:
+                return {
+                    "session_id": candidate_session,
+                    "configuration": _normalize_configuration(configs),
+                    "reused_existing_session": True,
+                    "session_rotated": False,
+                    "rotated_from_session": None,
+                }
+        current_app.logger.info("init existing_session unavailable; creating fresh session old_session=%s", candidate_session)
+
+    session_info = get_actor_main_session_info(current_actor)
+    if not session_info:
+        return None
+
+    active_session_id = str(session_info.get("session_id") or "").strip()
+    if not active_session_id:
+        return None
+
+    age_seconds = _session_age_seconds(session_info)
+    rotation_seconds = _session_rotation_seconds()
+    if rotation_seconds > 0 and age_seconds is not None and age_seconds >= rotation_seconds:
+        return {
+            "session_id": _new_parent_session_id(current_actor),
+            "configuration": None,
+            "reused_existing_session": False,
+            "session_rotated": True,
+            "rotated_from_session": active_session_id,
+        }
+
+    if bind_analysis_session_actor(active_session_id, current_actor):
+        configs = load_temp_config("data", active_session_id)
+        if configs is not None:
+            return {
+                "session_id": active_session_id,
+                "configuration": _normalize_configuration(configs),
+                "reused_existing_session": True,
+                "session_rotated": False,
+                "rotated_from_session": None,
+            }
+    return None
+
+
 @app.route('/init', methods=['POST'])
 @auth_required
 @validate_json_payload(COMMON_SCHEMAS["init"])
@@ -738,29 +811,44 @@ def init():
     data = validated_json()
     current_actor = current_actor_from_request()
     old_session = data.get('existing_session') or data.get('session_id')
-    if old_session:
-        old_session = str(old_session).strip()
-        if old_session and bind_analysis_session_actor(old_session, current_actor):
-            configs = load_temp_config("data", old_session)
-            if configs is not None:
-                normalized = _normalize_configuration(configs)
-                return jsonify({
-                    'message': 'success',
-                    'results': {'session_id': old_session, 'configuration': normalized, 'reused_existing_session': True},
-                    'configurations': normalized,
-                }), 200
-        current_app.logger.info("init existing_session unavailable; creating fresh session old_session=%s", old_session)
 
     try:
-        max_value = 1000000
-        min_value = 0
-        session_id = random.randint(min_value, max_value - 1)
+        reusable = _load_reusable_parent_session(current_actor, old_session)
+        if reusable and reusable.get("configuration") is not None:
+            response_results = {
+                'session_id': reusable['session_id'],
+                'configuration': reusable['configuration'],
+                'reused_existing_session': reusable.get('reused_existing_session', False),
+                'session_rotated': reusable.get('session_rotated', False),
+            }
+            if reusable.get('rotated_from_session'):
+                response_results['rotated_from_session'] = reusable.get('rotated_from_session')
+            return jsonify({
+                'message': 'success',
+                'results': response_results,
+                'configurations': reusable['configuration'],
+            }), 200
+
+        session_id = reusable.get('session_id') if reusable else _new_parent_session_id(current_actor)
+        session_id = str(session_id)
+        rotation_source = reusable.get('rotated_from_session') if reusable else None
         configs = get_default_session_config(session_id)
-        if not bind_analysis_session_actor(session_id, current_actor):
-            return jsonify({'message': 'failed!', 'results': 'Could not bind session to user.'}), 500
-        stored_new_configs = create_session_config(session_id, current_actor, default_config=configs)
+        stored_new_configs = create_session_config(
+            session_id,
+            current_actor,
+            default_config=configs,
+            existing_session_id=rotation_source,
+        )
         normalized = _normalize_configuration(stored_new_configs)
-        return jsonify({'message': 'success', 'results': {'session_id': session_id, 'configuration': normalized, 'reused_existing_session': False}, 'configurations': normalized}), 200
+        response_results = {
+            'session_id': session_id,
+            'configuration': normalized,
+            'reused_existing_session': False,
+            'session_rotated': bool(rotation_source),
+        }
+        if rotation_source:
+            response_results['rotated_from_session'] = rotation_source
+        return jsonify({'message': 'success', 'results': response_results, 'configurations': normalized}), 200
     except Exception as e:
         current_app.logger.warning("init failed: %s", e)
         return jsonify({'message': 'failed!', 'error': 'init_failed'}), 500

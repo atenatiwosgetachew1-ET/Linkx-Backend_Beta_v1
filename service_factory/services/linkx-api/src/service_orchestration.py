@@ -435,6 +435,35 @@ def get_actor_main_session_id(actor=None):
     return sessions[0] if sessions else None
 
 
+def get_actor_main_session_info(actor=None):
+    owner_clause, params = _actor_owner_clause(actor)
+    if not owner_clause:
+        return None
+    with connect(application_name="linkx-actor-main-session-info") as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT session_id, created_at, last_seen_at
+                FROM analysis_sessions
+                WHERE {owner_clause}
+                  AND parent_session_id IS NULL
+                  AND status NOT IN ('cancel_requested', 'cancelling', 'cancelled', 'cleaned', 'expired')
+                  AND ended_at IS NULL
+                ORDER BY last_seen_at DESC, created_at DESC
+                LIMIT 1
+                """,
+                tuple(params),
+            )
+            row = cur.fetchone()
+    if not row:
+        return None
+    return {
+        "session_id": str(row[0]),
+        "created_at": row[1],
+        "last_seen_at": row[2],
+    }
+
+
 def lock_actor_session(actor=None, reason="idle_lock"):
     session_id = get_actor_main_session_id(actor) or ACTOR_LOCK_SESSION_ID
     return lock_session(session_id, actor=actor, reason=reason)
