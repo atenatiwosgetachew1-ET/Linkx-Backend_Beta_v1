@@ -1,6 +1,6 @@
 # LinkX Service Split Handoff And Load Audit
 
-Last updated: 2026-06-28
+Last updated: 2026-06-30
 
 This document is a handoff summary for a new chat/session. It captures the current four-server LinkX backend split, how the services communicate, how deployments are updated, and what work is still running on each server. The goal of the split is to keep the current working system stable while gradually moving heavy analysis and ingestion work out of the API server and into worker/maintenance services.
 
@@ -13,6 +13,97 @@ CTMS SSO is implemented as an ES256/JWKS flow. LinkX should verify CTMS access J
 P2 recovery evidence is now mostly proven: PostgreSQL backup/restore passed, artifact backup/restore passed, Neo4j offline dump/load passed against the current empty graph, Redis was verified disposable, and the `LINKX_SECRET_ENCRYPTION_KEY` recovery copy is kept separately by the developer. The remaining P2 follow-ups are to install/enable the scheduled backup timers, configure an encrypted/off-host backup target, and repeat the Neo4j restore drill after a representative ingestion creates nonzero nodes/relationships.
 
 Current repo-side follow-up: backup timer units and retention/off-host helper scripts are present in the repo but still need deployment to the relevant servers. Treat the uninstalled timer work as ready for ops rollout, not yet live production automation.
+
+## 2026-06-30 Session Config / Neo4j / Entity Catalog Status
+
+This is the current backend state after the latest API and worker fixes in `service_factory/services/**`.
+
+### Neo4j connection and streaming/session handling
+
+- `POST /connect_to_tool` now validates Neo4j credentials before attempting the connection and persists the canonical window-session credential record only after a successful connection.
+- Masked passwords remain masked in config JSON as `***`; the live secret is still resolved through `password_ref` and `managed_secrets`.
+- `POST /live_batch_files` with `id=stream` now rejects invalid or missing Neo4j session credentials with a clean `400` body:
+  - `message: "neo4j_not_connected_for_session"`
+  - `detail: "<reason>"`
+- This replaced the earlier crashy behavior where stale or non-dict `tool_credentials` could bubble into a misleading frontend message such as "Unable to reach the streaming service."
+
+### Config-save during active stream
+
+- Saving configuration during an active streaming/realtime session previously risked wiping runtime connection fields and forcing a reconnect.
+- The API `configuration` save path now preserves runtime connection fields through `_preserve_runtime_connection_fields(...)` before normalization/merge.
+- `connection_utils.disconnect(...)` was also adjusted so `tool_credentials` is cleared as `None` instead of an empty string, which avoids later type confusion.
+
+### Trusted and risk entity catalogs
+
+- Backend naming is now standardized on:
+  - `trusted_entities`
+  - `risk_entities`
+- The old name `trusted_catalog` is retained only as a compatibility fallback while older saved configs or frontend payloads are still being phased out.
+- Runtime rule-loading logs were updated to:
+  - `Trusted entities loaded: <n>`
+  - `Risk entities loaded: <n>`
+- Rule helpers now live under:
+  - `service_factory/services/linkx-api/src/batch_manager/utils/Classified_entities.py`
+  - `service_factory/services/linkx-worker/src/batch_manager/utils/Classified_entities.py`
+- The former `trusted_catalog.py` helper is no longer the intended active file. `Classified_entities.py` is the canonical catalog helper.
+
+### Entity payload shape expected by backend
+
+Each entry must be a dynamic object of scalar key/value pairs. Example valid payloads:
+
+```json
+{
+  "trusted_entities": [
+    { "ACCOUNTNO": "ACC10001" },
+    { "customer_id": 12345, "status": "government" }
+  ],
+  "risk_entities": [
+    { "ACCOUNTNO": "ACC10035" }
+  ]
+}
+```
+
+This older shape is not correct for matching logic and should not be used:
+
+```json
+{
+  "risk_entities": [
+    { "key": "ACCOUNTNO", "value": "ACC10035" }
+  ]
+}
+```
+
+### Session placement rule for entity catalogs
+
+- Classified entity lists are intended to belong to the parent/base session, not to each individual window session.
+- Example:
+  - parent session: `452162`
+  - window session: `1_452162`
+- The frontend should save `trusted_entities` and `risk_entities` against the parent session so every window inherits the same user-specific classifications.
+
+### Current known edge still worth watching
+
+- If a window session stores its own empty `risk_entities` or `trusted_entities`, that window-level empty value can override a non-empty parent value depending on the load path.
+- Operationally, the frontend should currently avoid saving empty classified-entity arrays into child/window sessions when the intent is to inherit from the parent session.
+
+### Graph fetch delivery model
+
+- `POST /get_graph` now queues `graph_fetch` work onto the worker.
+- `GET /jobs/<job_id>` returns:
+  - lightweight event metadata for graph jobs
+  - canonical `result`
+  - optional progressive `chunks` when `include_chunks=1`
+- Current graph chunk behavior is controlled by environment variables on Server 1 API, including:
+  - `LINKX_GRAPH_FIRST_CHUNK_SIZE`
+  - `LINKX_GRAPH_CHUNK_SIZE`
+  - `LINKX_GRAPH_CHUNK_POLL_LIMIT`
+
+### Frontend alignment notes
+
+- Do not send masked secrets as fresh values. When a Neo4j password is unchanged, preserve the existing connection state instead of resubmitting `***` as a new password.
+- Use `trusted_entities` rather than `trusted_catalog` in new payloads.
+- Save `trusted_entities` and `risk_entities` on the parent session.
+- Send classified entities as dynamic objects, not `{key, value}` wrappers.
 
 ## 2026-06-28 Ingestion/Graph Debug Status
 
