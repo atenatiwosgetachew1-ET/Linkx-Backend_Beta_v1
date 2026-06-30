@@ -506,6 +506,40 @@ def _configuration_payload(data):
     }
 
 
+def _preserve_runtime_connection_fields(existing_config, incoming_config):
+    if not isinstance(incoming_config, dict):
+        return incoming_config
+    current = existing_config if isinstance(existing_config, dict) else {}
+    sanitized = dict(incoming_config)
+
+    existing_tool_credentials = current.get("tool_credentials")
+    incoming_tool_credentials = sanitized.get("tool_credentials")
+    if incoming_tool_credentials in (None, "", "***"):
+        sanitized.pop("tool_credentials", None)
+    elif isinstance(incoming_tool_credentials, dict):
+        merged = dict(existing_tool_credentials) if isinstance(existing_tool_credentials, dict) else {}
+        merged.update(incoming_tool_credentials)
+        if merged.get("password") == "***":
+            if isinstance(existing_tool_credentials, dict):
+                if not merged.get("password_ref") and existing_tool_credentials.get("password_ref"):
+                    merged["password_ref"] = existing_tool_credentials.get("password_ref")
+                if not merged.get("url") and existing_tool_credentials.get("url"):
+                    merged["url"] = existing_tool_credentials.get("url")
+                if not merged.get("username") and existing_tool_credentials.get("username"):
+                    merged["username"] = existing_tool_credentials.get("username")
+                if not merged.get("database") and existing_tool_credentials.get("database"):
+                    merged["database"] = existing_tool_credentials.get("database")
+        sanitized["tool_credentials"] = merged
+    else:
+        sanitized.pop("tool_credentials", None)
+
+    for key in ("active_tool_password", "active_tool_password_ref"):
+        if sanitized.get(key) in (None, "", "***") and current.get(key) not in (None, ""):
+            sanitized.pop(key, None)
+
+    return sanitized
+
+
 def _clean_id(value):
     raw = str(value or "").strip()
     return "" if raw.lower() in {"", "none", "null", "undefined"} else raw
@@ -896,6 +930,7 @@ def configuration():
             defaults = get_default_session_config(actor.get("id") if actor else "default")
             config_dict = get_user_config(actor.get("id"), default_config=defaults) if actor and actor.get("actor_type") == "user" else defaults
         incoming_config = _configuration_payload(data)
+        incoming_config = _preserve_runtime_connection_fields(config_dict, incoming_config)
         if incoming_config:
             sensitive_paths = _sensitive_config_paths(incoming_config)
             if sensitive_paths:
