@@ -14,6 +14,7 @@ from globals import create_file, load_temp_config, save_temp_config
 from batch_manager.utils.artifact_utils import ensure_artifact_dir
 from security.payload_validation import COMMON_SCHEMAS, validate_json_payload, validated_json
 from service_orchestration import enqueue_worker_job
+from security.redaction import redact_value
 
 
 STR_link_analysis_api = Blueprint("STR_link_analysis_api", __name__)
@@ -101,7 +102,7 @@ def _base_analyzer_payload(session_id, credentials):
 
 
 def _run_analyzer(payload, step_name):
-    print(f"STR link analysis {step_name} analyzer payload:", payload)
+    print(f"STR link analysis {step_name} analyzer payload:", redact_value(payload))
     try:
         return analyzer(payload) is True
     except Exception as e:

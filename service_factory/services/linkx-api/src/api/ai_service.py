@@ -1,9 +1,11 @@
 import json
+import os
 from datetime import date, datetime
 
 from flask import Blueprint, jsonify, request
 
-from auth.decorators import permission_required
+from auth.decorators import current_actor_from_request, permission_required
+from auth.repository import can_access_analysis_session_actor, record_security_event
 from globals import load_temp_config
 from service_orchestration import connect
 from batch_manager.utils.neo4j_utils import create_neo4j_driver
@@ -33,11 +35,114 @@ def _int_arg(name, default, minimum=0, maximum=500):
     return max(minimum, min(value, maximum))
 
 
-def _session_exists(session_id):
-    with connect(application_name="linkx-ai-session-exists") as conn:
+def _env_bool(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _csv_env_set(name):
+    return {item.strip() for item in (os.getenv(name) or "").split(",") if item.strip()}
+
+
+def _ai_global_read_enabled():
+    return _env_bool("LINKX_AI_ALLOW_GLOBAL_READ", False)
+
+
+def _ai_allowed_session_ids():
+    return _csv_env_set("LINKX_AI_ALLOWED_SESSION_IDS")
+
+
+def _audit_context():
+    return {
+        "ip_address": request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip() or None,
+        "user_agent": (request.headers.get("User-Agent") or "")[:512] or None,
+    }
+
+
+def _record_ai_event(event_type, *, session_id=None, target_id=None, success=None, metadata=None):
+    try:
+        ctx = _audit_context()
+        return record_security_event(
+            event_type,
+            actor=current_actor_from_request(),
+            target_type="ai_api",
+            target_id=target_id,
+            session_id=session_id,
+            success=success,
+            metadata=metadata or {},
+            ip_address=ctx["ip_address"],
+            user_agent=ctx["user_agent"],
+        )
+    except Exception:
+        return None
+
+
+def _session_info(session_id):
+    with connect(application_name="linkx-ai-session-info") as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT 1 FROM analysis_sessions WHERE session_id = %s", (str(session_id),))
-            return cur.fetchone() is not None
+            cur.execute(
+                """
+                SELECT session_id, parent_session_id, owner_user_id, owner_service_id
+                FROM analysis_sessions
+                WHERE session_id = %s
+                """,
+                (str(session_id),),
+            )
+            row = cur.fetchone()
+    if not row:
+        return None
+    return {
+        "session_id": row[0],
+        "parent_session_id": row[1],
+        "owner_user_id": row[2],
+        "owner_service_id": row[3],
+    }
+
+
+def _actor_can_read_ai_session(session_id, info=None):
+    actor = current_actor_from_request()
+    if not actor:
+        return False
+    if _ai_global_read_enabled():
+        return True
+    if can_access_analysis_session_actor(session_id, actor):
+        return True
+    info = info or _session_info(session_id)
+    if not info:
+        return False
+    allowed = _ai_allowed_session_ids()
+    return str(info.get("session_id")) in allowed or str(info.get("parent_session_id") or "") in allowed
+
+
+def _require_ai_session_access(session_id, event_type):
+    info = _session_info(session_id)
+    if not info:
+        _record_ai_event(event_type, session_id=session_id, success=False, metadata={"error": "not_found"})
+        return None, (jsonify({"message": "not_found"}), 404)
+    if not _actor_can_read_ai_session(session_id, info):
+        _record_ai_event(event_type, session_id=session_id, success=False, metadata={"error": "session_not_allowed"})
+        return None, (jsonify({"message": "forbidden", "detail": "ai_session_not_allowed"}), 403)
+    _record_ai_event(event_type, session_id=session_id, success=True)
+    return info, None
+
+
+def _ai_session_filter(where, params):
+    if _ai_global_read_enabled():
+        return where, params
+    actor = current_actor_from_request() or {}
+    allowed = list(_ai_allowed_session_ids())
+    if actor.get("actor_type") == "service":
+        where.append("(owner_service_id = %s OR session_id = ANY(%s::text[]) OR parent_session_id = ANY(%s::text[]))")
+    else:
+        where.append("(owner_user_id = %s OR session_id = ANY(%s::text[]) OR parent_session_id = ANY(%s::text[]))")
+    params.extend([actor.get("id"), allowed, allowed])
+    return where, params
+
+
+def _session_exists(session_id):
+    return _session_info(session_id) is not None
 
 
 def _graph_session_ids(session_id):
@@ -75,6 +180,7 @@ def list_sessions():
     if status:
         where.append("status = %s")
         params.append(status)
+    where, params = _ai_session_filter(where, params)
     where_sql = "WHERE " + " AND ".join(where) if where else ""
     with connect(application_name="linkx-ai-list-sessions") as conn:
         with conn.cursor() as cur:
@@ -95,12 +201,16 @@ def list_sessions():
                 "created_by_type", "created_by_id", "status", "created_at", "last_seen_at",
                 "ended_at", "cancellation_requested_at", "cancellation_reason",
             ])
+    _record_ai_event("ai.sessions.list", success=True, metadata={"count": len(sessions), "global_read": _ai_global_read_enabled()})
     return jsonify({"message": "success", "results": {"sessions": sessions, "limit": limit, "offset": offset}}), 200
 
 
 @ai_service_api.route("/sessions/<session_id>", methods=["GET"])
 @permission_required("ai:read")
 def get_session(session_id):
+    _info, error = _require_ai_session_access(session_id, "ai.session.read")
+    if error:
+        return error
     with connect(application_name="linkx-ai-get-session") as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -126,6 +236,9 @@ def get_session(session_id):
 @ai_service_api.route("/sessions/<session_id>/artifacts", methods=["GET"])
 @permission_required("ai:read")
 def get_session_artifacts(session_id):
+    _info, error = _require_ai_session_access(session_id, "ai.artifacts.read")
+    if error:
+        return error
     limit = _int_arg("limit", 100, 1, 500)
     offset = _int_arg("offset", 0, 0, 100000)
     with connect(application_name="linkx-ai-session-artifacts") as conn:
@@ -162,19 +275,32 @@ def list_cleanup_runs():
     session_id = request.args.get("session_id")
     where = []
     params = []
+    from_sql = "cleanup_runs cr"
     if session_id:
-        where.append("session_id = %s")
+        _info, error = _require_ai_session_access(session_id, "ai.cleanup.read")
+        if error:
+            return error
+        where.append("cr.session_id = %s")
         params.append(str(session_id))
+    elif not _ai_global_read_enabled():
+        from_sql = "cleanup_runs cr JOIN analysis_sessions s ON s.session_id = cr.session_id"
+        actor = current_actor_from_request() or {}
+        allowed = list(_ai_allowed_session_ids())
+        if actor.get("actor_type") == "service":
+            where.append("(s.owner_service_id = %s OR s.session_id = ANY(%s::text[]) OR s.parent_session_id = ANY(%s::text[]))")
+        else:
+            where.append("(s.owner_user_id = %s OR s.session_id = ANY(%s::text[]) OR s.parent_session_id = ANY(%s::text[]))")
+        params.extend([actor.get("id"), allowed, allowed])
     where_sql = "WHERE " + " AND ".join(where) if where else ""
     with connect(application_name="linkx-ai-cleanup-runs") as conn:
         with conn.cursor() as cur:
             cur.execute(
                 f"""
-                SELECT id::text, cleanup_type, status, session_id, dry_run,
-                       started_at, finished_at, created_at, summary::text
-                FROM cleanup_runs
+                SELECT cr.id::text, cr.cleanup_type, cr.status, cr.session_id, cr.dry_run,
+                       cr.started_at, cr.finished_at, cr.created_at, cr.summary::text
+                FROM {from_sql}
                 {where_sql}
-                ORDER BY created_at DESC
+                ORDER BY cr.created_at DESC
                 LIMIT %s OFFSET %s
                 """,
                 (*params, limit, offset),
@@ -189,6 +315,7 @@ def list_cleanup_runs():
                 run["summary"] = json.loads(run["summary"])
             except Exception:
                 pass
+    _record_ai_event("ai.cleanup.list", session_id=session_id, success=True, metadata={"count": len(runs), "global_read": _ai_global_read_enabled()})
     return jsonify({"message": "success", "results": {"cleanup_runs": runs, "limit": limit, "offset": offset}}), 200
 
 
@@ -204,8 +331,9 @@ def _neo4j_driver_for_session(session_id):
 @ai_service_api.route("/sessions/<session_id>/graph/metadata", methods=["GET"])
 @permission_required("ai:read")
 def graph_metadata(session_id):
-    if not _session_exists(session_id):
-        return jsonify({"message": "not_found"}), 404
+    _info, error = _require_ai_session_access(session_id, "ai.graph.metadata.read")
+    if error:
+        return error
     driver, error = _neo4j_driver_for_session(session_id)
     if error:
         return jsonify({"message": error}), 404

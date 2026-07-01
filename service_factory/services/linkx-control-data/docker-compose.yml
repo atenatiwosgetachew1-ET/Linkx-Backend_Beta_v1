@@ -19,16 +19,16 @@ services:
   redis:
     image: redis:7
     container_name: linkx-redis
-    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    command: ["sh", "-c", "exec redis-server /usr/local/etc/redis/redis.conf --requirepass \"$${REDIS_PASSWORD:?REDIS_PASSWORD is required}\""]
     env_file:
       - .env
     ports:
-      - "6379:6379"
+      - "${REDIS_BIND_ADDR:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
     volumes:
       - linkx_redis_data:/data
       - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 5

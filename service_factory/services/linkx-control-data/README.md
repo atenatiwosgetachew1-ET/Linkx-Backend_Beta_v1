@@ -32,13 +32,14 @@ Redis defaults:
 
     host: 127.0.0.1
     port: 6379
+    auth: required through REDIS_PASSWORD
 
 ## Application Connection Strings
 
 API and workers should use:
 
     DATABASE_URL=postgresql://linkx:<password>@<control-data-host>:5432/linkx
-    LINKX_REDIS_URL=redis://<control-data-host>:6379/0
+    LINKX_REDIS_URL=redis://:<redis-password>@<control-data-host>:6379/0
 
 The current app reads DATABASE_URL for PostgreSQL. LINKX_POSTGRES_DSN is kept in env examples as the future explicit service contract.
 
@@ -66,4 +67,5 @@ The official PostgreSQL Docker image runs initdb SQL only on first database crea
 - Change all default passwords before deployment.
 - Back up PostgreSQL regularly.
 - Redis is coordination state, but appendonly is enabled for safer restarts.
+- Keep Redis bound to the Server 2 private interface with REDIS_BIND_ADDR and restrict 6379 to approved backend servers.
 - Do not store large files in PostgreSQL. Store file bytes in shared artifact storage and store metadata here.
