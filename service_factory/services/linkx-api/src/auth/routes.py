@@ -15,6 +15,7 @@ from .repository import (
     create_or_update_user,
     delete_service_account,
     delete_user,
+    get_parent_oauth_session,
     get_service_account_by_id,
     get_user_by_id,
     list_security_audit_events,
@@ -22,12 +23,15 @@ from .repository import (
     list_users,
     public_actor,
     record_security_event,
+    revoke_parent_oauth_session,
     update_service_account,
     update_user,
+    upsert_parent_oauth_session,
     upsert_external_user,
 )
-from .tokens import create_access_token, create_service_token, verify_access_token, verify_ctms_token
+from .tokens import create_access_token, create_service_token, verify_access_token, verify_parent_project_token
 from .parent_jwt import ParentJwtError, verify_parent_access_token
+from .parent_oauth import ParentOAuthError, exchange_authorization_code, fetch_userinfo, revoke_token
 from security.payload_validation import COMMON_SCHEMAS, validate_json_payload, validated_json
 from globals import _session_store
 from batch_manager.processing.session_manager import end_session
@@ -187,6 +191,25 @@ def logout():
             neo4j_credentials=None,
         ))
     unlocked_locks = unlock_actor_locks(actor=actor, reason=reason)
+    parent_revoked = False
+    parent_revoke_error = None
+    if actor.get("actor_type") == "user":
+        parent_session = get_parent_oauth_session(actor.get("id"), include_refresh_token=True)
+        refresh_token = (parent_session or {}).get("refresh_token")
+        if refresh_token:
+            try:
+                parent_revoked = revoke_token(refresh_token)
+            except ParentOAuthError as exc:
+                parent_revoke_error = str(exc)
+            revoke_parent_oauth_session(actor.get("id"))
+            _record_security_event_safe(
+                "auth.parent_revoke",
+                actor=actor,
+                target_type="parent_user",
+                target_id=(parent_session or {}).get("parent_subject"),
+                success=parent_revoke_error is None,
+                metadata={"error": parent_revoke_error} if parent_revoke_error else {},
+            )
     return jsonify({
         "message": "success",
         "results": {
@@ -196,6 +219,8 @@ def logout():
             "cancelled_sessions": len(cancellations),
             "stopped_api_sessions": len(stopped_sessions),
             "unlocked_count": len(unlocked_locks),
+            "parent_session_revoked": parent_revoked,
+            "parent_revoke_error": parent_revoke_error,
             "token_invalidated": False,
             "token_invalidation_detail": "access tokens are stateless JWTs in the current auth implementation",
         },
@@ -297,41 +322,169 @@ def _parent_token_error(error):
     return jsonify({"error": message}), status
 
 
-def _map_ctms_roles_to_linkx(ctms_roles):
-    """
-    Map CTMS role names to LinkX role names.
-    
-    CTMS role hierarchy (provided by parent system):
-    - SUPER_ADMIN, HIGHER_OFFICIAL → admin
-    - DIRECTOR, TEAM_LEADER → manager
-    - ANALYST → analyst
-    - VIEWER, DATA_ENCODER → viewer
-    
-    This aligns with LinkX ROLE_ALIASES which uses:
-    "admin", "manager", "analyst", "viewer"
-    """
-    ctms_role_mapping = {
+
+def _parent_oauth_error_response(error):
+    mapping = {
+        "parent_oauth_not_configured": (503, "parent_oauth_disabled"),
+        "parent_redirect_uri_required": (400, "redirect_uri_required"),
+        "parent_redirect_uri_not_allowed": (400, "invalid_redirect_uri"),
+        "parent_code_and_verifier_required": (400, "code_and_verifier_required"),
+        "parent_token_exchange_rejected": (401, "invalid_authorization_code"),
+        "parent_access_token_missing": (502, "parent_access_token_missing"),
+        "parent_userinfo_rejected": (401, "parent_userinfo_rejected"),
+        "parent_userinfo_missing_subject": (502, "parent_userinfo_missing_subject"),
+    }
+    key = str(error).split(":", 1)[0]
+    status, message = mapping.get(key, (502, key or "parent_oauth_error"))
+    return jsonify({"message": message}), status
+
+
+def _parent_display_name(parent_data, fallback):
+    return (
+        parent_data.get("full_name")
+        or parent_data.get("display_name")
+        or parent_data.get("name")
+        or parent_data.get("email")
+        or parent_data.get("username")
+        or fallback
+    )
+
+
+def _parent_roles_from_claims(parent_data):
+    roles = []
+    if parent_data.get("role"):
+        roles.append(str(parent_data.get("role")))
+    raw_roles = parent_data.get("roles") or parent_data.get("parent_roles") or []
+    if isinstance(raw_roles, str):
+        raw_roles = [raw_roles]
+    roles.extend(str(role) for role in raw_roles if role)
+    return roles
+
+
+def _map_parent_permissions_to_roles(permissions):
+    values = {str(permission) for permission in (permissions or []) if permission}
+    if values & {"InvestigationCreate", "FileUpload"}:
+        return ["analyst"]
+    if values & {"InvestigationRead", "SearchGlobal", "SearchPersons", "SearchTransactions", "FileDownload"}:
+        return ["viewer"]
+    return []
+
+
+def _map_parent_roles_to_linkx(parent_roles, permissions=None):
+    role_mapping = {
         "SUPER_ADMIN": "admin",
+        "ADMIN": "admin",
         "HIGHER_OFFICIAL": "admin",
         "DIRECTOR": "manager",
         "TEAM_LEADER": "manager",
         "ANALYST": "analyst",
         "VIEWER": "viewer",
         "DATA_ENCODER": "viewer",
+        "RECEIVING_OFFICER": None,
+        "team_leader": "manager",
+        "analyst": "analyst",
+        "viewer": "viewer",
     }
-    
-    linkx_roles = set()
-    for ctms_role in (ctms_roles or []):
-        mapped = ctms_role_mapping.get(ctms_role)
-        if mapped:
-            linkx_roles.add(mapped)
-    
-    # Ensure at least viewer role if something was provided
-    if ctms_roles and not linkx_roles:
-        linkx_roles.add("viewer")
-    
-    return sorted(linkx_roles) if linkx_roles else []
+    mapped = []
+    for role in parent_roles or []:
+        value = str(role).strip()
+        linkx_role = role_mapping.get(value) or role_mapping.get(value.upper())
+        if linkx_role and linkx_role not in mapped:
+            mapped.append(linkx_role)
+    if not mapped:
+        mapped.extend(role for role in _map_parent_permissions_to_roles(permissions) if role not in mapped)
+    return mapped
 
+
+def _issue_parent_linkx_token(parent_data, token_data=None, source="parent_token"):
+    if parent_data.get("is_active") is False:
+        return jsonify({"message": "parent_user_inactive"}), 403
+
+    sub = str(parent_data.get("sub") or "").strip()
+    if not sub:
+        return jsonify({"message": "parent_subject_missing"}), 401
+
+    parent_roles = _parent_roles_from_claims(parent_data)
+    permissions = parent_data.get("permissions") or []
+    linkx_roles = _map_parent_roles_to_linkx(parent_roles, permissions)
+    if not linkx_roles:
+        return jsonify({"message": "parent_role_not_authorized"}), 403
+
+    username = f"parent:{sub}"
+    user = upsert_external_user(
+        username,
+        display_name=_parent_display_name(parent_data, sub),
+        parent_roles=linkx_roles,
+    )
+
+    if token_data is not None:
+        upsert_parent_oauth_session(
+            user.get("id"),
+            sub,
+            refresh_token=token_data.get("refresh_token"),
+            expires_in=token_data.get("expires_in"),
+            metadata={
+                "source": source,
+                "scope": token_data.get("scope"),
+                "token_type": token_data.get("token_type"),
+                "parent_roles": parent_roles,
+                "mapped_roles": linkx_roles,
+                "entity_id": parent_data.get("entity_id"),
+                "branch_id": parent_data.get("branch_id"),
+                "team_id": parent_data.get("team_id"),
+            },
+        )
+
+    _record_security_event_safe(
+        "auth.parent_oauth" if token_data is not None else "auth.parent_token",
+        actor=user,
+        username=username,
+        target_type="parent_user",
+        target_id=sub,
+        success=True,
+        metadata={
+            "source": source,
+            "roles": parent_roles,
+            "mapped_roles": linkx_roles,
+            "permissions": permissions,
+        },
+    )
+    token = create_access_token(user)
+    public = public_actor(user)
+    return jsonify({
+        "message": "success",
+        "token": token,
+        "access_token": token,
+        "token_type": "Bearer",
+        "actor": public,
+        "user": public,
+        "parent": {
+            "sub": sub,
+            "roles": parent_roles,
+            "mapped_roles": linkx_roles,
+            "entity_id": parent_data.get("entity_id"),
+            "branch_id": parent_data.get("branch_id"),
+            "team_id": parent_data.get("team_id"),
+        },
+    }), 200
+
+
+@auth_api.route("/exchange", methods=["POST"])
+@_rate_limited("auth_parent_oauth_exchange", limit_env="LINKX_PARENT_OAUTH_EXCHANGE_RATE_LIMIT", window_env="LINKX_PARENT_OAUTH_EXCHANGE_RATE_WINDOW_SECONDS", default_limit=30, default_window=60)
+@validate_json_payload(COMMON_SCHEMAS["parent_oauth_exchange"])
+def exchange_parent_oauth_code():
+    data = validated_json() or {}
+    try:
+        token_data = exchange_authorization_code(
+            data.get("code"),
+            data.get("code_verifier"),
+            redirect_uri=data.get("redirect_uri"),
+        )
+        parent_data = fetch_userinfo(token_data.get("access_token"))
+    except ParentOAuthError as exc:
+        _record_security_event_safe("auth.parent_oauth", success=False, metadata={"error": str(exc)})
+        return _parent_oauth_error_response(exc)
+    return _issue_parent_linkx_token(parent_data, token_data=token_data, source="authorization_code")
 
 @auth_api.route("/parent-token", methods=["POST"])
 @_rate_limited("auth_parent_token", limit_env="LINKX_PARENT_TOKEN_RATE_LIMIT", window_env="LINKX_PARENT_TOKEN_RATE_WINDOW_SECONDS", default_limit=30, default_window=60)
@@ -343,78 +496,22 @@ def parent_token():
     if bearer_header.startswith("Bearer "):
         parent_access_token = parent_access_token or bearer_header[len("Bearer "):].strip()
 
-    # Mode 1: CTMS ES256 token
+    # Mode 1: Parent project ES256 token
     if parent_access_token:
-        # Try CTMS verification first
-        ctms_payload = verify_ctms_token(parent_access_token)
-        if ctms_payload:
-            # Extract CTMS user info
-            sub = ctms_payload.get("sub")
-            username = f"parent:{sub}"  # Create parent namespace username
-            display_name = ctms_payload.get("name") or ctms_payload.get("sub")
-            
-            # Map CTMS role to LinkX role. CTMS sends singular `role`;
-            # keep `roles` as a compatibility fallback.
-            ctms_roles = []
-            if ctms_payload.get("role"):
-                ctms_roles.append(str(ctms_payload.get("role")))
-            raw_roles = ctms_payload.get("roles") or []
-            if isinstance(raw_roles, str):
-                raw_roles = [raw_roles]
-            ctms_roles.extend(str(role) for role in raw_roles if role)
-            parent_roles = _map_ctms_roles_to_linkx(ctms_roles)
-            
-            user = upsert_external_user(
-                username,
-                display_name=display_name,
-                parent_roles=parent_roles,
-            )
-            _record_security_event_safe(
-                "auth.parent_token",
-                actor=user,
-                username=username,
-                target_type="ctms_user",
-                target_id=sub,
-                success=True,
-                metadata={"roles": ctms_roles, "mapped_roles": parent_roles},
-            )
-            return jsonify({
-                "message": "success",
-                "token": create_access_token(user),
-                "actor": public_actor(user),
-                "user": public_actor(user),
-                "parent": {
-                    "sub": sub,
-                    "roles": ctms_roles,
-                    "mapped_roles": parent_roles,
-                },
-            }), 200
-        
-        # Fallback to legacy parent JWT verification
+        parent_payload = verify_parent_project_token(parent_access_token)
+        if parent_payload:
+            return _issue_parent_linkx_token(parent_payload, source="parent_access_token")
+
+        # Fallback to the stricter parent JWT verifier for deployments that use
+        # the generic parent key configuration instead of the JWKS helper.
         try:
             identity = verify_parent_access_token(parent_access_token)
         except ParentJwtError as exc:
             _record_security_event_safe("auth.parent_token", success=False, metadata={"error": str(exc)})
             return _parent_token_error(exc)
-        user = upsert_external_user(
-            identity["username"],
-            display_name=identity["display_name"],
-            parent_roles=identity["roles"],
-        )
-        return jsonify({
-            "message": "success",
-            "token": create_access_token(user),
-            "actor": public_actor(user),
-            "user": public_actor(user),
-            "parent": {
-                "sub": identity["sub"],
-                "role": identity["claims"].get("role"),
-                "token_type": identity["claims"].get("token_type"),
-            },
-        }), 200
+        return _issue_parent_linkx_token(identity["claims"], source="parent_access_token")
 
-    # Mode 2: Legacy HMAC header mode. Disabled by default so CTMS ES256
-    # cannot be confused with the old parent shared-secret flow.
+    # Mode 2: Legacy HMAC header mode. Disabled by default for the Parent project integration.
     if not parent_access_token and str(os.getenv("LINKX_ENABLE_LEGACY_PARENT_TOKEN", "")).lower() not in {"1", "true", "yes", "on"}:
         _record_security_event_safe("auth.parent_token", success=False, metadata={"error": "access_token_required"})
         return jsonify({"error": "access_token is required"}), 400

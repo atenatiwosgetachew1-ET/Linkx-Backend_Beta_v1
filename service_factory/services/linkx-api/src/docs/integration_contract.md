@@ -75,51 +75,115 @@ Use the token on protected calls:
 Authorization: Bearer <user_token>
 ```
 
-## Parent Role Exchange
+## Parent Project OAuth Code Exchange
 
-For the parent project or parent gateway to exchange a verified parent identity for a Linkx token:
+Preferred browser SSO flow:
+
+```http
+POST /auth/exchange
+Content-Type: application/json
+```
+
+Compatibility alias for frontend integrations that use an `/api` prefix:
+
+```http
+POST /api/auth/exchange
+Content-Type: application/json
+```
+
+Request:
+
+```json
+{
+  "code": "<authorization-code-from-parent-project>",
+  "code_verifier": "<pkce-code-verifier>",
+  "redirect_uri": "http://172.27.23.21/auth/callback"
+}
+```
+
+Backend behavior:
+
+- LinkX exchanges the authorization code with the Parent project token endpoint server-side.
+- LinkX sends the PKCE `code_verifier`; the frontend must never send a client secret.
+- LinkX calls Parent project `userinfo` and treats that response as the identity and authorization source.
+- LinkX maps Parent project roles/permissions to LinkX roles, creates or updates the local LinkX user, stores the refresh token encrypted server-side, and returns a LinkX JWT.
+- Browser clients continue using the LinkX token on later calls as `Authorization: Bearer <linkx_token>`.
+
+Response:
+
+```json
+{
+  "message": "success",
+  "token": "<linkx_user_jwt>",
+  "access_token": "<linkx_user_jwt>",
+  "token_type": "Bearer",
+  "actor": {
+    "actor_type": "user",
+    "username": "parent:<parent-sub>",
+    "roles": ["analyst"]
+  },
+  "parent": {
+    "sub": "<parent-sub>",
+    "roles": ["ANALYST"],
+    "mapped_roles": ["analyst"]
+  }
+}
+```
+
+Required API environment:
+
+```text
+LINKX_PARENT_SSO_TOKEN_URL
+LINKX_PARENT_SSO_USERINFO_URL
+LINKX_PARENT_SSO_REVOKE_URL
+LINKX_PARENT_OAUTH_CLIENT_ID
+LINKX_PARENT_OAUTH_CLIENT_SECRET
+LINKX_PARENT_OAUTH_REDIRECT_URI
+LINKX_PARENT_OAUTH_ALLOWED_REDIRECT_URIS
+LINKX_PARENT_JWKS_URL
+LINKX_PARENT_JWT_ISSUER      optional, enable when parent tokens include iss
+LINKX_PARENT_JWT_AUDIENCE    optional, enable when parent tokens include aud
+LINKX_PARENT_FRAME_ORIGIN    optional iframe embedding origin
+```
+
+Role mapping currently performed by LinkX:
+
+```text
+SUPER_ADMIN       -> admin
+HIGHER_OFFICIAL   -> admin
+DIRECTOR          -> manager
+TEAM_LEADER       -> manager
+ANALYST           -> analyst
+DATA_ENCODER      -> viewer
+VIEWER            -> viewer
+RECEIVING_OFFICER -> rejected unless permissions map to a LinkX role
+```
+
+Permission fallback when no mapped role is present:
+
+```text
+InvestigationCreate or FileUpload -> analyst
+InvestigationRead, SearchGlobal, SearchPersons, SearchTransactions, or FileDownload -> viewer
+```
+
+## Parent Project Direct Token Exchange
+
+For rollback or non-browser integrations, LinkX still accepts a verified Parent project access JWT:
 
 ```http
 POST /auth/parent-token
 Content-Type: application/json
-X-Linkx-Parent-Secret: <LINKX_PARENT_SHARED_SECRET>
 ```
 
 Body:
 
 ```json
 {
-  "username": "user@example.com",
-  "display_name": "User Name",
-  "roles": ["team_leader"]
+  "access_token": "<parent-project-es256-access-jwt>"
 }
 ```
 
-Role mapping performed by Linkx:
-
-```text
-superuser -> top-level Linkx operator
-team_leader -> admin
-analyst     -> analyst
-viewer      -> viewer
-```
-
-Response:
-
-```json
-{
-  "message": "success!",
-  "token": "<user_jwt>",
-  "actor": {
-    "actor_type": "user",
-    "username": "user@example.com",
-    "roles": ["admin"],
-    "permissions": ["users:manage"]
-  }
-}
-```
-
-This endpoint should only be called by the trusted parent project/gateway after it has already authenticated the user.
+Legacy shared-secret parent federation remains disabled unless `LINKX_ENABLE_LEGACY_PARENT_TOKEN=true` is explicitly approved.
 
 ## Service Login
 

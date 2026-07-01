@@ -10,10 +10,11 @@ The gateway should:
 
 - Route Linkx paths to the backend service.
 - Preserve `Authorization: Bearer <JWT>`.
-- Preserve `X-Linkx-Parent-Secret` only for `/auth/parent-token`.
+- Preserve `Authorization: Bearer <JWT>` for protected LinkX calls.
+- Route `/auth/exchange` and `/api/auth/exchange` to the API service for Parent project OAuth code exchange.
 - Preserve `X-API-Key` for `/api/STR_link_analysis` if `LINKX_PUBLIC_API_KEY` is configured.
 - Support WebSocket/Socket.IO upgrade headers for `/socket.io/`.
-- Restrict `/auth/parent-token` to the trusted parent gateway/network.
+- Restrict legacy `/auth/parent-token` direct-token usage to trusted networks when it remains enabled for rollback.
 
 ## Nginx Template
 
@@ -38,7 +39,9 @@ upstream linkx_backend {
 | `GET /db/health` | Public/internal health route | Checks PostgreSQL health |
 | `POST /auth/login` | Public route | Validates username/password |
 | `POST /auth/service-token` | Internal/sibling-service route | Validates client id/secret |
-| `POST /auth/parent-token` | Parent gateway only, preserve `X-Linkx-Parent-Secret` | Validates parent shared secret and maps roles |
+| `POST /auth/exchange` | Public from approved LinkX frontend origin | Exchanges Parent project authorization code server-side and maps userinfo |
+| `POST /api/auth/exchange` | Public from approved LinkX frontend origin | Compatibility alias for `/auth/exchange` |
+| `POST /auth/parent-token` | Trusted rollback/direct-token route | Validates Parent project ES256 access JWT; legacy shared-secret mode disabled by default |
 | `GET /auth/me` | Preserve `Authorization` | Validates JWT |
 | `POST /auth/verify` | Preserve `Authorization` | Validates JWT/body token |
 | `/auth/admin/*` | Preserve `Authorization` | Requires `users:manage` |
@@ -54,11 +57,14 @@ JWT-protected routes:
 Authorization: Bearer <jwt>
 ```
 
-Parent-token exchange:
+Parent project OAuth exchange:
 
 ```http
-X-Linkx-Parent-Secret: <LINKX_PARENT_SHARED_SECRET>
+Content-Type: application/json
+Origin: <approved LinkX frontend origin>
 ```
+
+Legacy parent-token shared secret is disabled unless explicitly approved.
 
 Public STR API if API key is enabled:
 
@@ -68,8 +74,9 @@ X-API-Key: <LINKX_PUBLIC_API_KEY>
 
 ## Recommended Production Controls
 
-- Put `/auth/parent-token` behind an IP allow-list or private network only.
-- Keep `LINKX_PARENT_SHARED_SECRET` out of frontend/browser code.
+- Allow `/auth/exchange` and `/api/auth/exchange` only from approved LinkX frontend origins.
+- Keep Parent project OAuth client secrets out of frontend/browser code.
+- Keep legacy `/auth/parent-token` behind an IP allow-list if it is temporarily retained.
 - Use HTTPS/TLS at the gateway.
 - Set `client_max_body_size` to match `LINKX_MAX_UPLOAD_BYTES`.
 - Keep direct backend port access private when possible.

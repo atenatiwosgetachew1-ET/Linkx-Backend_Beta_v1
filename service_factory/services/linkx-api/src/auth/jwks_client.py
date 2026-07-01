@@ -13,7 +13,7 @@ from flask import current_app
 class JWKSClient:
     """
     Fetches and caches JWKS (public keys) from a remote endpoint.
-    Used to verify JWTs signed by external providers (e.g., CTMS).
+    Used to verify JWTs signed by external providers (e.g., Parent project).
     
     Features:
     - Automatic key caching with TTL
@@ -152,29 +152,28 @@ class JWKSClient:
         return public_numbers.public_key(default_backend())
 
 
-# Global CTMS JWKS client (lazy-loaded on first use)
-_ctms_jwks_client = None
-_ctms_jwks_client_url = None
+# Global Parent project JWKS client (lazy-loaded on first use)
+_parent_jwks_client = None
+_parent_jwks_client_url = None
 
 
-def get_ctms_jwks_client() -> Optional[JWKSClient]:
-    """Get or create the CTMS JWKS client."""
-    global _ctms_jwks_client, _ctms_jwks_client_url
+def get_parent_jwks_client() -> Optional[JWKSClient]:
+    """Get or create the Parent project JWKS client."""
+    global _parent_jwks_client, _parent_jwks_client_url
 
-    ctms_jwks_url = (
-        os.getenv("LINKX_CTMS_JWKS_URL")
+    parent_jwks_url = (
+        os.getenv("LINKX_PARENT_JWKS_URL")
         or os.getenv("LINKX_PARENT_JWT_JWKS_URL")
     )
-    if not ctms_jwks_url:
+    if not parent_jwks_url:
         return None
 
     cache_ttl = int(
-        os.getenv("LINKX_CTMS_JWKS_CACHE_SECONDS")
-        or os.getenv("LINKX_PARENT_JWKS_CACHE_SECONDS")
+        os.getenv("LINKX_PARENT_JWKS_CACHE_SECONDS")
         or "3600"
     )
-    if _ctms_jwks_client is None or _ctms_jwks_client_url != ctms_jwks_url:
-        _ctms_jwks_client = JWKSClient(ctms_jwks_url, cache_ttl_seconds=cache_ttl)
-        _ctms_jwks_client_url = ctms_jwks_url
+    if _parent_jwks_client is None or _parent_jwks_client_url != parent_jwks_url:
+        _parent_jwks_client = JWKSClient(parent_jwks_url, cache_ttl_seconds=cache_ttl)
+        _parent_jwks_client_url = parent_jwks_url
 
-    return _ctms_jwks_client
+    return _parent_jwks_client

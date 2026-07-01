@@ -11,7 +11,7 @@ from typing import Optional, Dict, Any
 import jwt
 from flask import current_app
 
-from .jwks_client import get_ctms_jwks_client
+from .jwks_client import get_parent_jwks_client
 
 
 TOKEN_MAX_AGE_SECONDS = int(os.getenv("LINKX_AUTH_TOKEN_SECONDS", "3600"))
@@ -135,22 +135,22 @@ def extract_bearer_token(auth_header):
     return auth_header[len(prefix):].strip()
 
 
-def verify_ctms_token(token: str) -> Optional[Dict[str, Any]]:
+def verify_parent_project_token(token: str) -> Optional[Dict[str, Any]]:
     """
-    Verify and decode a CTMS JWT token (ES256 signed).
+    Verify and decode a Parent project JWT token (ES256 signed).
     
-    CTMS tokens are signed with ES256 (ECDSA P-256 SHA-256) and must be
-    verified against the CTMS public key fetched from the JWKS endpoint.
+    Parent project tokens are signed with ES256 (ECDSA P-256 SHA-256) and must be
+    verified against the Parent project public key fetched from the JWKS endpoint.
     
     Validation checks:
     - Algorithm is ES256 (prevents algorithm confusion attacks)
-    - Signature is valid using CTMS public key
+    - Signature is valid using Parent project public key
     - token_type is "access" (rejects refresh tokens)
     - exp (expiration) is in the future
     - sub (subject UUID) is present
     
     Args:
-        token: The CTMS JWT token string
+        token: The Parent project JWT token string
     
     Returns:
         Decoded token payload (dict) if valid, None if invalid
@@ -166,57 +166,74 @@ def verify_ctms_token(token: str) -> Optional[Dict[str, Any]]:
         
         # Strict algorithm check: only ES256 allowed
         if alg != "ES256":
-            current_app.logger.warning(f"CTMS token rejected: invalid algorithm '{alg}' (expected ES256)")
+            current_app.logger.warning(f"Parent project token rejected: invalid algorithm '{alg}' (expected ES256)")
             return None
         
-        # Get CTMS JWKS client
-        jwks_client = get_ctms_jwks_client()
+        # Get Parent project JWKS client
+        jwks_client = get_parent_jwks_client()
         if not jwks_client:
-            current_app.logger.warning("CTMS JWKS client not configured")
+            current_app.logger.warning("Parent project JWKS client not configured")
             return None
         
         # Get public key from JWKS
         try:
             public_key = jwks_client.get_key(kid)
         except Exception as e:
-            current_app.logger.warning(f"Failed to get CTMS public key: {e}")
+            current_app.logger.warning(f"Failed to get Parent project public key: {e}")
             return None
         
         # Verify signature and decode payload
         payload = jwt.decode(
             token,
             public_key,
-            algorithms=["ES256"],  # Only allow ES256
-            options={"verify_exp": True}  # Automatically check expiration
+            algorithms=["ES256"],
+            options={"verify_exp": True, "verify_aud": False},
         )
         
+        expected_issuer = os.getenv("LINKX_PARENT_JWT_ISSUER")
+        if expected_issuer and payload.get("iss") != expected_issuer:
+            current_app.logger.warning("Parent token rejected: issuer mismatch")
+            return None
+
+        expected_audience = os.getenv("LINKX_PARENT_JWT_AUDIENCE")
+        if expected_audience:
+            audience = payload.get("aud")
+            if isinstance(audience, list):
+                audience_valid = expected_audience in audience
+            else:
+                audience_valid = audience == expected_audience
+            if not audience_valid:
+                current_app.logger.warning("Parent token rejected: audience mismatch")
+                return None
+
         # Additional validations
         token_type = payload.get("token_type")
         if token_type != "access":
-            current_app.logger.warning(f"CTMS token rejected: token_type '{token_type}' (expected 'access')")
+            current_app.logger.warning(f"Parent project token rejected: token_type '{token_type}' (expected 'access')")
             return None
         
         sub = payload.get("sub")
         if not sub:
-            current_app.logger.warning("CTMS token rejected: missing 'sub' (subject UUID)")
+            current_app.logger.warning("Parent project token rejected: missing 'sub' (subject UUID)")
             return None
         try:
             uuid.UUID(str(sub))
         except ValueError:
-            current_app.logger.warning("CTMS token rejected: invalid 'sub' UUID")
+            current_app.logger.warning("Parent project token rejected: invalid 'sub' UUID")
             return None
         
         return payload
     
     except jwt.ExpiredSignatureError:
-        current_app.logger.warning("CTMS token rejected: expired")
+        current_app.logger.warning("Parent project token rejected: expired")
         return None
     except jwt.InvalidSignatureError:
-        current_app.logger.warning("CTMS token rejected: invalid signature")
+        current_app.logger.warning("Parent project token rejected: invalid signature")
         return None
     except jwt.InvalidAlgorithmError:
-        current_app.logger.warning("CTMS token rejected: invalid algorithm")
+        current_app.logger.warning("Parent project token rejected: invalid algorithm")
         return None
     except Exception as e:
-        current_app.logger.warning(f"CTMS token verification failed: {e}")
+        current_app.logger.warning(f"Parent project token verification failed: {e}")
         return None
+

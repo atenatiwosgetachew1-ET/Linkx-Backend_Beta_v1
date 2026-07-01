@@ -46,7 +46,7 @@ from session_config_store import create_session_config, duplicate_window_config,
 from service_orchestration import enqueue_cleanup_run, enqueue_worker_job, get_active_session_lock, get_actor_main_session_info, get_any_active_actor_lock, get_worker_job, list_cleanup_audit, public_lock_state, reactivate_analysis_session, request_session_cancellation
 from auth.decorators import auth_required, current_actor_from_request, permission_required
 from auth.repository import actor_has_permission, bind_analysis_session_actor, can_access_analysis_session_actor, get_postgres_connection, record_security_event
-from auth.routes import auth_api
+from auth.routes import auth_api, exchange_parent_oauth_code
 from security.redaction import redact_value
 from security.payload_validation import (
     COMMON_SCHEMAS,
@@ -81,6 +81,7 @@ socketio = SocketIO(app, cors_allowed_origins=cors_origins, async_mode="eventlet
 register_socket_handlers(socketio)
 # Register auth API blueprint
 app.register_blueprint(auth_api, url_prefix="/auth")
+app.add_url_rule("/api/auth/exchange", view_func=exchange_parent_oauth_code, methods=["POST"])
 # Register external API blueprint
 app.register_blueprint(STR_link_analysis_api, url_prefix="/api")
 app.register_blueprint(ai_service_api, url_prefix="/ai")
@@ -95,14 +96,14 @@ def apply_security_headers(response):
     response.headers.setdefault("Referrer-Policy", os.getenv("LINKX_REFERRER_POLICY", "no-referrer"))
     response.headers.setdefault("Permissions-Policy", os.getenv("LINKX_PERMISSIONS_POLICY", "camera=(), microphone=(), geolocation=()"))
     
-    # CSP with support for CTMS iframe embedding
+    # CSP with support for Parent project iframe embedding
     csp = os.getenv("LINKX_CONTENT_SECURITY_POLICY")
     if not csp:
-        # Build default CSP with CTMS support if origin is configured
-        ctms_origin = os.getenv("LINKX_CTMS_ORIGIN", "")
+        # Build default CSP with Parent project support if origin is configured
+        parent_origin = os.getenv("LINKX_PARENT_FRAME_ORIGIN", "")
         frame_ancestors = "'self'"
-        if ctms_origin:
-            frame_ancestors = f"'self' {ctms_origin}"
+        if parent_origin:
+            frame_ancestors = f"'self' {parent_origin}"
         csp = f"frame-ancestors {frame_ancestors}; default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';"
     
     response.headers.setdefault("Content-Security-Policy", csp)

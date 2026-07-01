@@ -1,22 +1,24 @@
 import json
 import os
 import secrets
+from datetime import datetime, timedelta, timezone
 
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from batch_manager.utils.postgres_utils import get_postgres_connection
+from security.secret_store import decrypt_secret, encrypt_secret
 
 
 ROLE_ALIASES = {
     "team_leader": "manager",
-    "analyst": "viewer",
+    "analyst": "analyst",
     "viewer": "viewer",
     "SUPER_ADMIN": "admin",
     "ADMIN": "admin",
     "HIGHER_OFFICIAL": "admin",
     "DIRECTOR": "manager",
     "TEAM_LEADER": "manager",
-    "ANALYST": "viewer",
+    "ANALYST": "analyst",
     "DATA_ENCODER": "viewer",
     "VIEWER": "viewer",
 }
@@ -212,6 +214,19 @@ def ensure_auth_schema():
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
             """)
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS parent_oauth_sessions (
+                user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                parent_subject TEXT NOT NULL,
+                refresh_token_ciphertext TEXT,
+                access_token_expires_at TIMESTAMPTZ,
+                metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                revoked_at TIMESTAMPTZ
+            )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_parent_oauth_sessions_subject ON parent_oauth_sessions(parent_subject)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_security_audit_events_created ON security_audit_events(created_at DESC)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_security_audit_events_type_created ON security_audit_events(event_type, created_at DESC)")
             _migrate_analysis_sessions(cur)
@@ -651,6 +666,86 @@ def upsert_external_user(username, display_name=None, parent_roles=None):
                 """, (user_id, role_name))
         conn.commit()
     return get_user_by_id(user_id)
+
+
+def upsert_parent_oauth_session(user_id, parent_subject, refresh_token=None, expires_in=None, metadata=None):
+    ensure_auth_schema()
+    expires_at = None
+    if expires_in:
+        try:
+            expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+        except (TypeError, ValueError):
+            expires_at = None
+    refresh_ciphertext = encrypt_secret(refresh_token) if refresh_token else None
+    safe_metadata = json.dumps(metadata or {})
+    with get_postgres_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO parent_oauth_sessions (
+                    user_id, parent_subject, refresh_token_ciphertext,
+                    access_token_expires_at, metadata, revoked_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s::jsonb, NULL, NOW())
+                ON CONFLICT (user_id) DO UPDATE
+                SET parent_subject = EXCLUDED.parent_subject,
+                    refresh_token_ciphertext = COALESCE(EXCLUDED.refresh_token_ciphertext, parent_oauth_sessions.refresh_token_ciphertext),
+                    access_token_expires_at = EXCLUDED.access_token_expires_at,
+                    metadata = EXCLUDED.metadata,
+                    revoked_at = NULL,
+                    updated_at = NOW()
+                """,
+                (int(user_id), str(parent_subject), refresh_ciphertext, expires_at, safe_metadata),
+            )
+        conn.commit()
+
+
+def get_parent_oauth_session(user_id, include_refresh_token=False):
+    ensure_auth_schema()
+    with get_postgres_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT user_id, parent_subject, refresh_token_ciphertext,
+                       access_token_expires_at, metadata, revoked_at
+                FROM parent_oauth_sessions
+                WHERE user_id = %s
+                """,
+                (int(user_id),),
+            )
+            row = cur.fetchone()
+    if not row:
+        return None
+    session = {
+        "user_id": row[0],
+        "parent_subject": row[1],
+        "access_token_expires_at": row[3].isoformat() if row[3] else None,
+        "metadata": row[4] or {},
+        "revoked_at": row[5].isoformat() if row[5] else None,
+    }
+    if include_refresh_token and row[2]:
+        session["refresh_token"] = decrypt_secret(row[2])
+    return session
+
+
+def revoke_parent_oauth_session(user_id):
+    ensure_auth_schema()
+    with get_postgres_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE parent_oauth_sessions
+                SET revoked_at = NOW(),
+                    refresh_token_ciphertext = NULL,
+                    updated_at = NOW()
+                WHERE user_id = %s
+                RETURNING user_id
+                """,
+                (int(user_id),),
+            )
+            row = cur.fetchone()
+        conn.commit()
+    return row is not None
 
 
 def get_user_by_username(username):

@@ -165,6 +165,16 @@ COMMON_SCHEMAS = {
             "parent_roles": {"type": ["array", "string"], "items": {"type": "string", "maxLength": 64}},
         },
     },
+    "parent_oauth_exchange": {
+        "type": "object",
+        "required": ["code", "code_verifier"],
+        "additionalProperties": False,
+        "properties": {
+            "code": {"type": "string", "minLength": 1, "maxLength": 2048},
+            "code_verifier": {"type": "string", "minLength": 32, "maxLength": 256},
+            "redirect_uri": {"type": "string", "minLength": 1, "maxLength": 2048},
+        },
+    },
     "verify": {
         "type": "object",
         "additionalProperties": False,
