@@ -54,7 +54,7 @@ The following are already implemented in code or documented as current backend p
 | P0 | AI partner least-privilege scoping | Implemented | Future co-analyst integration must keep the service secret server-side and preserve session-scoped access | Server 1 |
 | P1 | Token revocation and post-logout invalidation | Implemented | Residual risk is limited to legacy no-jti tokens until expiry and future revocation-table cleanup automation | Server 1 |
 | P1 | Internal transport protection for JWKS, partner, and east-west sensitive channels | Partially implemented | Credential interception, token interception, trust downgrade, internal MITM on flat/shared networks | Server 1, Server 2, Server 3, Server 4 |
-| P1 | Deployable gateway configuration integrity | Partially implemented | Misconfigured nginx rollout, header stripping, auth breakage, accidental exposure during manual deployment | Server 1 |
+| P1 | Deployable gateway configuration integrity | Implemented | Residual risk is live nginx drift or environment-specific allow-list mistakes during deployment | Server 1 |
 | P2 | Service-account permission segmentation and audit depth | Partially implemented | Over-broad service capabilities, weak forensic visibility into partner reads, harder blast-radius control | Server 1 |
 | P2 | Security configuration drift detection | Not implemented | UFW/systemd/compose drift can silently undo hardening without repo visibility | Server 1, Server 2, Server 3, Server 4 |
 | P2 | Backup automation and recovery assurance for hardened state | Partially implemented | Recovery gaps for secrets, artifacts, graph state, or control-plane state during incident response | Server 2, Server 4 |
@@ -238,22 +238,31 @@ Primary server concerns:
 
 #### 6. Deployable gateway configuration integrity
 
-Condition: Partially implemented
+Condition: Implemented
 
-Why it is P1:
+Why it was P1:
 
-- The repo already contains one cleaner gateway template, but it also contains a malformed server config that should not be promoted accidentally.
+- The repo contained one clean gateway template and one malformed service-level nginx config.
+- The malformed file could break deployments, strip required auth headers, or expose routes incorrectly if copied during manual rollout.
 
 Verified evidence:
 
-- `service_factory/services/linkx-api/deploy/nginx/linkx-api-server.conf` contains blank proxy header values and an invalid `map` block
-- `service_factory/deploy/nginx/linkx-api-gateway.conf` is the stronger canonical-looking template
+- `service_factory/services/linkx-api/deploy/nginx/linkx-api-server.conf` has been replaced with the same valid gateway template used by `service_factory/deploy/nginx/linkx-api-gateway.conf`.
+- The gateway template preserves `Authorization`, Socket.IO upgrade headers, `X-Forwarded-*`, optional `X-API-Key`, and parent-token secret forwarding.
+- `service_factory/deploy/nginx/validate-linkx-api-gateway.sh` provides a repeatable `nginx -t` validation wrapper for the template.
+- API gateway docs now include the validation command.
 
-What to fix in this priority:
+Completed hardening:
 
-- Remove, replace, or clearly mark the malformed file as non-deployable.
-- Keep one canonical gateway artifact.
-- Add nginx config validation to deployment verification.
+- Removed the deployable malformed nginx artifact from the API service tree.
+- Preserved one canonical gateway shape across repo deployment paths.
+- Added a validation helper to catch future syntax regressions before copying nginx config live.
+
+Residual risk / follow-up:
+
+- The live server may still use an older `/etc/nginx/sites-*` file; verify before replacing it.
+- Production `/auth/parent-token` allow-list values are environment-specific and must be set on Server 1 if that route is exposed through nginx.
+- HTTPS/TLS remains covered by the separate P1 internal/external transport item.
 
 Primary server concerns:
 

@@ -31,6 +31,13 @@ upstream linkx_backend {
 }
 ```
 
+Validate the template before copying it into an active nginx site:
+
+```bash
+service_factory/deploy/nginx/validate-linkx-api-gateway.sh \
+  service_factory/deploy/nginx/linkx-api-gateway.conf
+```
+
 ## Route Matrix
 
 | Route | Gateway Auth Behavior | Backend Auth Behavior |
