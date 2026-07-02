@@ -57,7 +57,7 @@ The following are already implemented in code or documented as current backend p
 | P1 | Deployable gateway configuration integrity | Implemented | Residual risk is live nginx drift or environment-specific allow-list mistakes during deployment | Server 1 |
 | P2 | Service-account permission segmentation and audit depth | Implemented | Residual risk is future partner/service endpoints bypassing granular permissions or audit conventions | Server 1 |
 | P2 | Security configuration drift detection | Implemented | Residual risk is limited to checks not yet encoded in the drift script, such as full firewall policy and off-host monitoring state | Server 1, Server 2, Server 3, Server 4 |
-| P2 | Backup automation and recovery assurance for hardened state | Partially implemented | Recovery gaps for secrets, artifacts, graph state, or control-plane state during incident response | Server 2, Server 4 |
+| P2 | Backup automation and recovery assurance for hardened state | Partially implemented | Local timer automation and verification are ready for rollout; encrypted off-host sync and future non-empty Neo4j restore evidence remain open | Server 1, Server 2, Server 4 |
 | P3 | Continuous security verification in CI/CD | Not implemented | Reintroduction of logging leaks, invalid configs, unsafe defaults, and auth regressions | Server 1, Server 2, Server 3, Server 4 |
 
 ## Priority Details
@@ -364,17 +364,26 @@ Why it is P2:
 
 Verified evidence:
 
-- `docs/service_split_handoff_and_load_audit.md` says backup timers and off-host retention helpers are present but not yet fully deployed
+- `docs/service_split_handoff_and_load_audit.md` says backup timers and off-host retention helpers are present but not yet fully deployed.
+- `service_factory/deploy/security/verify-linkx-backups.py` now verifies backup timer installation, enablement, recent local backup files, checksum evidence, script syntax, and off-host target configuration warnings.
+- Backup shell scripts pass local `bash -n` syntax checks.
 
-What to fix in this priority:
+Completed hardening:
 
-- Deploy and verify the scheduled backup timer units.
-- Configure encrypted off-host backup targets.
+- Added a repeatable backup automation verifier for PostgreSQL, shared artifacts, and Neo4j backup families.
+- Preserved existing restore-drill evidence for PostgreSQL, artifacts, and the current empty Neo4j graph in `docs/service_split_handoff_and_load_audit.md`.
+- Kept off-host backup target detection as a warning so local scheduled backups can be enabled first without hiding the remaining resilience gap.
+
+What remains open:
+
+- Deploy and verify the scheduled backup timer units on Server 2, Server 1, and Server 4.
+- Configure encrypted off-host backup targets for at least PostgreSQL, artifacts, and Neo4j backups.
 - Re-run restore drills after representative data exists in Neo4j and artifacts.
-- Confirm secret recovery material handling remains separate and documented.
+- Confirm secret recovery material handling remains separate and documented after any secret rotation.
 
 Primary server concerns:
 
+- Server 1
 - Server 2
 - Server 4
 
