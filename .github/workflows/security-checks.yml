@@ -1,0 +1,60 @@
+name: LinkX Security Checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  security-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install nginx for gateway template validation
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nginx
+
+      - name: Compile deploy security helpers
+        run: |
+          python3 -m py_compile \
+            service_factory/deploy/security/validate-transport-security.py \
+            service_factory/deploy/security/verify-linkx-server.py \
+            service_factory/deploy/security/verify-linkx-backups.py
+
+      - name: Validate shell scripts
+        run: |
+          bash -n service_factory/deploy/nginx/validate-linkx-api-gateway.sh
+          bash -n service_factory/scripts/backup-artifacts.sh
+          bash -n service_factory/scripts/restore-artifacts-to-dir.sh
+          bash -n service_factory/scripts/prune-backups.sh
+          bash -n service_factory/scripts/sync-backups-offhost.sh
+          bash -n service_factory/services/linkx-control-data/scripts/backup-postgres.sh
+          bash -n service_factory/services/linkx-control-data/scripts/restore-postgres.sh
+          bash -n service_factory/services/linkx-graph-maintenance/scripts/backup-neo4j-offline.sh
+
+      - name: Run security regression tests
+        run: |
+          python3 -m unittest discover -s tests/security -p 'test_*.py'
+
+      - name: Validate API gateway nginx template
+        run: |
+          service_factory/deploy/nginx/validate-linkx-api-gateway.sh \
+            service_factory/deploy/nginx/linkx-api-gateway.conf
+
+      - name: Validate transport-security sample env
+        run: |
+          cat > /tmp/linkx-api-secure.env <<'EOF'
+          LINKX_PARENT_AUTH_BASE_URL=https://parent.example.test
+          LINKX_PARENT_JWKS_URL=https://parent.example.test/.well-known/jwks.json
+          DATABASE_URL=postgresql://linkx:secret@db.example.test:5432/linkx?sslmode=require
+          LINKX_POSTGRES_DSN=postgresql://linkx:secret@db.example.test:5432/linkx?sslmode=require
+          LINKX_REDIS_URL=rediss://:secret@redis.example.test:6379/0
+          LINKX_NEO4J_URL=neo4j+s://graph.example.test:7687
+          EOF
+          python3 service_factory/deploy/security/validate-transport-security.py \
+            --strict-east-west \
+            /tmp/linkx-api-secure.env

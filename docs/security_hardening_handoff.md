@@ -57,8 +57,8 @@ The following are already implemented in code or documented as current backend p
 | P1 | Deployable gateway configuration integrity | Implemented | Residual risk is live nginx drift or environment-specific allow-list mistakes during deployment | Server 1 |
 | P2 | Service-account permission segmentation and audit depth | Implemented | Residual risk is future partner/service endpoints bypassing granular permissions or audit conventions | Server 1 |
 | P2 | Security configuration drift detection | Implemented | Residual risk is limited to checks not yet encoded in the drift script, such as full firewall policy and off-host monitoring state | Server 1, Server 2, Server 3, Server 4 |
-| P2 | Backup automation and recovery assurance for hardened state | Partially implemented | Local backup timers and checksum verification are live; encrypted off-host sync and future non-empty Neo4j restore evidence remain open | Server 1, Server 2, Server 4 |
-| P3 | Continuous security verification in CI/CD | Not implemented | Reintroduction of logging leaks, invalid configs, unsafe defaults, and auth regressions | Server 1, Server 2, Server 3, Server 4 |
+| P2 | Backup automation and recovery assurance for hardened state | Partially implemented | Local and off-host backup automation is live; future restore-drill evidence and secret recovery validation remain open | Server 1, Server 2, Server 4 |
+| P3 | Continuous security verification in CI/CD | Implemented | Residual risk is gaps outside the current CI checks, such as dependency scanning, full integration tests, and live restore drills | Server 1, Server 2, Server 3, Server 4 |
 
 ## Priority Details
 
@@ -359,7 +359,7 @@ Condition: Partially implemented
 
 Why it is P2:
 
-- The prior handoff already says recovery evidence is mostly proven, but off-host copies and future representative-data restore evidence are not fully live.
+- The prior handoff already says recovery evidence is mostly proven, but future representative-data restore evidence and secret recovery validation are not fully live.
 - This matters for security because incident recovery depends on it.
 
 Verified evidence:
@@ -370,17 +370,20 @@ Verified evidence:
 - Server 2 (`node-20`) PostgreSQL backup timer is installed, enabled, active, listed in timers, and verified with a recent dump plus checksum; verifier returned `summary: failures=0 warnings=2`.
 - Server 1 (`node-19`) artifact backup timer is installed, enabled, active, listed in timers, and verified with a recent tar snapshot plus checksum; verifier returned `summary: failures=0 warnings=2`.
 - Server 4 (`node-22`) Neo4j offline backup timer is installed, enabled, active, listed in timers, and verified with a recent dump plus checksum; verifier returned `summary: failures=0 warnings=2`.
+- Server 1 (`node-19`) artifact off-host sync to `backup-user@172.20.107.94:/srv/linkx-backups/node-19-artifacts` is configured and verified; systemd backup run completed successfully and the backup server contains `.tar.gz` plus `.sha256` files.
+- Server 2 (`node-20`) PostgreSQL off-host sync to `backup-user@172.20.107.94:/srv/linkx-backups/node-20-postgres` is configured and verified; verifier returned `summary: failures=0 warnings=1` and the backup server contains `.dump` plus `.sha256` files.
+- Server 4 (`node-22`) Neo4j off-host sync to `backup-user@172.20.107.94:/srv/linkx-backups/node-22-neo4j` is configured and verified; verifier returned `summary: failures=0 warnings=1` and the backup server contains `neo4j.dump` plus checksum files.
 
 Completed hardening:
 
 - Added a repeatable backup automation verifier for PostgreSQL, shared artifacts, and Neo4j backup families.
 - Deployed and verified scheduled local backup timers for PostgreSQL, shared artifacts, and Neo4j.
+- Configured and verified off-host backup sync for artifacts, PostgreSQL, and Neo4j to the dedicated backup server.
 - Preserved existing restore-drill evidence for PostgreSQL, artifacts, and the current empty Neo4j graph in `docs/service_split_handoff_and_load_audit.md`.
 - Kept off-host backup target detection as a warning so local scheduled backups can be enabled first without hiding the remaining resilience gap.
 
 What remains open:
 
-- Configure encrypted off-host backup targets for at least PostgreSQL, artifacts, and Neo4j backups.
 - Re-run restore drills after representative data exists in Neo4j and artifacts.
 - Confirm secret recovery material handling remains separate and documented after any secret rotation.
 
@@ -394,19 +397,32 @@ Primary server concerns:
 
 #### 10. Continuous security verification in CI/CD
 
-Condition: Not implemented
+Condition: Implemented
 
 Why it is P3:
 
 - The codebase has enough custom auth, queue, and analysis behavior that regression prevention is now important.
 - This is best addressed once the P0/P1 controls are fixed.
 
-What to fix in this priority:
+Verified evidence:
 
-- Add tests for secret redaction and no-plaintext-log assertions.
-- Add config validation for nginx and env sanity.
-- Add regression tests for auth revocation, AI scoping, and parent-token validation behavior.
-- Add dependency and secret scanning if not already present elsewhere.
+- `.github/workflows/security-checks.yml` now runs security regression checks on `main` pushes and pull requests.
+- `tests/security/test_security_regressions.py` covers recursive secret redaction, STR analyzer redacted logging, cleanup Neo4j metadata-only logging, token revocation markers, granular AI permissions, and off-host backup SSH-key handling.
+- CI compiles deploy security helpers, validates backup/deploy shell script syntax, validates the nginx gateway template, and runs the transport-security validator against a strict secure sample env.
+- Local verification passed for `python3 -m unittest discover -s tests/security -p 'test_*.py'`.
+- Local verification passed for deploy security helper `py_compile`, backup/deploy `bash -n`, and strict transport-validator smoke testing.
+
+Completed hardening:
+
+- Added a lightweight CI security gate that does not require production services or secrets.
+- Added regression tests for the most important P0/P1/P2 fixes so future edits fail fast if they remove redaction, revocation, AI permission segmentation, or backup SSH-key safety.
+- Added repeatable validation for gateway and transport-security config artifacts.
+
+Residual risk / follow-up:
+
+- Add dependency vulnerability scanning and secret scanning once the repository's preferred tooling is chosen.
+- Add integration tests for real token revocation behavior against a test database.
+- Add restore-drill automation or evidence capture after representative graph/artifact data exists.
 
 Primary server concerns:
 
