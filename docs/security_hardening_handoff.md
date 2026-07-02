@@ -327,6 +327,10 @@ Verified evidence:
 - `service_factory/deploy/security/verify-linkx-server.py` provides role-specific drift checks for `api`, `control-data`, `worker`, and `graph-maintenance`.
 - The script checks expected deploy paths, systemd units, Redis authentication behavior, API security code markers, nginx gateway installation/health, and cleanup credential-log redaction markers.
 - The script exits non-zero on failing checks and prints a PASS/WARN/FAIL summary suitable for manual handoff or later CI/ops automation.
+- Server 1 (`node-19`) live `--role api` verification completed with `summary: failures=0 warnings=0`.
+- Server 2 (`node-20`) live `--role control-data` verification completed with `summary: failures=0 warnings=0`.
+- Server 3 (`node-21`) live `--role worker` verification completed with `summary: failures=0 warnings=0`.
+- Server 4 (`node-22`) live `--role graph-maintenance` verification completed with `summary: failures=0 warnings=0`.
 
 Completed hardening:
 
@@ -334,6 +338,7 @@ Completed hardening:
 - Encoded the already-hardened Redis auth state as a live socket test instead of only checking config text.
 - Encoded API logout revocation, AI granular permissions, and STR redaction as deployed source-code marker checks.
 - Encoded graph-maintenance credential-log redaction as a deployed source-code marker check.
+- Verified that all four deployed server roles currently match the encoded drift checks with no warnings.
 
 Residual risk / follow-up:
 
