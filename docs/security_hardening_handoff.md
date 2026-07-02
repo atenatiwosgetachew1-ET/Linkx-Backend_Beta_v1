@@ -1,6 +1,6 @@
 # LinkX Security Hardening Handoff
 
-Last updated: 2026-07-01
+Last updated: 2026-07-02
 
 ## Purpose
 
@@ -41,7 +41,7 @@ The following are already implemented in code or documented as current backend p
 
 ## Important Assessment Notes
 
-- Findings below are based on repository code and deployment artifacts, not live server inspection.
+- Findings below are based on repository code, deployment artifacts, and live P0 verification completed on 2026-07-02.
 - Where the existing handoff document says UFW or ops restrictions are already applied, treat those as operational mitigations only if the running servers still match that state.
 - A few issues are already partially mitigated operationally, but still remain fragile because the secure state is not fully encoded into deployment defaults.
 
@@ -49,10 +49,10 @@ The following are already implemented in code or documented as current backend p
 
 | Priority Group | Security feature | Condition | Potential risks | Servers |
 |---|---|---|---|---|
-| P0 | Redis network isolation and authentication | Partially implemented | Queue tampering, job manipulation, state poisoning, unauthorized internal access if firewall drifts or service is exposed | Server 2 |
-| P0 | Secret redaction in STR analysis and related logs | Partially implemented | Plaintext Neo4j credentials or sensitive payload fragments leaking into stdout, journald, log shipping, support bundles | Server 1, Server 3 |
-| P0 | AI partner least-privilege scoping | Partially implemented | Cross-session metadata access, artifact enumeration, excessive partner visibility if service token is misused or stolen | Server 1 |
-| P1 | Token revocation and post-logout invalidation | Partially implemented | Stolen JWTs remain usable until expiry after logout, lock, or forced session termination | Server 1 |
+| P0 | Redis network isolation and authentication | Implemented | Residual risk is limited to credential handling, firewall drift, and future compose/env regression | Server 2 |
+| P0 | Secret redaction in STR analysis and related logs | Implemented | Historical logs may retain old entries; residual risk is future direct debug prints or unreviewed adjacent paths | Server 1, Server 4 |
+| P0 | AI partner least-privilege scoping | Implemented | Future co-analyst integration must keep the service secret server-side and preserve session-scoped access | Server 1 |
+| P1 | Token revocation and post-logout invalidation | Implemented | Residual risk is limited to legacy no-jti tokens until expiry and future revocation-table cleanup automation | Server 1 |
 | P1 | Internal transport protection for JWKS, partner, and east-west sensitive channels | Partially implemented | Credential interception, token interception, trust downgrade, internal MITM on flat/shared networks | Server 1, Server 2, Server 3, Server 4 |
 | P1 | Deployable gateway configuration integrity | Partially implemented | Misconfigured nginx rollout, header stripping, auth breakage, accidental exposure during manual deployment | Server 1 |
 | P2 | Service-account permission segmentation and audit depth | Partially implemented | Over-broad service capabilities, weak forensic visibility into partner reads, harder blast-radius control | Server 1 |
@@ -66,25 +66,35 @@ The following are already implemented in code or documented as current backend p
 
 #### 1. Redis network isolation and authentication
 
-Condition: Partially implemented
+Condition: Implemented
 
-Why it is P0:
+Why it was P0:
 
-- The repo deployment artifact still publishes Redis on the host and the checked-in config does not enforce a password.
-- Existing firewall rules described in the handoff reduce exposure only if they are still correctly applied on the live host.
+- Redis is a shared control-plane dependency for the split services.
+- Without authentication and private binding, compromise or accidental exposure could allow queue tampering, job manipulation, and state poisoning.
 
 Verified evidence:
 
-- `service_factory/services/linkx-control-data/docker-compose.yml` publishes `6379:6379`
-- `service_factory/services/linkx-control-data/redis/redis.conf` binds `0.0.0.0`
-- `service_factory/services/linkx-control-data/redis/redis.conf` only comments that `requirepass` should be set in production
+- Repo now starts Redis with `--requirepass "$${REDIS_PASSWORD:?REDIS_PASSWORD is required}"`.
+- Repo now binds Redis through `${REDIS_BIND_ADDR:-127.0.0.1}:${REDIS_PORT:-6379}:6379`.
+- Repo healthcheck now authenticates with Redis before reporting healthy.
+- Server 2 live verification showed unauthenticated `redis-cli ping` returns `NOAUTH Authentication required`.
+- Server 2 live verification showed authenticated Redis ping returns `PONG`.
+- Server 2 live `docker compose ps` showed Redis published on `172.27.23.106:6379`.
+- Servers 1, 3, and 4 socket-level Redis checks returned `auth=+OK` and `authenticated_ping=+PONG`.
 
-What to fix in this priority:
+Completed hardening:
 
-- Require Redis authentication by default in deployed configs or move to a managed private Redis.
-- Bind Redis only to the required internal interface.
-- Remove host port publishing if local host exposure is unnecessary.
-- Add startup or deployment validation so Redis cannot start in production without an authenticated/private configuration.
+- Redis authentication is required in the deployed compose command.
+- Redis is bound to the private control-data address.
+- API, worker, and cleanup services use authenticated Redis URLs.
+- Redis healthcheck validates the authenticated path.
+
+Residual risk / follow-up:
+
+- Keep the Redis password out of shell history, tickets, and chat logs.
+- Re-check firewall and bind state after future control-data changes.
+- Consider moving Redis to a private-only Docker network or managed private Redis later if the topology changes.
 
 Primary server concerns:
 
@@ -92,51 +102,71 @@ Primary server concerns:
 
 #### 2. Secret redaction in STR analysis and related logs
 
-Condition: Partially implemented
+Condition: Implemented
 
-Why it is P0:
+Why it was P0:
 
-- The codebase has a redaction model, but one analysis path still logs an analyzer payload that contains runtime tool credentials.
-- This turns a hardening improvement elsewhere into a log-exposure problem.
+- Analyzer and cleanup logs can enter journald, support bundles, or log shipping.
+- Any raw credential-shaped payload logging would undermine secret handling even when the runtime path itself is protected.
 
 Verified evidence:
 
-- `service_factory/services/linkx-api/src/api/STR_link_analysis.py` builds `tool_credentials`
-- The same file prints the full analyzer payload before execution
+- Server 1 deployed `service_factory/services/linkx-api/src/api/STR_link_analysis.py` equivalent uses `redact_value(payload)` for the STR analyzer payload log.
+- Server 1 `py_compile` passed for `api/STR_link_analysis.py`.
+- Server 4 deployed cleanup task no longer logs `creds={...}` for Neo4j credential source.
+- Server 4 live cleanup logs now show metadata only: `source=payload database=default password_ref=missing`.
 
-What to fix in this priority:
+Completed hardening:
 
-- Remove raw payload printing from STR analysis routes.
-- Replace it with structured redacted logging if debugging is still needed.
-- Review worker-side equivalents and adjacent analysis/job paths for similar direct prints.
-- Rotate any credentials that may already have been exposed through retained logs.
+- STR analyzer payload logging is redacted.
+- Cleanup Neo4j credential-source logging is metadata-only.
+- Changed files were compile-verified where applicable.
+
+Residual risk / follow-up:
+
+- Historical journald entries still contain the older credential-shaped cleanup log format, although the password value was masked as `***`.
+- Continue P2/P3 work to add automated no-secret-log regression tests.
+- Review adjacent worker and analysis paths before adding new debug logging.
 
 Primary server concerns:
 
 - Server 1
-- Server 3
+- Server 4
 
 #### 3. AI partner least-privilege scoping
 
-Condition: Partially implemented
+Condition: Implemented
 
-Why it is P0:
+Why it was P0:
 
-- The AI service is correctly forced through Server 1 and no longer has direct DB/Neo4j access, which is good.
-- But the current API permission model still gives the AI service broad read visibility across sessions and artifacts rather than session-scoped access.
+- The AI service is correctly forced through Server 1 and no longer has direct DB/Neo4j access.
+- The remaining risk was broad session/artifact visibility if the service token were misused or stolen.
 
 Verified evidence:
 
-- `service_factory/services/linkx-api/src/api/ai_service.py` exposes session, artifact, cleanup-run, and graph metadata reads under `ai:read`
-- `service_factory/services/linkx-api/src/auth/repository.py` seeds an `ai` service account role with broad read permissions
-- `docs/service_split_handoff_and_load_audit.md` states the AI partner should only use Server 1 APIs, which is already the right trust boundary
+- Server 1 `.env` has `LINKX_AI_ALLOW_GLOBAL_READ=false`.
+- Server 1 `.env` has `LINKX_AI_ALLOWED_SESSION_IDS=` empty.
+- Server 1 deployed `api/ai_service.py` includes `LINKX_AI_ALLOW_GLOBAL_READ`, `LINKX_AI_ALLOWED_SESSION_IDS`, and `ai_session_not_allowed`.
+- Server 1 `py_compile` passed for `api/ai_service.py`.
+- Server 1 `ai` service account exists, is active, and has only `ai:read,graph:read,reports:read,session:read`.
+- Server 1 `/auth/service-token` returned a valid token for `client_id=ai`.
+- Server 1 `/ai/sessions/not-a-real-session` returned `404 not_found`, confirming authenticated access works without broad object disclosure.
 
-What to fix in this priority:
+Completed hardening:
 
-- Split `ai:read` into narrower permissions or policy checks.
-- Scope AI reads to explicitly authorized sessions, owners, or request contexts.
-- Add audit records for object-level `/ai/*` reads.
-- Decide whether graph metadata and artifact metadata should require separate permissions.
+- AI read endpoints are gated by session ownership or explicitly allowed session IDs unless global read is intentionally enabled.
+- Global AI read is disabled in production config.
+- AI service-token issuance was verified with the scoped service account.
+
+Frontend / AI alignment:
+
+- No current frontend AI/co-analyst integration exists, so no immediate frontend change is required.
+- Future co-analyst work must store the `ai` service secret only in server-side service config, never in browser-exposed frontend code or build artifacts.
+
+Residual risk / follow-up:
+
+- When the AI/co-analyst service is implemented, verify real owned/allowed sessions return data and unrelated sessions return `403 ai_session_not_allowed`.
+- Consider P2 permission segmentation for artifact metadata, graph metadata, reports, and cleanup-run reads if the AI service needs narrower blast-radius controls.
 
 Primary server concerns:
 
@@ -146,23 +176,33 @@ Primary server concerns:
 
 #### 4. Token revocation and post-logout invalidation
 
-Condition: Partially implemented
+Condition: Implemented
 
-Why it is P1:
+Why it was P1:
 
-- JWT issuance and validation are working, but access tokens remain valid until expiry even after logout or idle timeout.
-- This is a meaningful control gap, but lower urgency than exposed infra or secret leakage.
+- JWT issuance and validation were working, but access tokens previously remained valid until expiry after logout or idle timeout.
+- This created a stolen-token risk window after user-initiated logout, idle expiry, or forced session termination.
 
 Verified evidence:
 
-- `service_factory/services/linkx-api/src/auth/routes.py` explicitly reports that current access tokens are not invalidated on logout or idle timeout
-- `service_factory/services/linkx-api/src/auth/tokens.py` implements stateless HMAC-signed tokens without revocation tracking
+- `service_factory/services/linkx-api/src/auth/tokens.py` now adds a `jti` to user and service tokens.
+- `service_factory/services/linkx-api/src/auth/repository.py` now creates `token_revocations` and checks revoked `jti` values.
+- `service_factory/services/linkx-api/src/auth/routes.py` now revokes the current bearer token on `/auth/logout` and `/auth/idle-timeout`.
+- `verify_access_token()` now rejects revoked tokens, so protected HTTP endpoints and Socket.IO auth both honor revocation.
+- Local `py_compile` passed for `auth/repository.py`, `auth/tokens.py`, `auth/routes.py`, `auth/decorators.py`, and `io_sockets.py`.
 
-What to fix in this priority:
+Completed hardening:
 
-- Add `jti` and token revocation or session-version checks.
-- Separate service-token lifetime policy from browser/user token lifetime policy.
-- Ensure admin disable, logout, and forced lock can revoke or supersede issued tokens.
+- New user and service tokens are uniquely identifiable by `jti`.
+- Logout and idle-timeout insert the current token `jti` into a revocation table.
+- Logout and idle-timeout responses now return `token_invalidated=true` when revocation succeeds.
+- Revocation events are written to the security audit log as `auth.token_revoke`.
+
+Residual risk / follow-up:
+
+- Tokens issued before this change do not contain `jti`; they remain valid until normal expiry to avoid mass logout during rollout.
+- `prune_expired_token_revocations()` exists but should be scheduled or called during maintenance to keep the revocation table small.
+- Consider a future actor-wide token-version model if admins need instant invalidation of all tokens for a user or service account after credential rotation.
 
 Primary server concerns:
 
@@ -316,9 +356,9 @@ Primary server concerns:
 
 Use this order for implementation sessions:
 
-1. Finish all P0 items.
-2. Re-verify the repo and live deployment state for the P0 changes.
-3. Move to P1 only after P0 is closed.
+1. Start P1 now that P0 is closed.
+2. Re-verify the repo and live deployment state after each P1 change.
+3. Keep P0 checks as smoke tests after future deploys.
 4. Treat P2 as hardening depth and resilience work.
 5. Treat P3 as continuous assurance once the higher-priority controls are in place.
 

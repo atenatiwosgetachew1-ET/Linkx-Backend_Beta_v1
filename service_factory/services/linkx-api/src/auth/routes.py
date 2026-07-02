@@ -1,6 +1,7 @@
 import hmac
 import os
 import time
+from datetime import datetime, timezone
 from collections import defaultdict, deque
 from functools import wraps
 
@@ -24,12 +25,13 @@ from .repository import (
     public_actor,
     record_security_event,
     revoke_parent_oauth_session,
+    revoke_token_jti,
     update_service_account,
     update_user,
     upsert_parent_oauth_session,
     upsert_external_user,
 )
-from .tokens import create_access_token, create_service_token, verify_access_token, verify_parent_project_token
+from .tokens import create_access_token, create_service_token, extract_bearer_token, verify_access_token, verify_parent_project_token
 from .parent_jwt import ParentJwtError, verify_parent_access_token
 from .parent_oauth import ParentOAuthError, exchange_authorization_code, fetch_userinfo, revoke_token
 from security.payload_validation import COMMON_SCHEMAS, validate_json_payload, validated_json
@@ -93,6 +95,31 @@ def _record_security_event_safe(event_type, **kwargs):
         return record_security_event(event_type, **kwargs)
     except Exception:
         return None
+
+
+def _revoke_current_bearer_token(actor, reason):
+    token = extract_bearer_token(request.headers.get("Authorization"))
+    payload = verify_access_token(token, check_revocation=False)
+    if not payload:
+        return False, "current_token_unavailable"
+    jti = payload.get("jti")
+    if not jti:
+        return False, "current_token_has_no_jti"
+    expires_at = None
+    try:
+        expires_at = datetime.fromtimestamp(int(payload.get("exp")), timezone.utc)
+    except Exception:
+        expires_at = None
+    revoked = revoke_token_jti(jti, actor=actor, reason=reason, expires_at=expires_at)
+    _record_security_event_safe(
+        "auth.token_revoke",
+        actor=actor,
+        target_type="auth_token",
+        target_id=jti,
+        success=revoked,
+        metadata={"reason": reason, "expires_at": expires_at.isoformat() if expires_at else None},
+    )
+    return revoked, "revoked" if revoked else "revoke_failed"
 
 
 def _idle_policy():
@@ -191,6 +218,7 @@ def logout():
             neo4j_credentials=None,
         ))
     unlocked_locks = unlock_actor_locks(actor=actor, reason=reason)
+    token_invalidated, token_invalidation_detail = _revoke_current_bearer_token(actor, reason)
     parent_revoked = False
     parent_revoke_error = None
     if actor.get("actor_type") == "user":
@@ -221,8 +249,8 @@ def logout():
             "unlocked_count": len(unlocked_locks),
             "parent_session_revoked": parent_revoked,
             "parent_revoke_error": parent_revoke_error,
-            "token_invalidated": False,
-            "token_invalidation_detail": "access tokens are stateless JWTs in the current auth implementation",
+            "token_invalidated": token_invalidated,
+            "token_invalidation_detail": token_invalidation_detail,
         },
     }), 202
 
@@ -248,6 +276,7 @@ def idle_timeout():
                 neo4j_credentials=None,
             ))
     unlocked_locks = unlock_actor_locks(actor=actor, reason=reason)
+    token_invalidated, token_invalidation_detail = _revoke_current_bearer_token(actor, reason)
     return jsonify({
         "message": "success",
         "results": {
@@ -257,8 +286,8 @@ def idle_timeout():
             "cancelled_sessions": len(cancellations),
             "stopped_api_sessions": len(stopped_sessions),
             "unlocked_count": len(unlocked_locks),
-            "token_invalidated": False,
-            "token_invalidation_detail": "access tokens are stateless JWTs in the current auth implementation",
+            "token_invalidated": token_invalidated,
+            "token_invalidation_detail": token_invalidation_detail,
         },
     }), 202
 

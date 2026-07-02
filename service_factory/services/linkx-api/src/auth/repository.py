@@ -226,7 +226,18 @@ def ensure_auth_schema():
                 revoked_at TIMESTAMPTZ
             )
             """)
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS token_revocations (
+                jti TEXT PRIMARY KEY,
+                actor_type TEXT,
+                actor_id TEXT,
+                reason TEXT,
+                expires_at TIMESTAMPTZ,
+                revoked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_parent_oauth_sessions_subject ON parent_oauth_sessions(parent_subject)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_token_revocations_expires_at ON token_revocations(expires_at)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_security_audit_events_created ON security_audit_events(created_at DESC)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_security_audit_events_type_created ON security_audit_events(event_type, created_at DESC)")
             _migrate_analysis_sessions(cur)
@@ -289,6 +300,68 @@ def _column_is_not_nullable(cur, table_name, column_name):
 def _add_column_if_missing(cur, table_name, column_name, column_ddl):
     if not _column_exists(cur, table_name, column_name):
         cur.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_ddl}")
+
+
+def revoke_token_jti(jti, actor=None, reason=None, expires_at=None):
+    if not jti:
+        return False
+    ensure_auth_schema()
+    actor = actor or {}
+    with get_postgres_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO token_revocations (jti, actor_type, actor_id, reason, expires_at)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (jti) DO UPDATE
+                SET reason = EXCLUDED.reason,
+                    expires_at = COALESCE(EXCLUDED.expires_at, token_revocations.expires_at),
+                    revoked_at = NOW()
+                """,
+                (
+                    str(jti),
+                    actor.get("actor_type"),
+                    str(actor.get("id")) if actor.get("id") is not None else None,
+                    str(reason or "token_revoked"),
+                    expires_at,
+                ),
+            )
+        conn.commit()
+    return True
+
+
+def is_token_jti_revoked(jti):
+    if not jti:
+        return False
+    ensure_auth_schema()
+    with get_postgres_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1
+                FROM token_revocations
+                WHERE jti = %s
+                  AND (expires_at IS NULL OR expires_at > NOW())
+                """,
+                (str(jti),),
+            )
+            return cur.fetchone() is not None
+
+
+def prune_expired_token_revocations():
+    ensure_auth_schema()
+    with get_postgres_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM token_revocations
+                WHERE expires_at IS NOT NULL
+                  AND expires_at <= NOW()
+                """
+            )
+            deleted = cur.rowcount
+        conn.commit()
+    return deleted
 
 
 def _seed_roles_permissions(cur):

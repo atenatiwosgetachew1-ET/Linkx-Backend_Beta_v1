@@ -92,6 +92,7 @@ def create_access_token(user):
         "username": user["username"],
         "iat": now,
         "exp": now + TOKEN_MAX_AGE_SECONDS,
+        "jti": str(uuid.uuid4()),
         "issued_at": datetime.now(timezone.utc).isoformat(),
     }
     issuer = _expected_issuer()
@@ -111,6 +112,7 @@ def create_service_token(service):
         "client_id": service["client_id"],
         "iat": now,
         "exp": now + SERVICE_TOKEN_MAX_AGE_SECONDS,
+        "jti": str(uuid.uuid4()),
         "issued_at": datetime.now(timezone.utc).isoformat(),
     }
     issuer = _expected_issuer()
@@ -122,10 +124,23 @@ def create_service_token(service):
     return _jwt_encode(payload)
 
 
-def verify_access_token(token):
+def verify_access_token(token, *, check_revocation=True):
     if not token:
         return None
-    return _jwt_decode(token)
+    payload = _jwt_decode(token)
+    if not payload:
+        return None
+    jti = payload.get("jti")
+    if check_revocation and jti:
+        try:
+            from .repository import is_token_jti_revoked
+
+            if is_token_jti_revoked(jti):
+                return None
+        except Exception:
+            current_app.logger.warning("Token revocation check failed", exc_info=True)
+            return None
+    return payload
 
 
 def extract_bearer_token(auth_header):
