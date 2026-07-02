@@ -8,7 +8,7 @@ from batch_manager.utils.neo4j_utils import (
     Neo4jCredentialConfigError,
     create_neo4j_driver,
     neo4j_database_name,
-    redacted_neo4j_credentials,
+    neo4j_credential_source,
     resolve_neo4j_credentials,
 )
 from linkx_cleanup.artifacts import artifact_root, delete_filesystem_artifact
@@ -59,7 +59,13 @@ def _create_neo4j_driver_with_retry(creds, payload=None):
     attempts = int(payload.get("neo4j_retry_attempts") or os.getenv("LINKX_NEO4J_RETRY_ATTEMPTS", "6"))
     delay = float(payload.get("neo4j_retry_delay_seconds") or os.getenv("LINKX_NEO4J_RETRY_DELAY_SECONDS", "5"))
     resolved = resolve_neo4j_credentials(creds)
-    print(f"[cleanup] Neo4j credential source creds={redacted_neo4j_credentials(resolved)}", flush=True)
+    print(
+        "[cleanup] Neo4j credential source "
+        f"source={neo4j_credential_source(resolved)} "
+        f"database={neo4j_database_name(resolved) or 'default'} "
+        f"password_ref={'present' if resolved.get('password_ref') or resolved.get('neo4j_password_ref') else 'missing'}",
+        flush=True,
+    )
     last_error = None
     for attempt in range(1, max(1, attempts) + 1):
         driver = create_neo4j_driver(resolved)
