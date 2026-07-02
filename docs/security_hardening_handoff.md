@@ -55,7 +55,7 @@ The following are already implemented in code or documented as current backend p
 | P1 | Token revocation and post-logout invalidation | Implemented | Residual risk is limited to legacy no-jti tokens until expiry and future revocation-table cleanup automation | Server 1 |
 | P1 | Internal transport protection for JWKS, partner, and east-west sensitive channels | Implemented | Residual risk is accepted plaintext private east-west transport where TLS is not yet available; monitor with validation script | Server 1, Server 2, Server 3, Server 4 |
 | P1 | Deployable gateway configuration integrity | Implemented | Residual risk is live nginx drift or environment-specific allow-list mistakes during deployment | Server 1 |
-| P2 | Service-account permission segmentation and audit depth | Partially implemented | Over-broad service capabilities, weak forensic visibility into partner reads, harder blast-radius control | Server 1 |
+| P2 | Service-account permission segmentation and audit depth | Implemented | Residual risk is future partner/service endpoints bypassing granular permissions or audit conventions | Server 1 |
 | P2 | Security configuration drift detection | Not implemented | UFW/systemd/compose drift can silently undo hardening without repo visibility | Server 1, Server 2, Server 3, Server 4 |
 | P2 | Backup automation and recovery assurance for hardened state | Partially implemented | Recovery gaps for secrets, artifacts, graph state, or control-plane state during incident response | Server 2, Server 4 |
 | P3 | Continuous security verification in CI/CD | Not implemented | Reintroduction of logging leaks, invalid configs, unsafe defaults, and auth regressions | Server 1, Server 2, Server 3, Server 4 |
@@ -281,18 +281,33 @@ Primary server concerns:
 
 #### 7. Service-account permission segmentation and audit depth
 
-Condition: Partially implemented
+Condition: Implemented
 
-Why it is P2:
+Why it was P2:
 
-- RBAC exists, which is a strong starting point.
-- The remaining work is about refinement: narrower service roles, stronger audit semantics, and better blast-radius control.
+- Service-account RBAC already existed, but AI partner reads were grouped under one broad `ai:read` permission.
+- Broader permissions make blast-radius control harder if a service token is misused or a future partner integration needs only one read surface.
 
-What to fix in this priority:
+Verified evidence:
 
-- Separate AI, reporting, and parent gateway permissions more sharply.
-- Add per-endpoint or per-object audit events for partner/service reads.
-- Review whether graph metadata, reports, session reads, and artifact reads should remain grouped.
+- `service_factory/services/linkx-api/src/auth/repository.py` now seeds granular AI permissions: `ai:session:read`, `ai:artifact:read`, `ai:cleanup:read`, and `ai:graph:metadata:read`.
+- `service_factory/services/linkx-api/src/api/ai_service.py` now requires the granular permission matching each AI endpoint group.
+- AI object reads already record success/failure for session access decisions; artifact and graph metadata result reads now also record count/size-oriented audit metadata.
+
+Completed hardening:
+
+- `ai:read` remains only the base AI service permission used for `/ai/health`.
+- Session listing/detail requires `ai:session:read`.
+- Artifact reads require `ai:artifact:read`.
+- Cleanup-run reads require `ai:cleanup:read`.
+- Graph metadata reads require `ai:graph:metadata:read`.
+- Additional audit events capture artifact read result counts and graph metadata result sizes.
+
+Residual risk / follow-up:
+
+- Existing deployed AI service accounts must be updated once with the new granular permissions.
+- Future partner/service endpoints should follow the same pattern: specific permission plus object-level audit event.
+- If a future AI co-analyst needs narrower scope, remove unused granular permissions instead of reusing broad `ai:read`.
 
 Primary server concerns:
 

@@ -112,6 +112,10 @@ DEFAULT_SERVICE_PERMISSIONS = {
     ],
     "ai": [
         "ai:read",
+        "ai:session:read",
+        "ai:artifact:read",
+        "ai:cleanup:read",
+        "ai:graph:metadata:read",
         "session:read",
         "graph:read",
         "reports:read",

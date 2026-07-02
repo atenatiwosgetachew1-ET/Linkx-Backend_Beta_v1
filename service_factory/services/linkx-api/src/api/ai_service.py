@@ -170,7 +170,7 @@ def ai_health():
 
 
 @ai_service_api.route("/sessions", methods=["GET"])
-@permission_required("ai:read")
+@permission_required("ai:session:read")
 def list_sessions():
     limit = _int_arg("limit", 50, 1, 200)
     offset = _int_arg("offset", 0, 0, 100000)
@@ -206,7 +206,7 @@ def list_sessions():
 
 
 @ai_service_api.route("/sessions/<session_id>", methods=["GET"])
-@permission_required("ai:read")
+@permission_required("ai:session:read")
 def get_session(session_id):
     _info, error = _require_ai_session_access(session_id, "ai.session.read")
     if error:
@@ -234,7 +234,7 @@ def get_session(session_id):
 
 
 @ai_service_api.route("/sessions/<session_id>/artifacts", methods=["GET"])
-@permission_required("ai:read")
+@permission_required("ai:artifact:read")
 def get_session_artifacts(session_id):
     _info, error = _require_ai_session_access(session_id, "ai.artifacts.read")
     if error:
@@ -264,11 +264,12 @@ def get_session_artifacts(session_id):
                 artifact["metadata"] = json.loads(artifact["metadata"])
             except Exception:
                 pass
+    _record_ai_event("ai.artifacts.list", session_id=session_id, success=True, metadata={"count": len(artifacts)})
     return jsonify({"message": "success", "results": {"artifacts": artifacts, "limit": limit, "offset": offset}}), 200
 
 
 @ai_service_api.route("/cleanup-runs", methods=["GET"])
-@permission_required("ai:read")
+@permission_required("ai:cleanup:read")
 def list_cleanup_runs():
     limit = _int_arg("limit", 50, 1, 200)
     offset = _int_arg("offset", 0, 0, 100000)
@@ -329,7 +330,7 @@ def _neo4j_driver_for_session(session_id):
 
 
 @ai_service_api.route("/sessions/<session_id>/graph/metadata", methods=["GET"])
-@permission_required("ai:read")
+@permission_required("ai:graph:metadata:read")
 def graph_metadata(session_id):
     _info, error = _require_ai_session_access(session_id, "ai.graph.metadata.read")
     if error:
@@ -353,13 +354,22 @@ def graph_metadata(session_id):
             ).single()
     finally:
         driver.close()
+    node_count = counts["nodes"] if counts else 0
+    relationship_count = counts["relationships"] if counts else 0
+    relationship_types = counts["relationship_types"] if counts else []
+    _record_ai_event(
+        "ai.graph.metadata.result",
+        session_id=session_id,
+        success=True,
+        metadata={"nodes": node_count, "relationships": relationship_count, "relationship_type_count": len(relationship_types)},
+    )
     return jsonify({
         "message": "success",
         "results": {
             "session_id": str(session_id),
             "session_ids": session_ids,
-            "nodes": counts["nodes"] if counts else 0,
-            "relationships": counts["relationships"] if counts else 0,
-            "relationship_types": counts["relationship_types"] if counts else [],
+            "nodes": node_count,
+            "relationships": relationship_count,
+            "relationship_types": relationship_types,
         },
     }), 200
