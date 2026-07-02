@@ -9,6 +9,8 @@ from cryptography.hazmat.primitives import serialization
 import requests
 from flask import current_app
 
+from .parent_jwt import ParentJwtError, _validate_parent_auth_url
+
 
 class JWKSClient:
     """
@@ -30,9 +32,17 @@ class JWKSClient:
     def _fetch_keys(self) -> Dict[str, Any]:
         """Fetch JWKS from remote endpoint."""
         try:
-            response = requests.get(self.jwks_url, timeout=5)
+            _validate_parent_auth_url(self.jwks_url)
+            response = requests.get(
+                self.jwks_url,
+                headers={"Accept": "application/json", "User-Agent": "linkx-api-parent-jwks/1.0"},
+                timeout=5,
+            )
             response.raise_for_status()
             return response.json()
+        except ParentJwtError:
+            current_app.logger.warning("Rejected unsafe JWKS URL configuration")
+            raise
         except Exception as e:
             current_app.logger.error(f"Failed to fetch JWKS from {self.jwks_url}: {e}")
             raise

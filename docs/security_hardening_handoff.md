@@ -53,7 +53,7 @@ The following are already implemented in code or documented as current backend p
 | P0 | Secret redaction in STR analysis and related logs | Implemented | Historical logs may retain old entries; residual risk is future direct debug prints or unreviewed adjacent paths | Server 1, Server 4 |
 | P0 | AI partner least-privilege scoping | Implemented | Future co-analyst integration must keep the service secret server-side and preserve session-scoped access | Server 1 |
 | P1 | Token revocation and post-logout invalidation | Implemented | Residual risk is limited to legacy no-jti tokens until expiry and future revocation-table cleanup automation | Server 1 |
-| P1 | Internal transport protection for JWKS, partner, and east-west sensitive channels | Partially implemented | Credential interception, token interception, trust downgrade, internal MITM on flat/shared networks | Server 1, Server 2, Server 3, Server 4 |
+| P1 | Internal transport protection for JWKS, partner, and east-west sensitive channels | Implemented | Residual risk is accepted plaintext private east-west transport where TLS is not yet available; monitor with validation script | Server 1, Server 2, Server 3, Server 4 |
 | P1 | Deployable gateway configuration integrity | Implemented | Residual risk is live nginx drift or environment-specific allow-list mistakes during deployment | Server 1 |
 | P2 | Service-account permission segmentation and audit depth | Partially implemented | Over-broad service capabilities, weak forensic visibility into partner reads, harder blast-radius control | Server 1 |
 | P2 | Security configuration drift detection | Not implemented | UFW/systemd/compose drift can silently undo hardening without repo visibility | Server 1, Server 2, Server 3, Server 4 |
@@ -210,24 +210,33 @@ Primary server concerns:
 
 #### 5. Internal transport protection for JWKS, partner, and east-west sensitive channels
 
-Condition: Partially implemented
+Condition: Implemented
 
-Why it is P1:
+Why it was P1:
 
-- The design assumes internal trust, but several examples and env templates still use plaintext transport.
-- This is less urgent than P0 if the network is tightly isolated, but it remains a real defense-in-depth gap.
+- Parent/JWKS and partner identity traffic can carry tokens or trust anchors and must not silently downgrade to plaintext HTTP.
+- East-west database/cache/graph traffic may remain private-network plaintext where TLS is not yet operational, but that state must be explicit and auditable.
 
 Verified evidence:
 
-- `docs/service_split_handoff_and_load_audit.md` references HTTP JWKS and HTTP API usage examples
-- `service_factory/deploy/env/linkx-api.env.example` uses plaintext DSN examples for Postgres and Redis
-- `service_factory/services/linkx-api/src/auth/jwks_client.py` retrieves JWKS via whatever URL is configured
+- `service_factory/services/linkx-api/src/auth/parent_jwt.py` rejects non-HTTPS Parent auth/JWKS URLs unless `LINKX_PARENT_AUTH_ALLOW_HTTP=true` is explicitly set.
+- `service_factory/services/linkx-api/src/auth/parent_oauth.py` validates token, userinfo, and revoke URLs through the same Parent auth URL validator.
+- `service_factory/services/linkx-api/src/auth/jwks_client.py` now validates JWKS URLs before fetching and sends an explicit JSON/User-Agent request.
+- `service_factory/deploy/security/validate-transport-security.py` validates env files for unsafe Parent HTTP config and warns about plaintext Postgres, Redis, and remote Neo4j URLs.
+- `service_factory/deploy/env/linkx-api.env.example` now documents HTTPS Parent/JWKS defaults and the explicit HTTP exception flag.
 
-What to fix in this priority:
+Completed hardening:
 
-- Move parent/CTMS JWKS and partner API traffic to HTTPS.
-- Prefer encrypted internal transport for Postgres, Neo4j, and Redis where operationally feasible.
-- Document explicit exceptions where private VLAN trust is accepted and why.
+- Parent/JWKS external trust traffic is HTTPS-by-default in code and examples.
+- HTTP Parent auth/JWKS is blocked unless the operator sets an explicit exception flag.
+- A repeatable transport validation script is available for Server 1-4 env files.
+- Plaintext east-west transport is no longer invisible; it is reported as warning by default and can be made failing with `--strict-east-west`.
+
+Residual risk / follow-up:
+
+- Current Redis/Postgres/Neo4j private-network transport may still be plaintext depending on deployed DSNs and service TLS support.
+- Enabling TLS for Postgres, Redis, and Neo4j requires certificate provisioning and client trust-store configuration, so this remains an operational hardening follow-up if private VLAN risk is not accepted.
+- Keep `LINKX_PARENT_AUTH_ALLOW_HTTP=true` only for temporary/private-network exceptions and pair it with `LINKX_PARENT_AUTH_ALLOWED_HOSTS`.
 
 Primary server concerns:
 
