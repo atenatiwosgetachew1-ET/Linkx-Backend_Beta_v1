@@ -56,7 +56,7 @@ The following are already implemented in code or documented as current backend p
 | P1 | Internal transport protection for JWKS, partner, and east-west sensitive channels | Implemented | Residual risk is accepted plaintext private east-west transport where TLS is not yet available; monitor with validation script | Server 1, Server 2, Server 3, Server 4 |
 | P1 | Deployable gateway configuration integrity | Implemented | Residual risk is live nginx drift or environment-specific allow-list mistakes during deployment | Server 1 |
 | P2 | Service-account permission segmentation and audit depth | Implemented | Residual risk is future partner/service endpoints bypassing granular permissions or audit conventions | Server 1 |
-| P2 | Security configuration drift detection | Not implemented | UFW/systemd/compose drift can silently undo hardening without repo visibility | Server 1, Server 2, Server 3, Server 4 |
+| P2 | Security configuration drift detection | Implemented | Residual risk is limited to checks not yet encoded in the drift script, such as full firewall policy and off-host monitoring state | Server 1, Server 2, Server 3, Server 4 |
 | P2 | Backup automation and recovery assurance for hardened state | Partially implemented | Recovery gaps for secrets, artifacts, graph state, or control-plane state during incident response | Server 2, Server 4 |
 | P3 | Continuous security verification in CI/CD | Not implemented | Reintroduction of logging leaks, invalid configs, unsafe defaults, and auth regressions | Server 1, Server 2, Server 3, Server 4 |
 
@@ -315,18 +315,31 @@ Primary server concerns:
 
 #### 8. Security configuration drift detection
 
-Condition: Not implemented
+Condition: Implemented
 
 Why it is P2:
 
 - Current hardening depends heavily on systemd, UFW, manual file copies, and operator discipline.
 - That means a secure state can silently drift away from what the repo and handoff describe.
 
-What to fix in this priority:
+Verified evidence:
 
-- Add operational verification scripts for open ports, expected systemd units, env sanity, and deployment paths.
-- Add a repeatable checklist or machine-readable validation for each of the four servers.
-- Track deployed config hashes or versions where practical.
+- `service_factory/deploy/security/verify-linkx-server.py` provides role-specific drift checks for `api`, `control-data`, `worker`, and `graph-maintenance`.
+- The script checks expected deploy paths, systemd units, Redis authentication behavior, API security code markers, nginx gateway installation/health, and cleanup credential-log redaction markers.
+- The script exits non-zero on failing checks and prints a PASS/WARN/FAIL summary suitable for manual handoff or later CI/ops automation.
+
+Completed hardening:
+
+- Added a repeatable machine-readable validation command for each of the four servers.
+- Encoded the already-hardened Redis auth state as a live socket test instead of only checking config text.
+- Encoded API logout revocation, AI granular permissions, and STR redaction as deployed source-code marker checks.
+- Encoded graph-maintenance credential-log redaction as a deployed source-code marker check.
+
+Residual risk / follow-up:
+
+- Firewall/UFW policy and cloud/security-group rules should still be checked with server-specific commands because this repository does not own every network control.
+- The drift script should be expanded as future P2/P3 controls are completed.
+- Consider storing signed config hashes or a deployment manifest if manual server copies remain the primary deployment method.
 
 Primary server concerns:
 
