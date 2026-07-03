@@ -1,10 +1,10 @@
 # LinkX Security Hardening Handoff
 
-Last updated: 2026-07-02
+Last updated: 2026-07-03
 
 ## Purpose
 
-This handoff summarizes the current security posture of the LinkX backend split and groups the remaining hardening work by priority instead of by timeline. It is intended to help the next implementation session pick one priority group at a time and close it fully before moving on.
+This handoff summarizes the current security posture of the LinkX backend split and records the hardening work completed across P0-P3. It is intended to help future implementation sessions understand what changed, what was verified on the live servers, and what residual risks remain.
 
 This document is based on repository evidence from:
 
@@ -25,6 +25,23 @@ Active backend split:
 
 Frontend is separate and talks to Server 1 only.
 
+## Current Completion Snapshot
+
+As of 2026-07-03, the priority-driven hardening track is functionally complete for P0, P1, P2, and P3. The project now has authenticated Redis, scoped AI/service access, token revocation, sensitive-log redaction, deployable gateway validation, off-host backup automation, restore/secret-recovery evidence, drift checks, CI security regression tests, dependency audit, and committed-secret scanning.
+
+Security maturity rating: 7.5/10
+
+Rating rationale:
+
+- The project is now production-defensible and no longer in a soft-target posture.
+- Baseline application, service, backup, and CI controls are implemented and verified.
+- Remaining maturity gaps are mostly operational and infrastructure-level: TLS/mTLS for east-west traffic, stronger centralized or encrypted secret management, representative Neo4j/artifact restore drills, fuller monitoring/alerting, and more policy-managed infrastructure.
+
+Target maturity path:
+
+- 8.5/10: enforce TLS for Postgres/Redis/Neo4j/private API traffic, complete representative restore drills, encrypt off-host backups, and add alerting for failed security checks/backups.
+- 9/10: add mTLS or service identity between backend services, move high-risk secrets into systemd credentials/SOPS/Vault/KMS, automate secret rotation evidence, and manage firewall/deploy policy through auditable IaC.
+
 ## Verified Current Security Strengths
 
 The following are already implemented in code or documented as current backend posture:
@@ -41,7 +58,7 @@ The following are already implemented in code or documented as current backend p
 
 ## Important Assessment Notes
 
-- Findings below are based on repository code, deployment artifacts, and live P0 verification completed on 2026-07-02.
+- Findings below are based on repository code, deployment artifacts, live server verification completed across 2026-07-02 and 2026-07-03, and CI security checks that are now green.
 - Where the existing handoff document says UFW or ops restrictions are already applied, treat those as operational mitigations only if the running servers still match that state.
 - A few issues are already partially mitigated operationally, but still remain fragile because the secure state is not fully encoded into deployment defaults.
 
@@ -57,8 +74,8 @@ The following are already implemented in code or documented as current backend p
 | P1 | Deployable gateway configuration integrity | Implemented | Residual risk is live nginx drift or environment-specific allow-list mistakes during deployment | Server 1 |
 | P2 | Service-account permission segmentation and audit depth | Implemented | Residual risk is future partner/service endpoints bypassing granular permissions or audit conventions | Server 1 |
 | P2 | Security configuration drift detection | Implemented | Residual risk is limited to checks not yet encoded in the drift script, such as full firewall policy and off-host monitoring state | Server 1, Server 2, Server 3, Server 4 |
-| P2 | Backup automation and recovery assurance for hardened state | Partially implemented | Local and off-host backup automation is live; future restore-drill evidence and secret recovery validation remain open | Server 1, Server 2, Server 4 |
-| P3 | Continuous security verification in CI/CD | Implemented | Residual risk is gaps outside the current CI checks, such as dependency scanning, full integration tests, and live restore drills | Server 1, Server 2, Server 3, Server 4 |
+| P2 | Backup automation and recovery assurance for hardened state | Partially implemented | Local and off-host backup automation is live; PostgreSQL restore and managed-secret decrypt proof are verified; representative Neo4j/artifact restore drills remain future evidence items | Server 1, Server 2, Server 4 |
+| P3 | Continuous security verification in CI/CD | Implemented | Residual risk is gaps outside the current CI checks, such as full integration tests, live restore drills, and infrastructure policy checks | Server 1, Server 2, Server 3, Server 4 |
 
 ## Priority Details
 
@@ -305,7 +322,7 @@ Completed hardening:
 
 Residual risk / follow-up:
 
-- Existing deployed AI service accounts must be updated once with the new granular permissions.
+- Existing deployed AI service account has been updated with the new granular permissions; future service accounts must follow the same pattern.
 - Future partner/service endpoints should follow the same pattern: specific permission plus object-level audit event.
 - If a future AI co-analyst needs narrower scope, remove unused granular permissions instead of reusing broad `ai:read`.
 
@@ -373,19 +390,25 @@ Verified evidence:
 - Server 1 (`node-19`) artifact off-host sync to `backup-user@172.20.107.94:/srv/linkx-backups/node-19-artifacts` is configured and verified; systemd backup run completed successfully and the backup server contains `.tar.gz` plus `.sha256` files.
 - Server 2 (`node-20`) PostgreSQL off-host sync to `backup-user@172.20.107.94:/srv/linkx-backups/node-20-postgres` is configured and verified; verifier returned `summary: failures=0 warnings=1` and the backup server contains `.dump` plus `.sha256` files.
 - Server 4 (`node-22`) Neo4j off-host sync to `backup-user@172.20.107.94:/srv/linkx-backups/node-22-neo4j` is configured and verified; verifier returned `summary: failures=0 warnings=1` and the backup server contains `neo4j.dump` plus checksum files.
+- Server 2 PostgreSQL restore drill succeeded from the off-host backup path into isolated database `linkx_restore_test`; checksum verification passed and restored table counts included `users=1`, `jobs=912`, `session_configs=100`, and `managed_secrets=255`.
+- Server 1 managed-secret recovery proof succeeded without printing the secret value: a sample `tool_credentials.password` secret was present, decrypt returned `True`, and plaintext length was verified as 44.
+- Server 4 Neo4j live graph count was `0`, so the current restore proof is structurally useful but not representative of a populated graph.
 
 Completed hardening:
 
 - Added a repeatable backup automation verifier for PostgreSQL, shared artifacts, and Neo4j backup families.
 - Deployed and verified scheduled local backup timers for PostgreSQL, shared artifacts, and Neo4j.
 - Configured and verified off-host backup sync for artifacts, PostgreSQL, and Neo4j to the dedicated backup server.
-- Preserved existing restore-drill evidence for PostgreSQL, artifacts, and the current empty Neo4j graph in `docs/service_split_handoff_and_load_audit.md`.
-- Kept off-host backup target detection as a warning so local scheduled backups can be enabled first without hiding the remaining resilience gap.
+- Captured PostgreSQL restore-drill evidence from off-host backup into isolated restore database `linkx_restore_test`.
+- Captured managed-secret decrypt proof without exposing plaintext.
+- Kept off-host backup target detection as a warning so local scheduled backups can be enabled first without hiding resilience gaps.
 
 What remains open:
 
-- Re-run restore drills after representative data exists in Neo4j and artifacts.
+- Re-run artifact restore into an isolated `/tmp/linkx-restore-tests` directory and record file/directory counts if that evidence was not captured in the same session.
+- Re-run Neo4j restore after representative non-empty graph data exists.
 - Confirm secret recovery material handling remains separate and documented after any secret rotation.
+- Consider encrypting off-host backup archives before or during sync if the backup server becomes multi-user or less trusted.
 
 Primary server concerns:
 
@@ -407,10 +430,11 @@ Why it is P3:
 Verified evidence:
 
 - `.github/workflows/security-checks.yml` now runs security regression checks, dependency auditing, and secret scanning on `main` pushes and pull requests.
-- `tests/security/test_security_regressions.py` covers recursive secret redaction, STR analyzer redacted logging, cleanup Neo4j metadata-only logging, token revocation markers, granular AI permissions, and off-host backup SSH-key handling.
+- `tests/security/test_security_regressions.py` covers recursive secret redaction, STR analyzer redacted logging, cleanup Neo4j metadata-only logging, token revocation markers, granular AI permissions, off-host backup SSH-key handling, and removal of the vulnerable unused `nltk`/`textblob` dependency path.
 - CI compiles deploy security helpers, validates backup/deploy shell script syntax, validates the nginx gateway template, runs the transport-security validator against a strict secure sample env, audits Python requirement files with `pip-audit`, and scans for committed secrets with Gitleaks.
+- GitHub security checks are green for `security-regression`, `dependency-audit`, and `secret-scan` after the nginx validator was made CI-safe and unused vulnerable dependencies were removed.
 - Local verification passed for `python3 -m unittest discover -s tests/security -p 'test_*.py'`.
-- Local verification passed for deploy security helper `py_compile`, backup/deploy `bash -n`, and strict transport-validator smoke testing.
+- Local verification passed for deploy security helper `py_compile`, backup/deploy `bash -n`, gateway validation, and strict transport-validator smoke testing.
 
 Completed hardening:
 
@@ -418,6 +442,7 @@ Completed hardening:
 - Added regression tests for the most important P0/P1/P2 fixes so future edits fail fast if they remove redaction, revocation, AI permission segmentation, or backup SSH-key safety.
 - Added repeatable validation for gateway and transport-security config artifacts.
 - Added dependency vulnerability scanning for all Python requirements files and committed-secret scanning for the repository history.
+- Removed unused `TextBlob` imports and unpinned the unused `nltk`/`textblob` dependency chain because `nltk==3.9.4` had `PYSEC-2026-597` with no fixed version. Current rule behavior is unchanged because sentiment logic already consumes stored `POLARITY`/`SENTIMENT` graph fields.
 
 Residual risk / follow-up:
 
@@ -431,21 +456,31 @@ Primary server concerns:
 - Server 3
 - Server 4
 
-## Recommended Working Order
+## Recommended Operating Rhythm
 
-Use this order for implementation sessions:
+The initial priority implementation is complete. Future security work should now run as continuous assurance rather than a time-based roadmap.
 
-1. Start P1 now that P0 is closed.
-2. Re-verify the repo and live deployment state after each P1 change.
-3. Keep P0 checks as smoke tests after future deploys.
-4. Treat P2 as hardening depth and resilience work.
-5. Treat P3 as continuous assurance once the higher-priority controls are in place.
+1. Run role-specific drift checks after every backend deploy or manual server change.
+2. Keep GitHub `security-regression`, `dependency-audit`, and `secret-scan` green before merging.
+3. Re-run backup verification after backup config, SSH key, retention, or target changes.
+4. Capture restore-drill evidence after meaningful data shape changes, especially for Neo4j and artifacts.
+5. Treat TLS/mTLS, stronger secrets management, off-host backup encryption, and monitoring/alerting as the next maturity candidates rather than emergency blockers.
+
+## Residual Risk Register
+
+| Area | Current state | Remaining risk | Next maturity move |
+|---|---|---|---|
+| East-west transport | Parent/JWKS HTTPS enforcement and transport validator are implemented; private Redis/Postgres/Neo4j may still use plaintext private-network protocols | A private-network observer or compromised host could inspect or tamper with internal traffic | Add TLS for Postgres/Redis/Neo4j and consider mTLS/service identity for backend services |
+| Secrets management | `.env` and managed-secret handling are hardened, redaction works, and secret decrypt proof is verified | Manual `.env` distribution and rotation still depend on operator discipline | Move highest-risk secrets to systemd credentials, SOPS, Vault, KMS, or another auditable secret mechanism |
+| Backup recovery | Scheduled local backups and off-host sync are live; PostgreSQL restore and secret decrypt proof passed | Artifact restore evidence and representative non-empty Neo4j restore evidence still need capture | Repeat isolated restore drills after representative data exists and record evidence in this handoff |
+| Infrastructure policy | Drift scripts verify deployed app/security state on all four roles | Firewall, package baseline, and host policy are not fully managed as code | Add host firewall checks, package update checks, and eventually IaC/policy-managed deployment |
+| Monitoring and response | Security audit events and CI checks exist | Failed backups, failed drift checks, suspicious auth events, and secret-scan failures need stronger alerting paths | Add alert routing and incident-response runbooks tied to the checks already implemented |
 
 ## Session Handoff Guidance
 
 For the next engineering session:
 
-- Start by choosing one row from the priority summary table.
-- Confirm whether the live servers still match the assumptions in `docs/service_split_handoff_and_load_audit.md`.
-- Make the secure state the default in code/config, not just an operational note.
-- After each completed priority item, update this file by changing its `Condition`, evidence notes, and residual risk.
+- Start from the residual risk register rather than the old P0-P3 implementation list.
+- Confirm live servers still match this file by running `verify-linkx-server.py` on Server 1-4 and `verify-linkx-backups.py` on backup-owning roles.
+- Make future secure states default in code/config, not just operational notes.
+- After each completed security change, update this file with evidence, commands used, residual risk, and whether the 7.5/10 maturity rating should change.
