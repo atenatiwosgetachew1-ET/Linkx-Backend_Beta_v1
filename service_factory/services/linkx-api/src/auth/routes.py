@@ -1,7 +1,7 @@
 import hmac
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict, deque
 from functools import wraps
 
@@ -33,7 +33,7 @@ from .repository import (
 )
 from .tokens import create_access_token, create_service_token, extract_bearer_token, verify_access_token, verify_parent_project_token
 from .parent_jwt import ParentJwtError, verify_parent_access_token
-from .parent_oauth import ParentOAuthError, exchange_authorization_code, fetch_userinfo, revoke_token
+from .parent_oauth import ParentOAuthError, exchange_authorization_code, fetch_userinfo, refresh_access_token, revoke_token
 from security.payload_validation import COMMON_SCHEMAS, validate_json_payload, validated_json
 from globals import _session_store
 from batch_manager.processing.session_manager import end_session
@@ -153,6 +153,44 @@ def _stop_api_memory_sessions(session_id, reason):
     return stopped
 
 
+def _parent_access_token_is_fresh(parent_session):
+    expires_at = (parent_session or {}).get("access_token_expires_at")
+    if not expires_at:
+        return False
+    try:
+        parsed = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return False
+    return parsed > datetime.now(timezone.utc) + timedelta(seconds=30)
+
+
+def _refresh_parent_session_access_token(actor, parent_session):
+    refresh_token = (parent_session or {}).get("refresh_token")
+    if not refresh_token:
+        return None
+    token_data = refresh_access_token(refresh_token)
+    upsert_parent_oauth_session(
+        actor.get("id"),
+        (parent_session or {}).get("parent_subject"),
+        refresh_token=token_data.get("refresh_token"),
+        access_token=token_data.get("access_token"),
+        expires_in=token_data.get("expires_in"),
+        metadata={**((parent_session or {}).get("metadata") or {}), "source": "refresh_token"},
+    )
+    return token_data.get("access_token")
+
+
+def _parent_revoke_access_token(actor, parent_session):
+    if not parent_session:
+        return False
+    access_token = parent_session.get("access_token")
+    if not access_token or not _parent_access_token_is_fresh(parent_session):
+        access_token = _refresh_parent_session_access_token(actor, parent_session)
+    if not access_token:
+        return False
+    return revoke_token(access_token)
 
 
 @auth_api.route("/session-policy", methods=["GET"])
@@ -222,11 +260,10 @@ def logout():
     parent_revoked = False
     parent_revoke_error = None
     if actor.get("actor_type") == "user":
-        parent_session = get_parent_oauth_session(actor.get("id"), include_refresh_token=True)
-        refresh_token = (parent_session or {}).get("refresh_token")
-        if refresh_token:
+        parent_session = get_parent_oauth_session(actor.get("id"), include_refresh_token=True, include_access_token=True)
+        if parent_session:
             try:
-                parent_revoked = revoke_token(refresh_token)
+                parent_revoked = _parent_revoke_access_token(actor, parent_session)
             except ParentOAuthError as exc:
                 parent_revoke_error = str(exc)
             revoke_parent_oauth_session(actor.get("id"))
@@ -460,6 +497,7 @@ def _issue_parent_linkx_token(parent_data, token_data=None, source="parent_token
             user.get("id"),
             sub,
             refresh_token=token_data.get("refresh_token"),
+            access_token=token_data.get("access_token"),
             expires_in=token_data.get("expires_in"),
             metadata={
                 "source": source,
