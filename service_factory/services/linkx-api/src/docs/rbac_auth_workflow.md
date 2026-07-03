@@ -62,6 +62,8 @@ auth/routes.py
 Exposes auth endpoints:
 - POST /auth/login
 - POST /auth/service-token
+- POST /auth/exchange
+- POST /api/auth/exchange
 - POST /auth/parent-token
 - GET /auth/me
 - POST /auth/verify
@@ -209,7 +211,7 @@ The parent project can exchange a verified parent identity for a Linkx user toke
 ```text
 Parent project authenticates user
   |
-  | POST /auth/parent-token
+  | POST /auth/exchange or /api/auth/exchange
   | X-Linkx-Parent-Secret
   | username + roles
   v

@@ -106,7 +106,7 @@ Backend behavior:
 - LinkX exchanges the authorization code with the Parent project token endpoint server-side.
 - LinkX sends the PKCE `code_verifier`; the frontend must never send a client secret.
 - LinkX calls Parent project `userinfo` and treats that response as the identity and authorization source.
-- LinkX maps Parent project roles/permissions to LinkX roles, creates or updates the local LinkX user, stores the refresh token encrypted server-side, and returns a LinkX JWT.
+- LinkX maps Parent project Link Analysis permissions to LinkX roles, creates or updates the local LinkX user for session/config ownership, stores Parent project tokens encrypted server-side, and returns a LinkX JWT.
 - Browser clients continue using the LinkX token on later calls as `Authorization: Bearer <linkx_token>`.
 
 Response:
@@ -141,30 +141,23 @@ LINKX_PARENT_OAUTH_CLIENT_SECRET
 LINKX_PARENT_OAUTH_REDIRECT_URI
 LINKX_PARENT_OAUTH_ALLOWED_REDIRECT_URIS
 LINKX_PARENT_JWKS_URL
-LINKX_PARENT_JWT_ISSUER      optional, enable when parent tokens include iss
-LINKX_PARENT_JWT_AUDIENCE    optional, enable when parent tokens include aud
+LINKX_PARENT_JWT_ISSUER      required when parent tokens include iss
+LINKX_PARENT_JWT_AUDIENCE    required when parent tokens include aud
+LINKX_PARENT_REQUIRE_LINKX_PERMISSION=true
+LINKX_PARENT_PERMISSION_READ=LinkAnalysisRead
+LINKX_PARENT_PERMISSION_MANAGE=LinkAnalysisManage
 LINKX_PARENT_FRAME_ORIGIN    optional iframe embedding origin
 ```
 
-Role mapping currently performed by LinkX:
+Authorization mapping currently performed by LinkX:
 
 ```text
-SUPER_ADMIN       -> admin
-HIGHER_OFFICIAL   -> admin
-DIRECTOR          -> manager
-TEAM_LEADER       -> manager
-ANALYST           -> analyst
-DATA_ENCODER      -> viewer
-VIEWER            -> viewer
-RECEIVING_OFFICER -> rejected unless permissions map to a LinkX role
+LinkAnalysisManage -> analyst
+LinkAnalysisRead   -> viewer
+no Link Analysis permission -> rejected
 ```
 
-Permission fallback when no mapped role is present:
-
-```text
-InvestigationCreate or FileUpload -> analyst
-InvestigationRead, SearchGlobal, SearchPersons, SearchTransactions, or FileDownload -> viewer
-```
+Parent project role names are recorded for audit metadata, but they do not grant LinkX access while `LINKX_PARENT_REQUIRE_LINKX_PERMISSION=true`. This keeps LinkX aligned with the Parent project scoped-permission contract and prevents broad role names from creating local access accidentally.
 
 ## Parent Project Direct Token Exchange
 
