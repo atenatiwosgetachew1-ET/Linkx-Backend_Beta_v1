@@ -392,14 +392,23 @@ def _parent_roles_from_claims(parent_data):
 
 def _map_parent_permissions_to_roles(permissions):
     values = {str(permission) for permission in (permissions or []) if permission}
-    if values & {"InvestigationCreate", "FileUpload"}:
+    manage_permission = os.getenv("LINKX_PARENT_PERMISSION_MANAGE", "LinkAnalysisManage")
+    read_permission = os.getenv("LINKX_PARENT_PERMISSION_READ", "LinkAnalysisRead")
+    if manage_permission and manage_permission in values:
         return ["analyst"]
-    if values & {"InvestigationRead", "SearchGlobal", "SearchPersons", "SearchTransactions", "FileDownload"}:
+    if read_permission and read_permission in values:
         return ["viewer"]
     return []
 
 
 def _map_parent_roles_to_linkx(parent_roles, permissions=None):
+    mapped_from_permissions = _map_parent_permissions_to_roles(permissions)
+    if mapped_from_permissions:
+        return mapped_from_permissions
+
+    if str(os.getenv("LINKX_PARENT_REQUIRE_LINKX_PERMISSION", "true")).lower() not in {"0", "false", "no"}:
+        return []
+
     role_mapping = {
         "SUPER_ADMIN": "admin",
         "ADMIN": "admin",

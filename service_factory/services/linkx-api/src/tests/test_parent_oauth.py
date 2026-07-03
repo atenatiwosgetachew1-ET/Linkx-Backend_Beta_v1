@@ -33,7 +33,7 @@ class ParentOAuthExchangeTest(unittest.TestCase):
             "full_name": "Analyst One",
             "role": "ANALYST",
             "is_active": True,
-            "permissions": ["InvestigationRead", "InvestigationCreate"],
+            "permissions": ["LinkAnalysisRead", "LinkAnalysisManage"],
             "entity_id": "entity-1",
         }
         user = {
@@ -80,13 +80,13 @@ class ParentOAuthExchangeTest(unittest.TestCase):
         session_mock.assert_called_once()
 
     def test_parent_role_mapping_is_generic_and_deterministic(self):
-        self.assertEqual(_map_parent_roles_to_linkx(["HIGHER_OFFICIAL"], []), ["admin"])
-        self.assertEqual(_map_parent_roles_to_linkx(["DIRECTOR"], []), ["manager"])
-        self.assertEqual(_map_parent_roles_to_linkx(["ANALYST"], []), ["analyst"])
-        self.assertEqual(_map_parent_roles_to_linkx(["DATA_ENCODER"], []), ["viewer"])
+        self.assertEqual(_map_parent_roles_to_linkx(["HIGHER_OFFICIAL"], []), [])
+        self.assertEqual(_map_parent_roles_to_linkx(["DIRECTOR"], []), [])
+        self.assertEqual(_map_parent_roles_to_linkx(["ANALYST"], []), [])
         self.assertEqual(_map_parent_roles_to_linkx(["RECEIVING_OFFICER"], []), [])
-        self.assertEqual(_map_parent_roles_to_linkx([], ["InvestigationCreate"]), ["analyst"])
-        self.assertEqual(_map_parent_roles_to_linkx([], ["InvestigationRead"]), ["viewer"])
+        self.assertEqual(_map_parent_roles_to_linkx([], ["LinkAnalysisManage"]), ["analyst"])
+        self.assertEqual(_map_parent_roles_to_linkx([], ["LinkAnalysisRead"]), ["viewer"])
+        self.assertEqual(_map_parent_roles_to_linkx(["ANALYST"], ["LinkAnalysisRead"]), ["viewer"])
 
 
 if __name__ == "__main__":
