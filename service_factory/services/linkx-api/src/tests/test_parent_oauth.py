@@ -9,7 +9,7 @@ SRC_ROOT = Path(__file__).resolve().parents[1]
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from auth.routes import auth_api, _map_parent_roles_to_linkx  # noqa: E402
+from auth.routes import auth_api, _map_parent_roles_to_linkx, _parent_revoke_access_token  # noqa: E402
 
 
 class ParentOAuthExchangeTest(unittest.TestCase):
@@ -87,6 +87,45 @@ class ParentOAuthExchangeTest(unittest.TestCase):
         self.assertEqual(_map_parent_roles_to_linkx([], ["LinkAnalysisManage"]), ["analyst"])
         self.assertEqual(_map_parent_roles_to_linkx([], ["LinkAnalysisRead"]), ["viewer"])
         self.assertEqual(_map_parent_roles_to_linkx(["ANALYST"], ["LinkAnalysisRead"]), ["viewer"])
+
+    def test_parent_revoke_uses_fresh_access_token(self):
+        session = {
+            "parent_subject": "550e8400-e29b-41d4-a716-446655440000",
+            "access_token": "fresh-access-token",
+            "refresh_token": "refresh-token",
+            "access_token_expires_at": "2999-01-01T00:00:00+00:00",
+            "metadata": {},
+        }
+
+        with patch("auth.routes.revoke_token", return_value=True) as revoke_mock, \
+             patch("auth.routes.refresh_access_token") as refresh_mock:
+            self.assertTrue(_parent_revoke_access_token({"id": 7}, session))
+
+        revoke_mock.assert_called_once_with("fresh-access-token")
+        refresh_mock.assert_not_called()
+
+    def test_parent_revoke_refreshes_expired_access_token(self):
+        session = {
+            "parent_subject": "550e8400-e29b-41d4-a716-446655440000",
+            "access_token": "expired-access-token",
+            "refresh_token": "old-refresh-token",
+            "access_token_expires_at": "2000-01-01T00:00:00+00:00",
+            "metadata": {"source": "authorization_code"},
+        }
+        refreshed = {
+            "access_token": "fresh-access-token",
+            "refresh_token": "new-refresh-token",
+            "expires_in": 3600,
+        }
+
+        with patch("auth.routes.refresh_access_token", return_value=refreshed) as refresh_mock, \
+             patch("auth.routes.upsert_parent_oauth_session") as session_mock, \
+             patch("auth.routes.revoke_token", return_value=True) as revoke_mock:
+            self.assertTrue(_parent_revoke_access_token({"id": 7}, session))
+
+        refresh_mock.assert_called_once_with("old-refresh-token")
+        session_mock.assert_called_once()
+        revoke_mock.assert_called_once_with("fresh-access-token")
 
 
 if __name__ == "__main__":
