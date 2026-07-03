@@ -81,6 +81,31 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertIn("LINKX_BACKUP_SSH_OPTS", content)
         self.assertIn('rsync_cmd+=(-e "ssh -i ${SSH_KEY} ${SSH_OPTS}")', content)
 
+    def test_vulnerable_nltk_textblob_path_is_not_pinned(self):
+        requirement_files = (
+            "requirements.txt",
+            "service_factory/requirements.txt",
+            "service_factory/services/linkx-api/src/requirements.txt",
+            "service_factory/services/linkx-worker/src/requirements.txt",
+            "service_factory/services/linkx-graph-maintenance/src/requirements.txt",
+        )
+        analysis_files = (
+            "batch_manager/analyzing/LA_rules_script.py",
+            "service_factory/batch_manager/analyzing/LA_rules_script.py",
+            "service_factory/services/linkx-api/src/batch_manager/analyzing/LA_rules_script.py",
+            "service_factory/services/linkx-worker/src/batch_manager/analyzing/LA_rules_script.py",
+        )
+
+        for relative in requirement_files:
+            content = self.read(relative)
+            self.assertNotIn("nltk==", content)
+            self.assertNotIn("textblob==", content)
+
+        for relative in analysis_files:
+            content = self.read(relative)
+            self.assertNotIn("from textblob import TextBlob", content)
+            self.assertNotIn("import nltk", content)
+
 
 if __name__ == "__main__":
     unittest.main()

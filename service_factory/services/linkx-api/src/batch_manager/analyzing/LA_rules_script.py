@@ -1,6 +1,5 @@
 from datetime import datetime, timedelta
 from logger import log_writer
-from textblob import TextBlob
 import re
 from batch_manager.utils.Classified_entities import risk_entities_cypher_entries, trusted_entities_cypher_entries
 
