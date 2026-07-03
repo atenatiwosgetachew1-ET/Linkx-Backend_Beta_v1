@@ -18,6 +18,17 @@ P2 recovery evidence is now mostly proven: PostgreSQL backup/restore passed, art
 
 Current repo-side follow-up: backup timer units and retention/off-host helper scripts are present in the repo but still need deployment to the relevant servers. Treat the uninstalled timer work as ready for ops rollout, not yet live production automation.
 
+## 2026-07-03 HTTPS SSO Rollout Note
+
+- Server 1 API environment was aligned to the HTTPS frontend callback flow at `https://172.27.23.21/auth/callback`.
+- Live frontend origin in use is `https://172.27.23.21`, with LinkX embedded under `https://172.27.23.21/linkxDS2026/`.
+- Server 1 now uses HTTPS Parent project auth endpoints/origins in runtime env, and the API drift check passed after restart.
+- Verified live checks on Server 1 after rollout:
+  - `GET http://127.0.0.1:8000/db/health -> 200`
+  - `GET http://127.0.0.1:8000/auth/me -> 401`
+  - nginx local gateway checks also passed
+- Remaining proof is no longer backend boot/config validation; it is the real browser OAuth round trip plus Parent project-side callback/origin registration and a trusted certificate chain for the LinkX HTTPS host.
+
 ## 2026-06-30 Session Config / Neo4j / Entity Catalog Status
 
 This is the current backend state after the latest API and worker fixes in `service_factory/services/**`.

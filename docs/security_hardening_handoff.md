@@ -59,6 +59,7 @@ The following are already implemented in code or documented as current backend p
 ## Important Assessment Notes
 
 - Findings below are based on repository code, deployment artifacts, live server verification completed across 2026-07-02 and 2026-07-03, and CI security checks that are now green.
+- Server 1 HTTPS Parent project SSO env alignment was also re-verified on 2026-07-03 after restart: API health, auth 401 behavior, nginx gateway checks, and drift checks all passed.
 - Where the existing handoff document says UFW or ops restrictions are already applied, treat those as operational mitigations only if the running servers still match that state.
 - A few issues are already partially mitigated operationally, but still remain fragile because the secure state is not fully encoded into deployment defaults.
 
