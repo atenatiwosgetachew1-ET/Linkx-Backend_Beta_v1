@@ -406,9 +406,9 @@ Why it is P3:
 
 Verified evidence:
 
-- `.github/workflows/security-checks.yml` now runs security regression checks on `main` pushes and pull requests.
+- `.github/workflows/security-checks.yml` now runs security regression checks, dependency auditing, and secret scanning on `main` pushes and pull requests.
 - `tests/security/test_security_regressions.py` covers recursive secret redaction, STR analyzer redacted logging, cleanup Neo4j metadata-only logging, token revocation markers, granular AI permissions, and off-host backup SSH-key handling.
-- CI compiles deploy security helpers, validates backup/deploy shell script syntax, validates the nginx gateway template, and runs the transport-security validator against a strict secure sample env.
+- CI compiles deploy security helpers, validates backup/deploy shell script syntax, validates the nginx gateway template, runs the transport-security validator against a strict secure sample env, audits Python requirement files with `pip-audit`, and scans for committed secrets with Gitleaks.
 - Local verification passed for `python3 -m unittest discover -s tests/security -p 'test_*.py'`.
 - Local verification passed for deploy security helper `py_compile`, backup/deploy `bash -n`, and strict transport-validator smoke testing.
 
@@ -417,10 +417,10 @@ Completed hardening:
 - Added a lightweight CI security gate that does not require production services or secrets.
 - Added regression tests for the most important P0/P1/P2 fixes so future edits fail fast if they remove redaction, revocation, AI permission segmentation, or backup SSH-key safety.
 - Added repeatable validation for gateway and transport-security config artifacts.
+- Added dependency vulnerability scanning for all Python requirements files and committed-secret scanning for the repository history.
 
 Residual risk / follow-up:
 
-- Add dependency vulnerability scanning and secret scanning once the repository's preferred tooling is chosen.
 - Add integration tests for real token revocation behavior against a test database.
 - Add restore-drill automation or evidence capture after representative graph/artifact data exists.
 
