@@ -1,14 +1,18 @@
 # LinkX Service Split Handoff And Load Audit
 
-Last updated: 2026-06-30
+Last updated: 2026-07-03
 
 This document is a handoff summary for a new chat/session. It captures the current four-server LinkX backend split, how the services communicate, how deployments are updated, and what work is still running on each server. The goal of the split is to keep the current working system stable while gradually moving heavy analysis and ingestion work out of the API server and into worker/maintenance services.
 
 ## Latest Status Snapshot
 
-As of 2026-06-25, the P0 security cleanup and main P1 hardening work are functionally complete on the backend side. Runtime secrets were moved out of raw config JSON into encrypted `managed_secrets`, old hardcoded/default credentials were rotated, `.env` files were locked down, legacy parent shared-secret SSO was disabled, request body limits and security audit events were added, and service hardening/UFW restrictions were applied across the four servers.
+As of 2026-07-03, the backend hardening and Parent project SSO implementation are functionally complete on the LinkX side. Runtime secrets were moved out of raw config JSON into encrypted `managed_secrets`, old hardcoded/default credentials were rotated, `.env` files were locked down, legacy parent shared-secret SSO was disabled by default, request body limits and security audit events were added, and service hardening/UFW restrictions were applied across the four servers.
 
-CTMS SSO is implemented as an ES256/JWKS flow. LinkX should verify CTMS access JWTs from `http://172.27.23.213:3001/.well-known/jwks.json`; the PEM public key provided by CTMS is only a fallback verifier key, not a token and not a shared secret. Final end-to-end proof is still waiting on a real short-lived CTMS ES256 access JWT with `kid=ctms-auth-v1`, `token_type=access`, future `exp`, UUID `sub`, and a known CTMS `role`.
+Parent project SSO now supports two backend entry points:
+- preferred browser flow: OAuth authorization code + PKCE through `POST /auth/exchange` (and `POST /api/auth/exchange`)
+- rollback/direct-token flow: `POST /auth/parent-token` with a verified ES256 access JWT
+
+LinkX verifies Parent project access JWTs through JWKS, with the configured PEM public key retained only as a fallback verifier key. The remaining end-to-end dependency is still a real short-lived Parent project ES256 access JWT plus a live OAuth code exchange from the Parent project environment so the final browser flow can be proven against the actual issuer, audience, redirect URI, and userinfo payload.
 
 P2 recovery evidence is now mostly proven: PostgreSQL backup/restore passed, artifact backup/restore passed, Neo4j offline dump/load passed against the current empty graph, Redis was verified disposable, and the `LINKX_SECRET_ENCRYPTION_KEY` recovery copy is kept separately by the developer. The remaining P2 follow-ups are to install/enable the scheduled backup timers, configure an encrypted/off-host backup target, and repeat the Neo4j restore drill after a representative ingestion creates nonzero nodes/relationships.
 
@@ -460,23 +464,24 @@ Deployment touches Server 1 API and Server 3 worker. No database migration is re
 
 ## 2026-06-22 Runtime Config Cleanup Note
 
-Server 1 auth configuration was previously split across `.env`, direct unit `Environment=` lines, and a drop-in with `LINKX_PARENT_SHARED_SECRET`. That duplication caused confusion while testing CTMS ES256 SSO.
+Server 1 auth configuration was previously split across `.env`, direct unit `Environment=` lines, and a drop-in with legacy parent-token variables. That duplication caused confusion while validating the newer Parent project SSO flow.
 
 Current intended configuration:
 - The deployed service unit reads [EnvironmentFile=/opt/linkx-backend-api/.env](../service_factory/services/linkx-api/deploy/systemd/linkx-api.service).
-- CTMS settings should live in one place, preferably `/opt/linkx-backend-api/.env`, with `LINKX_CTMS_JWKS_URL=http://172.27.23.213:3001/.well-known/jwks.json` and `LINKX_CTMS_ORIGIN=http://172.27.23.107`.
-- Runtime code accepts the CTMS variable names and the older parent-JWKS aliases for compatibility, but CTMS naming is preferred going forward.
-- `LINKX_ENABLE_LEGACY_PARENT_TOKEN=false` is the expected production value.
-- `LINKX_PARENT_SHARED_SECRET` was removed from runtime and should stay absent unless a separate, explicitly approved legacy integration is re-enabled.
+- Parent project settings should live in one place, preferably `/opt/linkx-backend-api/.env`.
+- Runtime code still accepts older compatibility aliases for direct-token verification, but the long-term contract should be the generic `LINKX_PARENT_*` OAuth/JWKS variables.
+- `LINKX_ENABLE_LEGACY_PARENT_TOKEN=false` is the expected production value unless a rollback path is explicitly approved.
+- `LINKX_PARENT_SHARED_SECRET` was removed from runtime and should stay absent unless a separate legacy integration is formally re-enabled.
 
 Current behavior:
-- CTMS mode is the primary `/auth/parent-token` path and depends on the CTMS JWKS URL plus CTMS origin configuration.
-- CTMS tokens must be ES256 access JWTs signed by CTMS and verified through JWKS. Placeholder strings, the PEM public key, or the JWKS public key itself correctly return `Invalid parent token` when submitted as `access_token`.
-- Legacy parent-token shared-secret mode only runs when `LINKX_ENABLE_LEGACY_PARENT_TOKEN=true`, which should remain disabled for the CTMS integration.
+- Preferred SSO path is `POST /auth/exchange` or `POST /api/auth/exchange`, where LinkX exchanges an authorization code server-side, calls Parent project `userinfo`, upserts a local LinkX user, stores Parent project tokens encrypted, and returns a normal LinkX JWT.
+- Direct-token fallback remains available at `POST /auth/parent-token` and expects a real ES256 access JWT verified through JWKS or the configured fallback public key. Placeholder strings, the PEM public key, or the JWKS public key itself correctly return `Invalid parent token` when submitted as `access_token`.
+- Legacy shared-secret parent-token mode only runs when `LINKX_ENABLE_LEGACY_PARENT_TOKEN=true`, which should remain disabled in production.
 
 Verification recommendation:
 - Verify the final runtime env from the live process, not only `systemctl show`, because `EnvironmentFile=` values may not appear in `systemctl show linkx-api -p Environment`.
-- Final SSO proof requires a real CTMS access JWT with `alg=ES256`, `kid=ctms-auth-v1`, `token_type=access`, future `exp`, valid UUID `sub`, and CTMS `role`.
+- Final browser SSO proof requires a real Parent project authorization code flow plus working token, userinfo, revoke, issuer, audience, and redirect-uri alignment from the Parent project side.
+- Final direct-token proof requires a real Parent project ES256 access JWT with `alg=ES256`, `token_type=access`, future `exp`, and a valid `sub`.
 
 ## P0 Secret Hygiene Status
 
@@ -500,9 +505,9 @@ Live P0 rotation/completion status as of 2026-06-23:
 2. Neo4j password rotated, API/worker/cleanup env files updated, encrypted config refs rotated, and `neo4j_residue_scan` verified as `succeeded`.
 3. `LINKX_FLASK_SECRET_KEY` rotated; old LinkX-issued sessions/tokens were intentionally invalidated.
 4. Built-in/admin password rotated; new login returned `200 OK` and old default password returned `401 invalid_credentials`.
-5. Stale `LINKX_PARENT_SHARED_SECRET` removed from runtime; `LINKX_ENABLE_LEGACY_PARENT_TOKEN=false` and CTMS ES256/JWKS remains the only parent SSO path.
+5. Stale `LINKX_PARENT_SHARED_SECRET` removed from runtime; `LINKX_ENABLE_LEGACY_PARENT_TOKEN=false` and generic Parent project verification remains the only enabled parent-token path.
 6. Live `.env` files on API, worker, and cleanup servers were set to `root:root` and `chmod 600`.
-7. CTMS SSO remains ES256/JWKS only; final parent end-to-end proof still needs a real CTMS ES256 access JWT from the CTMS team.
+7. Parent project SSO now includes OAuth code exchange plus ES256/JWKS direct-token verification; final end-to-end proof still needs a real Parent project authorization code flow and ES256 access JWT from the Parent project team.
 
 Recommended post-rotation verification:
 
@@ -535,18 +540,18 @@ Systemd hardening:
 Firewall/exposure hardening:
 - Server 2 UFW restricts Postgres `5432` and Redis `6379` to Server 1/API, Server 3/workers, and Server 4/cleanup.
 - Server 4 UFW restricts Neo4j Bolt `7687` to API/worker/cleanup nodes and Neo4j Browser `7474` to the admin workstation.
-- Server 1 UFW restricts API `8000` to frontend/CTMS/dev/admin/AI sources and allows NFS basics to worker/cleanup nodes.
+- Server 1 UFW restricts API `8000` to frontend/Parent project/dev/admin/AI sources and allows NFS basics to worker/cleanup nodes.
 - Post-firewall verification: cleanup `neo4j_residue_scan` succeeded, and Server 3 graph worker service-env Neo4j test returned `1`.
 
 Current security caveats:
-- CORS still includes the active frontend development origin; production target should remove dev-only origins and keep CTMS/frontend origins only.
+- CORS still includes the active frontend development origin; production target should remove dev-only origins and keep only the approved LinkX frontend and Parent project origins.
 - SSH is still allowed broadly to avoid lockout during active hardening. Restrict SSH to VPN/admin IPs once operational access is confirmed.
 - Server 1 NFS/RPC still shows random RPC listener ports. Pin NFS/rpcbind auxiliary ports before tightening Server 1 firewall further.
-- CTMS SSO implementation is ready, but final proof waits for a real CTMS ES256 access JWT.
+- Parent project SSO implementation is ready on the LinkX side, but final proof still waits on real Parent project OAuth exchange and ES256 access-token evidence.
 
-## 2026-06-22 CTMS Deployment Note
+## 2026-06-22 Parent Project Deployment Note
 
-The current Server 1 CTMS rollout failed on startup because the deployed venv did not yet have PyJWT installed. The error surfaced as `ModuleNotFoundError: No module named 'jwt'` while importing [auth/tokens.py](../service_factory/services/linkx-api/src/auth/tokens.py).
+The current Server 1 Parent project rollout initially failed on startup because the deployed venv did not yet have PyJWT installed. The error surfaced as `ModuleNotFoundError: No module named 'jwt'` while importing [auth/tokens.py](../service_factory/services/linkx-api/src/auth/tokens.py).
 
 Use `python -m pip`, not the missing `pip` entrypoint, when installing into the deployed venv:
 
@@ -585,23 +590,31 @@ sudo systemctl stop linkx-api
 sudo systemctl reset-failed linkx-api
 ```
 
-The CTMS environment is now known and should be configured for LinkX API runtime. Prefer JWKS because it supports key rotation:
+Use generic Parent project OAuth/JWKS configuration on Server 1. Prefer JWKS because it supports key rotation:
 
 ```bash
-LINKX_CTMS_JWKS_URL=http://172.27.23.213:3001/.well-known/jwks.json
-LINKX_PARENT_AUTH_BASE_URL=http://172.27.23.213:3001
-LINKX_PARENT_AUTH_ALLOWED_HOSTS=172.27.23.213
-LINKX_PARENT_AUTH_ALLOW_HTTP=true
-LINKX_PARENT_JWT_JWKS_URL=http://172.27.23.213:3001/.well-known/jwks.json
-LINKX_PARENT_JWKS_CACHE_SECONDS=3600
-LINKX_CTMS_ORIGIN=http://172.27.23.107
+LINKX_PARENT_SSO_TOKEN_URL=https://<parent-host>/api/sso/token
+LINKX_PARENT_SSO_USERINFO_URL=https://<parent-host>/api/sso/userinfo
+LINKX_PARENT_SSO_REVOKE_URL=https://<parent-host>/api/sso/revoke
+LINKX_PARENT_OAUTH_CLIENT_ID=<linkx-client-id>
+LINKX_PARENT_OAUTH_CLIENT_SECRET=<server-side-client-secret>
+LINKX_PARENT_OAUTH_REDIRECT_URI=https://<linkx-frontend-host>/auth/callback
+LINKX_PARENT_OAUTH_ALLOWED_REDIRECT_URIS=https://<linkx-frontend-host>/auth/callback
+LINKX_PARENT_JWKS_URL=https://<parent-host>/api/.well-known/jwks.json
+LINKX_PARENT_JWT_JWKS_URL=https://<parent-host>/api/.well-known/jwks.json
+LINKX_PARENT_JWT_ISSUER=<parent-issuer>
+LINKX_PARENT_JWT_AUDIENCE=<parent-audience>
+LINKX_PARENT_AUTH_ALLOWED_HOSTS=<parent-host>
+LINKX_PARENT_AUTH_ALLOW_HTTP=false
+LINKX_PARENT_JWKS_CACHE_SECONDS=300
+LINKX_PARENT_FRAME_ORIGIN=https://<parent-host>
 LINKX_AUTH_TOKEN_SECONDS=1800
 LINKX_ENABLE_LEGACY_PARENT_TOKEN=false
 LINKX_FRAME_OPTIONS=
-LINKX_CONTENT_SECURITY_POLICY=default-src 'self'; frame-ancestors 'self' http://172.27.23.107
+LINKX_CONTENT_SECURITY_POLICY=default-src 'self'; frame-ancestors 'self' https://<parent-host>
 ```
 
-CTMS also provided the matching ES256 public key. This is a public verifier key, not a shared secret and not a token. Keep it only as a fallback if JWKS is unavailable:
+If the Parent project also provides a matching ES256 public key, treat it only as a fallback verifier key. It is not a shared secret and not a token:
 
 ```text
 -----BEGIN PUBLIC KEY-----
@@ -613,10 +626,10 @@ MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEjM98cnQ+950yGc1dtiXRdFj0tsrt
 Fallback file path if needed:
 
 ```bash
-LINKX_PARENT_JWT_PUBLIC_KEY_FILE=/etc/linkx/ctms-es256-public.pem
+LINKX_PARENT_JWT_PUBLIC_KEY_FILE=/etc/linkx/parent-es256-public.pem
 ```
 
-The only remaining CTMS-side dependency is a real CTMS ES256 access JWT for final `/auth/parent-token` verification. Do not test with the public key itself; public keys correctly return `Invalid parent token` when submitted as `access_token`.
+The remaining Parent project dependency is live auth data for final proof: a real authorization code flow for `/auth/exchange` and a real ES256 access JWT for `/auth/parent-token`. Do not test with the public key itself; public keys correctly return `Invalid parent token` when submitted as `access_token`.
 
 
 ## 2026-06-19 Operations Update

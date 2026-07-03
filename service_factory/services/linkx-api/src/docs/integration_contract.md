@@ -338,16 +338,17 @@ Success response:
 }
 ```
 
-## Role Mapping
+## Authorization Mapping
 
-The parent project should map roles like this:
+LinkX currently grants access from Parent project Link Analysis permissions, not broad Parent project role names:
 
 ```text
-superuser -> top-level Linkx operator
-team_leader -> admin
-analyst     -> analyst
-viewer      -> viewer
+LinkAnalysisManage -> analyst
+LinkAnalysisRead   -> viewer
+no Link Analysis permission -> rejected
 ```
+
+Parent project role names may still be returned and are stored in audit metadata, but they do not grant LinkX access while `LINKX_PARENT_REQUIRE_LINKX_PERMISSION=true`.
 
 ## Permission Names
 
@@ -432,12 +433,32 @@ Authorization: Bearer <admin_token>
 
 ## Environment Variables To Share
 
+Server-side LinkX backend values:
+
 ```text
 LINKX_BASE_URL
-LINKX_PUBLIC_API_KEY              optional, only for public STR API protection
-LINKX_AUTH_TOKEN_SECONDS          optional user token lifetime
-LINKX_SERVICE_TOKEN_SECONDS       optional service token lifetime
-LINKX_PARENT_SHARED_SECRET        required for /auth/parent-token
+LINKX_PUBLIC_API_KEY                   optional, only for public STR API protection
+LINKX_AUTH_TOKEN_SECONDS               optional user token lifetime
+LINKX_SERVICE_TOKEN_SECONDS            optional service token lifetime
+LINKX_PARENT_SSO_TOKEN_URL             required for /auth/exchange
+LINKX_PARENT_SSO_USERINFO_URL          required for /auth/exchange
+LINKX_PARENT_SSO_REVOKE_URL            recommended for logout cleanup
+LINKX_PARENT_OAUTH_CLIENT_ID           required for /auth/exchange
+LINKX_PARENT_OAUTH_CLIENT_SECRET       required for /auth/exchange
+LINKX_PARENT_OAUTH_REDIRECT_URI        required unless request always supplies exact redirect
+LINKX_PARENT_OAUTH_ALLOWED_REDIRECT_URIS recommended allow-list
+LINKX_PARENT_JWKS_URL                  required for Parent project token verification
+LINKX_PARENT_JWT_ISSUER                required when parent tokens include iss
+LINKX_PARENT_JWT_AUDIENCE              required when parent tokens include aud
+LINKX_PARENT_REQUIRE_LINKX_PERMISSION  recommended true
+LINKX_PARENT_PERMISSION_READ           default LinkAnalysisRead
+LINKX_PARENT_PERMISSION_MANAGE         default LinkAnalysisManage
+```
+
+Rollback/direct-token route only:
+
+```text
+LINKX_ENABLE_LEGACY_PARENT_TOKEN=false
 ```
 
 For each sibling service:

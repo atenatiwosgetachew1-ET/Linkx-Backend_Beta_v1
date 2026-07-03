@@ -55,6 +55,8 @@ Some legacy public endpoints keep their older response body for compatibility. F
 | --- | --- |
 | `POST /auth/login` | `login` |
 | `POST /auth/service-token` | `service_token` |
+| `POST /auth/exchange` | `parent_oauth_exchange` |
+| `POST /api/auth/exchange` | `parent_oauth_exchange` |
 | `POST /auth/parent-token` | `parent_token` |
 | `POST /auth/verify` | `verify` |
 | `POST /auth/admin/service-accounts` | `service_account_create` |

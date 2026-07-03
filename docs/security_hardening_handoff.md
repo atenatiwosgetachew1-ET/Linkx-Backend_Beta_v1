@@ -51,7 +51,7 @@ The following are already implemented in code or documented as current backend p
 - Request size controls exist for uploads and JSON bodies.
 - Basic security headers are applied at the API layer.
 - Auth routes use rate limiting for login, service-token issuance, and parent-token/OAuth exchange.
-- Parent/CTMS token verification includes explicit algorithm checking and issuer/audience validation hooks.
+- Parent project token verification and OAuth exchange include explicit algorithm checking, issuer/audience validation hooks, rate limiting, and server-side token handling.
 - Sensitive runtime config values are designed to be stored through encrypted secret references rather than raw session config JSON.
 - Security audit event recording exists in the auth layer.
 - Session/job orchestration has already been moved away from pure API process memory in the split architecture.
@@ -287,7 +287,7 @@ Completed hardening:
 Residual risk / follow-up:
 
 - The live server may still use an older `/etc/nginx/sites-*` file; verify before replacing it.
-- Production `/auth/parent-token` allow-list values are environment-specific and must be set on Server 1 if that route is exposed through nginx.
+- Production `/auth/parent-token` allow-list values are environment-specific and must be set on Server 1 if that rollback/direct-token route is exposed through nginx.
 - HTTPS/TLS remains covered by the separate P1 internal/external transport item.
 
 Primary server concerns:

@@ -48,7 +48,7 @@ service_factory/deploy/nginx/validate-linkx-api-gateway.sh \
 | `POST /auth/service-token` | Internal/sibling-service route | Validates client id/secret |
 | `POST /auth/exchange` | Public from approved LinkX frontend origin | Exchanges Parent project authorization code server-side and maps userinfo |
 | `POST /api/auth/exchange` | Public from approved LinkX frontend origin | Compatibility alias for `/auth/exchange` |
-| `POST /auth/parent-token` | Trusted rollback/direct-token route | Validates Parent project ES256 access JWT; legacy shared-secret mode disabled by default |
+| `POST /auth/parent-token` | Trusted rollback/direct-token route | Validates Parent project ES256 access JWT through JWKS or fallback public key; legacy shared-secret mode disabled by default |
 | `GET /auth/me` | Preserve `Authorization` | Validates JWT |
 | `POST /auth/verify` | Preserve `Authorization` | Validates JWT/body token |
 | `/auth/admin/*` | Preserve `Authorization` | Requires `users:manage` |

@@ -100,14 +100,17 @@ A `service` is a sibling microservice calling Linkx programmatically.
 
 ## Human Roles
 
-Parent project role mapping:
+Parent project permissions and roles are handled separately.
+
+Authorization mapping currently enforced by LinkX:
 
 ```text
-superuser -> top-level Linkx operator
-team_leader -> admin
-analyst     -> analyst
-viewer      -> viewer
+LinkAnalysisManage -> analyst
+LinkAnalysisRead   -> viewer
+no Link Analysis permission -> rejected
 ```
+
+Parent project role names are retained in local audit metadata, but they do not grant LinkX access while `LINKX_PARENT_REQUIRE_LINKX_PERMISSION=true`. This keeps LinkX access tied to the Parent project scoped-permission contract.
 
 Local Linkx roles:
 
@@ -204,28 +207,29 @@ Protected Linkx APIs
 ```
 
 
-## Parent Role Exchange Flow
+## Parent OAuth Exchange Flow
 
-The parent project can exchange a verified parent identity for a Linkx user token:
+The Parent project can exchange a verified authorization code for a LinkX user token:
 
 ```text
-Parent project authenticates user
+Frontend sends browser user to Parent project authorize endpoint
   |
+  | Parent project returns code to LinkX callback
   | POST /auth/exchange or /api/auth/exchange
-  | X-Linkx-Parent-Secret
-  | username + roles
+  | code + code_verifier + redirect_uri
   v
 Linkx backend
   |
-  | maps team_leader -> admin
-  | maps analyst -> analyst
-  | maps viewer -> viewer
-  | upserts local user + role assignment
+  | exchanges code server-side with Parent project token endpoint
+  | validates returned access token through JWKS rules
+  | calls Parent project userinfo
+  | maps LinkAnalysisManage/LinkAnalysisRead permissions
+  | upserts local user + role assignment + encrypted parent session
   v
 Returns Linkx HS256 JWT user token
 ```
 
-This completes the role mapping mechanism without requiring the parent project to share user passwords with Linkx.
+This completes the SSO bridge without requiring the Parent project to share user passwords or client secrets with the browser.
 
 ## Service-To-Service Flow
 
@@ -295,15 +299,15 @@ last_seen_at
 
 ```text
                   +----------------------+
-                  |      Parent App      |
-                  | team_leader/analyst  |
+                  |   Parent project      |
+                  |   authorized user     |
                   +----------+-----------+
                              |
-                             | mapped user role
+                             | auth code + PKCE
                              v
-+----------------+    POST /auth/login     +----------------------+
++----------------+  POST /auth/exchange   +----------------------+
 | Frontend/GW    | -----------------------> | Linkx Backend Auth   |
-| human user     |                          | auth/routes.py       |
+| human user     |  code + verifier        | auth/routes.py       |
 +-------+--------+                          +----------+-----------+
         |                                              |
         | Authorization: Bearer user_token             |

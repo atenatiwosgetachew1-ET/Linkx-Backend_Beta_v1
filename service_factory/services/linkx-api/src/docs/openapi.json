@@ -38,11 +38,6 @@
         "scheme": "bearer",
         "bearerFormat": "JWT"
       },
-      "parentSecret": {
-        "type": "apiKey",
-        "in": "header",
-        "name": "X-Linkx-Parent-Secret"
-      },
       "publicApiKey": {
         "type": "apiKey",
         "in": "header",
@@ -218,30 +213,34 @@
       },
       "ParentTokenRequest": {
         "type": "object",
+        "properties": {
+          "access_token": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ParentOAuthExchangeRequest": {
+        "type": "object",
         "required": [
-          "username",
-          "roles"
+          "code",
+          "code_verifier"
         ],
         "properties": {
-          "username": {
+          "code": {
             "type": "string"
           },
-          "display_name": {
+          "code_verifier": {
             "type": "string"
           },
-          "roles": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "enum": [
-                "superuser",
-                "team_leader",
-                "analyst",
-                "viewer"
-              ]
-            }
+          "redirect_uri": {
+            "type": "string"
           }
-        }
+        },
+        "additionalProperties": false
       },
       "VerifyRequest": {
         "type": "object",
@@ -621,17 +620,180 @@
         }
       }
     },
+    "/auth/exchange": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Exchange Parent project authorization code for Linkx JWT",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ParentOAuthExchangeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/exchange": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Compatibility alias for Parent project OAuth exchange",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ParentOAuthExchangeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/auth/parent-token": {
       "post": {
         "tags": [
           "Auth"
         ],
-        "summary": "Exchange trusted parent identity for Linkx JWT",
-        "security": [
-          {
-            "parentSecret": []
-          }
-        ],
+        "summary": "Exchange Parent project access JWT for Linkx JWT",
         "requestBody": {
           "required": true,
           "content": {
