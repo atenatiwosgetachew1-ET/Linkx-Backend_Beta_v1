@@ -97,7 +97,7 @@ Request:
 {
   "code": "<authorization-code-from-parent-project>",
   "code_verifier": "<pkce-code-verifier>",
-  "redirect_uri": "http://172.27.23.21/auth/callback"
+  "redirect_uri": "https://172.27.23.21/auth/callback"
 }
 ```
 
