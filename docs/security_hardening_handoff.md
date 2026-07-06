@@ -457,6 +457,61 @@ Primary server concerns:
 - Server 3
 - Server 4
 
+## Server 1 Stress Test Handoff
+
+This section records the current load-testing snapshot for Server 1 so future sessions can separate real capacity issues from auth or throttle noise.
+
+### Server 1 Specification
+
+- Host: `node-19`
+- Role: `linkx-api` Flask API / RBAC / Socket service
+- Address: `172.27.23.95`
+- CPU: `4 vCPU`
+- RAM: `8 GB`
+- Storage: `290 GB`
+
+### Stress Test Setup
+
+- Runner: external desktop machine on the same network
+- Tool: `k6`
+- Target: `http://172.27.23.95:8000`
+- Paths exercised:
+  - `GET /db/health`
+  - `POST /auth/login`
+  - `POST /init`
+- Test focus: validate authenticated API behavior under concurrent traffic without exposing the login throttle as the only signal
+
+### Latest Clean Result
+
+The last clean run used valid login values and showed:
+
+- `vus_max`: `20`
+- `http_req_failed`: `0.00%`
+- `http_req_duration p(95)`: `3.68s`
+- `http_req_duration avg`: `2.05s`
+- `iteration_duration p(95)`: `7.08s`
+- `checks_succeeded`: `100.00%`
+- `checks_failed`: `0.00%`
+- `health`, `login`, and `init` all returned successful responses
+
+### Interpretation
+
+- Server 1 is functionally healthy at this load because the login and init flow completed successfully.
+- Performance is not yet within the target latency envelope because `p95=3.68s` exceeds the current `1.5s` threshold.
+- This means the current limiting factor is response time under concurrency, not request correctness.
+
+### Practical Operating Range
+
+- Comfortable baseline: `10-15 VUs`
+- Useful stress check: `20 VUs`
+- Above `20 VUs`, response latency rises enough that the API becomes noticeably slow for interactive use
+
+### Test Notes
+
+- Do not use the login rate limiter as the main stress signal.
+- If a future run reintroduces login failures, verify the live `linkx-api` environment file and rate-limit settings before treating the result as a capacity regression.
+- After each test, restore any temporary auth or rate-limit changes back to the hardened production values.
+
 ## Recommended Operating Rhythm
 
 The initial priority implementation is complete. Future security work should now run as continuous assurance rather than a time-based roadmap.

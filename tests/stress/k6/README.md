@@ -1,35 +1,54 @@
-# LinkX K6 Stress Starter
+# LinkX K6 Stress Suite
 
-This folder contains a minimal concurrent-load simulation for Server 1.
+These scripts are intentionally split by behavior so we can tell auth noise, control-plane cost, and heavier search/dataframe work apart.
 
-Current script:
+## Scripts
 
 - `concurrent_api_mix.js`
+  - Baseline auth + init loop
+  - Good for a quick mixed smoke check
+  - Not ideal once login throttling becomes the main signal
 
-It exercises:
+- `server1_session_control_plane.js`
+  - Logs in once in `setup()` and reuses the token
+  - Exercises `/auth/me`, `/auth/verify`, `/workspace/layout`, and `/auth/preferences`
+  - Optional write mode can update workspace layout and preferences
 
-- `GET /db/health`
-- `POST /auth/login`
-- `POST /init`
+- `server1_graph_routes.js`
+  - Logs in once in `setup()` and reuses the token and session id
+  - Exercises `/graph_link` and `/get_graph`
+  - Optional unlink mode can toggle the graph link path
 
-The script is intentionally narrow so you can validate concurrency effects on the API/control plane before adding heavier worker-backed routes.
+- `server1_str_analysis.js`
+  - Logs in once in `setup()` and reuses the token and session id
+  - Exercises `/api/STR_link_analysis`
+  - Measures the configured search/dataframe/Neo4j path as the server is actually deployed
+  - If the search value does not match live data, you may see `Not found!`; that still tells you the route is healthy, but it does not measure the full downstream pipeline
 
 ## Required Inputs
 
-Set these environment variables before running:
+Set these for all scripts:
 
 - `BASE_URL`
 - `LINKX_USERNAME`
 - `LINKX_PASSWORD`
 
-Optional:
+Optional common inputs:
 
 - `K6_VUS`
 - `K6_DURATION`
 - `THINK_TIME_MS`
-- `ENABLE_INIT`
 
-## Example Run
+Route-specific optional inputs:
+
+- `ENABLE_WRITE` for `server1_session_control_plane.js`
+- `ENABLE_UNLINK` for `server1_graph_routes.js`
+- `GRAPH_RELATIONSHIP` for `server1_graph_routes.js`
+- `STR_VALUE`, `STR_DATE`, `STR_PUBLIC_API_KEY`, `ACCEPT_NOT_FOUND` for `server1_str_analysis.js`
+
+## Example Runs
+
+Baseline mixed smoke test:
 
 ```bash
 k6 run \
@@ -41,31 +60,57 @@ k6 run \
   tests/stress/k6/concurrent_api_mix.js
 ```
 
+Control-plane test:
+
+```bash
+k6 run \
+  -e BASE_URL=http://172.27.23.95:8000 \
+  -e LINKX_USERNAME=<username> \
+  -e LINKX_PASSWORD=<password> \
+  -e K6_VUS=20 \
+  -e K6_DURATION=5m \
+  tests/stress/k6/server1_session_control_plane.js
+```
+
+Graph route test:
+
+```bash
+k6 run \
+  -e BASE_URL=http://172.27.23.95:8000 \
+  -e LINKX_USERNAME=<username> \
+  -e LINKX_PASSWORD=<password> \
+  -e K6_VUS=20 \
+  -e K6_DURATION=5m \
+  tests/stress/k6/server1_graph_routes.js
+```
+
+STR search/dataframe test:
+
+```bash
+k6 run \
+  -e BASE_URL=http://172.27.23.95:8000 \
+  -e LINKX_USERNAME=<username> \
+  -e LINKX_PASSWORD=<password> \
+  -e STR_VALUE=<known-good-account-number> \
+  -e STR_PUBLIC_API_KEY=<if-required> \
+  -e K6_VUS=10 \
+  -e K6_DURATION=5m \
+  tests/stress/k6/server1_str_analysis.js
+```
+
 ## What To Watch
 
-In Prometheus or Grafana, watch:
+Watch both response quality and server pressure:
 
+- `http_req_failed`
+- `http_req_duration`
 - `node_load1`
-- `100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))`
-- `rate(node_network_receive_bytes_total[5m])`
-- `rate(node_network_transmit_bytes_total[5m])`
+- CPU busy percentage
+- memory used percentage
+- network receive/transmit bytes
 
-Once Prometheus can scrape the LinkX API metrics directly, add:
+## Honest Notes
 
-- `rate(linkx_api_requests_total[5m])`
-- `linkx_api_requests_in_progress`
-- `histogram_quantile(0.95, sum(rate(linkx_api_request_duration_seconds_bucket[5m])) by (le, route))`
-
-## Suggested Test Levels
-
-Start small and step up:
-
-1. `K6_VUS=5`, `K6_DURATION=1m`
-2. `K6_VUS=20`, `K6_DURATION=5m`
-3. `K6_VUS=50`, `K6_DURATION=10m`
-
-If login rate limiting becomes the dominant signal, either:
-
-- lower VUs, or
-- use a longer think time, or
-- split health-only and authenticated tests into separate runs.
+- Do not use `/auth/login` in a hot loop if login throttling is the thing you want to measure separately.
+- For the STR route, a `Not found!` response is not the same as a broken endpoint; it only means the search term did not match live data.
+- If you want to measure the full dataframe/Neo4j path, use a known-good value from the real dataset and the deployment settings currently live on Server 1.
