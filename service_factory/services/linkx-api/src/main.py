@@ -2,7 +2,7 @@ import eventlet
 import eventlet.wsgi
 eventlet.monkey_patch()
 
-from flask import Flask, request, jsonify, session, render_template, current_app
+from flask import Flask, request, jsonify, session, render_template, current_app, g
 from flask_socketio import SocketIO, emit
 
 import os
@@ -56,6 +56,17 @@ from security.payload_validation import (
     validate_uploaded_files,
     validated_json,
 )
+from observability.metrics import (
+    metrics_enabled,
+    metrics_response,
+    metrics_token,
+    normalize_route,
+    observe_request,
+    request_in_progress_dec,
+    request_in_progress_inc,
+    request_started,
+    should_track_request,
+)
 import globals #Globally used by multible pages (functions and variables) #Contains the front end url
 
 
@@ -89,6 +100,9 @@ app.register_blueprint(ai_service_api, url_prefix="/ai")
 
 @app.after_request
 def apply_security_headers(response):
+    if getattr(g, "_metrics_track_request", False):
+        observe_request(g._metrics_method, g._metrics_route, response.status_code, g._metrics_started_at)
+        request_in_progress_dec(g._metrics_method, g._metrics_route)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     frame_options = os.getenv("LINKX_FRAME_OPTIONS")
     if frame_options:
@@ -143,6 +157,19 @@ def enforce_request_body_size():
 def internal_server_error(exc):
     current_app.logger.exception("unhandled API error")
     return jsonify({"message": "internal_server_error"}), 500
+
+
+@app.before_request
+def begin_request_metrics():
+    g._metrics_track_request = False
+    if not should_track_request(request):
+        return None
+    g._metrics_track_request = True
+    g._metrics_method = request.method
+    g._metrics_route = normalize_route(request)
+    g._metrics_started_at = request_started()
+    request_in_progress_inc(g._metrics_method, g._metrics_route)
+    return None
 
 
 def _permission_denied(permission):
@@ -698,6 +725,18 @@ def db_health():
     except Exception as e:
         current_app.logger.warning("PostgreSQL health check failed: %s", e)
         return jsonify({'status': 'error'}), 500
+
+@app.route('/metrics', methods=['GET'])
+def prometheus_metrics():
+    if not metrics_enabled():
+        return jsonify({"message": "not_found"}), 404
+    expected_token = metrics_token()
+    if expected_token:
+        presented_token = request.headers.get("X-Linkx-Metrics-Token", "").strip()
+        if presented_token != expected_token:
+            return jsonify({"message": "forbidden"}), 403
+    return metrics_response()
+
 
 @app.route('/workspace/layout', methods=['GET'])
 @auth_required

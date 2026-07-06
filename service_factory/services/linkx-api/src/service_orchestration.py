@@ -2,6 +2,7 @@ import json
 import os
 
 from batch_manager.utils.neo4j_utils import credentials_for_cleanup
+from observability.metrics import record_job_enqueue
 
 
 def get_database_url():
@@ -93,6 +94,7 @@ def enqueue_worker_job(queue_name, job_type, session_id=None, run_id=None, paylo
             )
             row = cur.fetchone()
         conn.commit()
+    record_job_enqueue(queue_name, job_type)
     return {
         "job_id": row[0],
         "status": row[1],
