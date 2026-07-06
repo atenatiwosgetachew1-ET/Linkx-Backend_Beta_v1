@@ -1,7 +1,7 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 
-const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:8000';
+const BASE_URL = __ENV.BASE_URL || 'http://172.27.23.95:8000';
 const LOGIN_PATH = __ENV.LOGIN_PATH || '/auth/login';
 const INIT_PATH = __ENV.INIT_PATH || '/init';
 const HEALTH_PATH = __ENV.HEALTH_PATH || '/db/health';
