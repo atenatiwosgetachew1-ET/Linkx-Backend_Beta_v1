@@ -1687,18 +1687,15 @@ def live_batch_files():
     if action_id == "search":
         value = data.get("value", {})
         storage_ip = load_temp_config("active_storage_address",session_id)
-        strict_mood = bool(value.get("strict_mood", False))
-        search_column = value.get("search_column", "transactionid")
-        current_app.logger.info("search request session_id=%s strict=%s hybrid=%s column=%s limit=%s offset=%s async=%s", session_id, strict_mood, bool(value.get("hybrid", False)), search_column, value.get("limit", 50), value.get("offset", 0), _async_search_jobs_enabled())
         payload = {
             "id": "search",
             "keyword": value.get("keyword", ""),
             "date": value.get("date") or None,
             "offset": value.get("offset", 0),
             "limit": value.get("limit", 50),
-            "search_column": search_column, #falback to 'transaction id'
+            "search_column": value.get("search_column", "transactionid"), #falback to 'transaction id'
             "hybrid": value.get("hybrid", False),
-            "strict": strict_mood,
+            "strict": value.get("strict_mood", False),
             "storage": storage_ip,
             "session_id": data.get("session_id"),
         }
@@ -1726,7 +1723,6 @@ def live_batch_files():
 
         # delegate working logic to batch_data_manager
         result = batch_data_manager(payload)
-        current_app.logger.info("search completed session_id=%s result_type=%s", session_id, type(result).__name__ if result is not None else "None")
         if result is None:
             return jsonify({
                 "results": 0,

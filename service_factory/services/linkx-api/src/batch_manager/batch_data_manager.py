@@ -617,7 +617,6 @@ def batch_data_manager(payload):
         search_columns_elastic = payload.get("search_column") #Single column, or configured list for fuzzy search
         search_columns_hive = "" #Multi columns
         date_column = load_temp_config("date_column",session_id)  
-        print("[search] request", {"session_id": session_id, "strict": bool(strict), "hybrid": bool(hybrid), "keyword_len": len(str(keyword or "")), "offset": offset, "limit": limit, "search_columns_elastic": search_columns_elastic, "date_column": date_column}, flush=True)
         if hybrid and not strict and search_columns_elastic in (None, "", "transactionid"):
             search_columns_elastic = load_temp_config("search_columns_fuzzy", session_id) or search_columns_elastic
         #-----------------------------------------------------------------------
@@ -636,7 +635,6 @@ def batch_data_manager(payload):
                 search_columns_hive = load_temp_config("search_columns_fuzzy",session_id) 
             #--------------------------------------------------------------------------            
             API_URL = _elastic_api_url(session_id, api_search_endpoint, storage_address)
-            print("[search] resolved endpoint", {"session_id": session_id, "strict": bool(strict), "api_search_endpoint": api_search_endpoint, "api_url": API_URL, "search_columns_elastic": search_columns_elastic, "search_columns_hive": search_columns_hive}, flush=True)
             #--------------------------------------------------------------------------            
             #Hive payloads
             storage_database= load_temp_config("active_storage_database",session_id)
@@ -649,7 +647,6 @@ def batch_data_manager(payload):
             #--------------------------------------------------------------------------            
             #print("search params:","keyword:",keyword,"date:",date,"offset:",offset,"limit:",limit,"hybrid:",hybrid,"strict:",strict,"api_search_endpoint:",api_search_endpoint,"search_columns_elastic:",search_columns_elastic,"search_columns_hive:",search_columns_hive)
             response = es_keyword_search(action_id, API_URL, keyword, search_columns_elastic, strict, date_column, date, limit=limit, offset=offset) #Overrides to hive (Result out of bound)        
-            print("[search] response summary", {"session_id": session_id, "strict": bool(strict), "result_type": type(response).__name__, "result_keys": sorted(response.keys()) if isinstance(response, dict) else None, "result_count": len(response.get("results") or []) if isinstance(response, dict) and isinstance(response.get("results"), list) else None, "has_more": response.get("has_more") if isinstance(response, dict) else None}, flush=True)
             print("es_response:", redact_value(response))
         else:#Staric Row files search
             normalized_keyword = str(keyword or "").strip()
