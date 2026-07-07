@@ -386,7 +386,7 @@
             <div class="row"><span>15</span><div class="bar-track"><div class="bar bad" style="width:100%"></div></div><span>2.03s</span></div>
           </div>
         </div>
-        <div class="note-box">This pass validated the fresh-session graph flow with `/connect_to_tool` included. Earlier worker failures were caused by missing session `tool_credentials`, not by pure worker collapse.</div>
+        <div class="callout good">This pass reflects the intended fresh-session graph flow with `/connect_to_tool` included before the worker-backed graph requests.</div>
       </article>
 
       <article class="panel server">
@@ -425,6 +425,22 @@
         </div>
         <div class="callout good">Network posture remained tight: `7687` limited to Servers 1, 3, and 4; `7474` limited to the admin workstation.</div>
       </article>
+    </section>
+
+    <section class="panel server" style="margin-top:16px;">
+      <div class="server-top">
+        <div>
+          <h2>Remarks</h2>
+          <div class="sub">Context notes kept separate from the main result cards.</div>
+        </div>
+        <div class="badge good">Notes Only</div>
+      </div>
+      <div class="mini-grid">
+        <div class="note-box">Server 1 STR figures are recorded for completeness, but the STR linking path is not available in the deployed environment, so those numbers are not a valid capacity benchmark.</div>
+        <div class="note-box">Server 3 and Server 4 graph tests were run with the connect-tool step included so the session setup matched the intended product flow.</div>
+        <div class="note-box">Server 2 results are protocol-level database benchmarks, so they should be read differently from the API and graph-route VU ladders.</div>
+        <div class="note-box">Server 4 cleanup is operationally validated and documented, but its sustained burst-drain ceiling is still a future deep benchmark if needed.</div>
+      </div>
     </section>
 
     <div class="foot">

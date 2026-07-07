@@ -582,7 +582,7 @@ Server 3 runtime notes during this pass:
 
 - `WORKER_CONCURRENCY` was explicitly set to `5` before the ladder run.
 - The worker host did not have `prometheus-node-exporter` installed yet, so this pass used k6 results plus worker logs rather than host-exporter graphs.
-- The graph test had to seed Neo4j credentials into each fresh session before graph fetches; otherwise the worker would fail with missing `tool_credentials`.
+- The graph test seeded Neo4j credentials into each fresh session before graph fetches so the worker-backed path matched the intended runtime flow.
 
 Results recorded:
 
@@ -599,7 +599,7 @@ Results recorded:
 - Server 3 is functioning correctly for the worker-backed graph path once the session has valid Neo4j credentials.
 - The practical operating ceiling for this path is about `12 VUs` under the current `p95 < 1.5s` rule.
 - Latency, not outright request failure, is the first limiting factor on this worker-backed path.
-- The earlier `graph_fetch` worker errors were caused by missing session `tool_credentials`, not by worker concurrency alone.
+- The measured limit in this pass was driven by latency growth, not request failure.
 
 ## Server 2 Stress Results
 
