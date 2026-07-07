@@ -543,9 +543,98 @@ The STR script also reused one login and one session id per run, but the current
 | 19 | 1.54 s | 99.72% | Same limitation and threshold crossed |
 | 20 | 1.61 s | 99.72% | Same limitation and threshold crossed |
 
+## Server 3 Stress Results
+
+Server 3 was validated through the worker-backed graph path while Server 1 remained the frontend/API entrypoint. The stress script now logs in, creates a fresh session, connects Neo4j into that same session with `/connect_to_tool`, then exercises `/graph_link` and `/get_graph`. That makes this section a direct check of the live Server 3 graph-worker path rather than a pure API-only graph fetch.
+
+### Server 3 Specification
+
+- Host: `node-21`
+- Role: `linkx-worker`
+- Address: `172.27.23.18`
+- Runtime: Python venv + systemd
+- Queues: `ingestion`, `dataframe`, `analysis`, `graph`
+
+### Worker Surface And Paths
+
+Server 3 is not a browser-facing API host, so it does not have a public route list like Server 1. Its practical stress surface in this pass was:
+
+- Server 1 `POST /auth/login`
+- Server 1 `POST /init`
+- Server 1 `POST /connect_to_tool`
+- Server 1 `POST /graph_link`
+- Server 1 `POST /get_graph`
+- Server 3 worker queue consumption for graph jobs
+- Server 3 to Server 2 control-data access on `5432` and `6379`
+- Server 3 to Server 4 Neo4j Bolt access on `7687`
+
+### Stress Setup
+
+- Runner: external desktop machine on the same network
+- Tool: `k6`
+- Entry target: `http://172.27.23.95:8000`
+- Worker setting used during the final ladder: `WORKER_CONCURRENCY=5`
+- Validation signals: k6 output plus Server 3 worker logs
+
+### Worker-Backed Graph Results
+
+Server 3 runtime notes during this pass:
+
+- `WORKER_CONCURRENCY` was explicitly set to `5` before the ladder run.
+- The worker host did not have `prometheus-node-exporter` installed yet, so this pass used k6 results plus worker logs rather than host-exporter graphs.
+- The graph test had to seed Neo4j credentials into each fresh session before graph fetches; otherwise the worker would fail with missing `tool_credentials`.
+
+Results recorded:
+
+| VUs | p95 latency | Failure rate | Notes |
+|---|---:|---:|---|
+| 5 | 585.43 ms | 0.00% | Healthy baseline with fresh session + Neo4j connect step |
+| 10 | 1.18 s | 0.00% | Still within threshold |
+| 12 | 1.36 s | 0.00% | Highest passing point under the current `1.5s` threshold |
+| 13 | 1.52 s | 0.00% | First threshold crossing |
+| 15 | 2.03 s | 0.00% | Clear overload signal for latency |
+
+### Readout
+
+- Server 3 is functioning correctly for the worker-backed graph path once the session has valid Neo4j credentials.
+- The practical operating ceiling for this path is about `12 VUs` under the current `p95 < 1.5s` rule.
+- Latency, not outright request failure, is the first limiting factor on this worker-backed path.
+- The earlier `graph_fetch` worker errors were caused by missing session `tool_credentials`, not by worker concurrency alone.
+
 ## Server 2 Stress Results
 
 Server 2 was benchmarked as the control-data host for PostgreSQL and Redis. The PostgreSQL and Redis runs were launched in separate terminals during the same test window, so this section records them as a simultaneous Server 2 stress sample while still keeping the PostgreSQL and Redis figures separate.
+
+### Server 2 Specification
+
+- Host: `node-20`
+- Role: `linkx-control-data`
+- Address: `172.27.23.106`
+- Runtime: Docker Compose + systemd wrapper
+- Services under test:
+  - PostgreSQL on `5432`
+  - Redis on `6379`
+
+### Service Surface Under Test
+
+Server 2 is also not a browser-facing API host, so there is no Flask route inventory here. The meaningful stress interfaces are:
+
+- PostgreSQL wire protocol on `172.27.23.106:5432`
+- Redis authenticated access on `172.27.23.106:6379`
+- Upstream callers expected by design:
+  - Server 1 API
+  - Server 3 worker
+  - Server 4 cleanup services
+
+### Stress Setup
+
+- Runner: external Linux machine on the same private network
+- Tools:
+  - `pgbench` for PostgreSQL
+  - `redis-benchmark` for Redis
+- PostgreSQL test style: built-in TPC-B style benchmark
+- Redis test style: command mix benchmark covering ping, get/set, list, set, hash, sorted-set, and range reads
+- Security note: Redis authentication remained enabled during testing and unauthenticated access continued to return `NOAUTH`
 
 ### Round 1
 
@@ -579,6 +668,50 @@ Server 2 was benchmarked as the control-data host for PostgreSQL and Redis. The 
 - Raising concurrency from 10 to 20 clients roughly doubled average PostgreSQL latency while throughput stayed in the same band, which is a normal saturation shape for a private control-data node.
 - Redis remained healthy under benchmark load, with simple operations much faster than large range reads.
 - These results are good baseline evidence for Server 2. Read together, they reflect a simultaneous Server 2 stress sample from separate terminals, though a stricter shared-ceiling test would still be useful if we want to measure exact contention.
+
+## Server 4 Stress Scope
+
+Server 4 should be documented at the same operational level as the other nodes, but its shape is again different from Server 1. It is the graph and cleanup host, not a public API surface.
+
+### Server 4 Specification
+
+- Host: `node-22`
+- Role: `linkx-graph-maintenance`
+- Address: `172.27.23.85`
+- Runtime:
+  - Neo4j Docker Compose deployment
+  - Python venv + systemd cleanup services
+- Services expected on this node:
+  - Neo4j Bolt on `7687`
+  - Neo4j Browser on `7474` for admin-only access
+  - `linkx-cleanup-worker`
+  - `linkx-cleanup-scheduler`
+
+### Service Surface To Validate Next
+
+Server 4 does not have a Flask endpoint list. Its real service inventory for the next pass is:
+
+- Neo4j graph reads and writes over Bolt
+- Cleanup scheduler enqueue flow into `cleanup_runs`
+- Cleanup worker claim/execute flow from `cleanup_runs`
+- Supported cleanup task types in code:
+  - `session`
+  - `window`
+  - `session_tree`
+  - `run`
+  - `abandoned_sessions`
+  - `artifacts_expired`
+  - `artifacts_session`
+  - `neo4j_session`
+  - `metadata_prune`
+  - `neo4j_residue_scan`
+
+### Next Stress Focus
+
+- Neo4j query latency under worker/API graph activity
+- Cleanup worker throughput and queue drain behavior
+- Residue scan cost versus normal graph traffic
+- Confirmation that Server 4 remains restricted to approved east-west callers only
 
 ### Interpretation
 
