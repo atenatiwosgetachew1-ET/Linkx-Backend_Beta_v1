@@ -1,6 +1,6 @@
 # LinkX Security Hardening Handoff
 
-Last updated: 2026-07-03
+Last updated: 2026-07-06
 
 ## Purpose
 
@@ -479,7 +479,16 @@ This section records the current load-testing snapshot for Server 1 so future se
   - `GET /db/health`
   - `POST /auth/login`
   - `POST /init`
-- Test focus: validate authenticated API behavior under concurrent traffic without exposing the login throttle as the only signal
+  - `GET /auth/me`
+  - `POST /auth/verify`
+  - `GET /workspace/layout`
+  - `POST /workspace/layout` when write mode is enabled
+  - `GET /auth/preferences`
+  - `PATCH /auth/preferences` when write mode is enabled
+  - `POST /graph_link`
+  - `POST /get_graph`
+  - `POST /api/STR_link_analysis`
+- Test focus: validate authenticated API behavior under concurrent traffic without letting login throttling dominate every result
 
 ### Latest Clean Result
 
@@ -494,22 +503,65 @@ The last clean run used valid login values and showed:
 - `checks_failed`: `0.00%`
 - `health`, `login`, and `init` all returned successful responses
 
+### Control Plane Results
+
+The session/control-plane script reused one login and one session id per run. The stable operating point is around 15 VUs. Results recorded:
+
+| VUs | p95 latency | Failure rate | Notes |
+|---|---:|---:|---|
+| 5 | 452.43 ms | 0.00% | Healthy baseline |
+| 10 | 931.03 ms | 0.00% | Still within threshold |
+| 15 | 1.43 s | 0.00% | Passes the current `1.5s` threshold |
+| 16 | 1.58 s | 0.00% | Threshold crossed |
+| 17 | 1.68 s | 0.00% | Threshold crossed |
+| 20 | 1.98 s | 0.00% | Clear overload signal for latency |
+
+### Graph Route Results
+
+The graph route script reused one login and one session id per run. Results recorded:
+
+| VUs | p95 latency | Failure rate | Notes |
+|---|---:|---:|---|
+| 5 | 650.11 ms | 0.00% | Healthy baseline |
+| 10 | 1.22 s | 0.00% | Still within threshold |
+| 11 | 1.43 s | 0.00% | Passes the current `1.5s` threshold |
+| 12 | 1.57 s | 0.00% | Threshold crossed |
+| 13 | 1.64 s | 0.00% | Threshold crossed |
+| 15 | 1.97 s | 0.00% | Threshold crossed |
+| 20 | 2.52 s | 0.00% | Clear overload signal for latency |
+
+### STR Search / Dataframe Results
+
+The STR script also reused one login and one session id per run, but the current Server 1 deployment does not have the STR linking logic available in a way that allows the full search/dataframe/Neo4j pipeline to complete. Treat the STR failures below as an expected environment limitation, not as evidence that the whole API is broken.
+
+| VUs | p95 latency | Failure rate | Notes |
+|---|---:|---:|---|
+| 5 | 285.19 ms | 99.70% | Route returns non-success because STR linking logic is not available right now |
+| 10 | 669.98 ms | 99.72% | Same limitation |
+| 15 | 1.17 s | 99.72% | Same limitation |
+| 18 | 1.40 s | 99.72% | Same limitation |
+| 19 | 1.54 s | 99.72% | Same limitation and threshold crossed |
+| 20 | 1.61 s | 99.72% | Same limitation and threshold crossed |
+
 ### Interpretation
 
-- Server 1 is functionally healthy at this load because the login and init flow completed successfully.
-- Performance is not yet within the target latency envelope because `p95=3.68s` exceeds the current `1.5s` threshold.
-- This means the current limiting factor is response time under concurrency, not request correctness.
+- Server 1 is functionally healthy for auth and control-plane traffic.
+- The session/control-plane routes stay acceptable up to about 15 VUs and start crossing the `1.5s` threshold at 16 VUs.
+- The graph routes are slightly heavier and cross the `1.5s` threshold at 12 VUs.
+- The STR route is not currently a valid capacity benchmark because the linking logic is unavailable in the deployed environment, so the high failure rate there is expected and should not be treated as a server-wide regression.
+- For now, use the control-plane and graph-route runs as the meaningful capacity signals for Server 1.
 
 ### Practical Operating Range
 
-- Comfortable baseline: `10-15 VUs`
-- Useful stress check: `20 VUs`
-- Above `20 VUs`, response latency rises enough that the API becomes noticeably slow for interactive use
+- Comfortable baseline: `10-15 VUs` for auth/session/control-plane traffic
+- Useful stress check: `11-15 VUs` for graph routes
+- Above `15 VUs`, both control-plane and graph latency rise enough that the API becomes noticeably slow for interactive use
 
 ### Test Notes
 
 - Do not use the login rate limiter as the main stress signal.
 - If a future run reintroduces login failures, verify the live `linkx-api` environment file and rate-limit settings before treating the result as a capacity regression.
+- The STR search/dataframe tests need the linking logic to be present before they can be used as a real performance benchmark.
 - After each test, restore any temporary auth or rate-limit changes back to the hardened production values.
 
 ## Recommended Operating Rhythm
