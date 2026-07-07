@@ -16,6 +16,7 @@ These scripts are intentionally split by behavior so we can tell auth noise, con
 
 - `server1_graph_routes.js`
   - Logs in once in `setup()` and reuses the token and session id
+  - Connects Neo4j into the fresh session with `/connect_to_tool` before graph calls
   - Exercises `/graph_link` and `/get_graph`
   - Optional unlink mode can toggle the graph link path
 
@@ -44,6 +45,7 @@ Route-specific optional inputs:
 - `ENABLE_WRITE` for `server1_session_control_plane.js`
 - `ENABLE_UNLINK` for `server1_graph_routes.js`
 - `GRAPH_RELATIONSHIP` for `server1_graph_routes.js`
+- `NEO4J_URL`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, `NEO4J_DATABASE` for `server1_graph_routes.js`
 - `STR_VALUE`, `STR_DATE`, `STR_PUBLIC_API_KEY`, `ACCEPT_NOT_FOUND` for `server1_str_analysis.js`
 
 ## Example Runs
@@ -79,6 +81,9 @@ k6 run \
   -e BASE_URL=http://172.27.23.95:8000 \
   -e LINKX_USERNAME=<username> \
   -e LINKX_PASSWORD=<password> \
+  -e NEO4J_URL=bolt://172.27.23.85:7687 \
+  -e NEO4J_USERNAME=neo4j \
+  -e NEO4J_PASSWORD=<neo4j-password> \
   -e K6_VUS=20 \
   -e K6_DURATION=5m \
   tests/stress/k6/server1_graph_routes.js
