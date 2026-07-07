@@ -498,7 +498,7 @@ Body:
 
 ```json
 {
-  "username": "analyst1",
+  "username": "link",
   "password": "temporary-password",
   "display_name": "Analyst One",
   "roles": ["analyst"],

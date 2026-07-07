@@ -22,6 +22,7 @@ def get_default_session_config(session_id):
         "storage_tables": _env_list("LINKX_STORAGE_TABLES", ["individual_transactions", "entity_transactions"]),
         "active_storage_address": os.getenv("LINKX_ACTIVE_STORAGE_ADDRESS", "172.20.137.129"),
         "active_storage_host": os.getenv("LINKX_ACTIVE_STORAGE_HOST", os.getenv("LINKX_ACTIVE_STORAGE_ADDRESS", "172.20.137.129")).split(":", 1)[0],
+        "storage_hdfs_user": os.getenv("LINKX_STORAGE_HDFS_USER", "link"),
         "active_storage_database": os.getenv("LINKX_ACTIVE_STORAGE_DATABASE", "bankdb"),
         "active_storage_tables": _env_list("LINKX_ACTIVE_STORAGE_TABLES", ["individual_transactions", "entity_transactions"]),
         "storage_webhdfs_port": os.getenv("LINKX_STORAGE_WEBHDFS_PORT", os.getenv("LINKX_HADOOP_WEB_PORT", "9870")),

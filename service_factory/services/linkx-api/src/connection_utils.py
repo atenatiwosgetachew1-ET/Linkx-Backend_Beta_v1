@@ -67,7 +67,7 @@ def HDFSstorage(id, webhdfs_url,session_id):
         address = raw_url if raw_url.startswith(("http://", "https://")) else "http://" + raw_url
         # print(f"Connecting to WebHDFS at: {address}")
         try:
-            hdfs_user = load_temp_config("storage_hdfs_user", session_id) or os.getenv("LINKX_STORAGE_HDFS_USER", "analyst1")
+            hdfs_user = load_temp_config("storage_hdfs_user", session_id) or os.getenv("LINKX_STORAGE_HDFS_USER", "link")
             client = InsecureClient(address, user=hdfs_user)
             #print("Attempting to list root directory...")
             items = client.status('/')   # only checks root metadata
