@@ -762,6 +762,29 @@ Additional live evidence from the worker logs during this session:
 - The STR search/dataframe tests need the linking logic to be present before they can be used as a real performance benchmark.
 - After each test, restore any temporary auth or rate-limit changes back to the hardened production values.
 
+### Estimated Analyst Capacity
+
+This estimate translates the measured VU ceilings into a more human reading of how many active analysts the current four-server deployment is likely to support. It should be treated as an operational planning estimate, not a contractual capacity guarantee, because the k6 users were more aggressive and consistent than normal human click patterns.
+
+- Heavy graph-focused analysts doing similar graph tasks at the same time: plan around `8-12` concurrent active analysts.
+- Mixed active analysts where only a smaller subset are doing graph-heavy work at any moment: plan around `15-25` concurrent active analysts.
+- Upper mixed band with lighter, staggered usage and only occasional heavy graph work: `25-35` active analysts may be possible, but this is not a comfort-zone number.
+- National-scale concurrent analyst activity is not yet supported with strong headroom on the current hardware and architecture.
+
+Why this estimate is grounded in the collected data:
+
+- Server 1 control-plane routes stayed within the current `p95 < 1.5s` target through about `15 VUs`.
+- Server 1 graph routes stayed within target through about `11 VUs`.
+- Server 3 worker-backed graph routing stayed within target through about `12 VUs`.
+- Server 4 Neo4j-backed graph routing stayed within target through about `11 VUs`.
+- Server 2 PostgreSQL and Redis remained healthy and did not present as the first bottleneck in the collected runs.
+
+Operational interpretation:
+
+- The present system behaves like a small-to-moderate analyst platform that stays correct but becomes latency-sensitive once many analysts do the same heavy graph tasks together.
+- The practical ceiling is being set by the API -> worker -> Neo4j chain much more than by PostgreSQL or Redis.
+- A real analyst is usually less aggressive than one k6 VU, so human capacity can be somewhat higher than the raw heavy-task VU numbers, but not high enough to justify large national-scale concurrency claims.
+
 ## Recommended Operating Rhythm
 
 The initial priority implementation is complete. Future security work should now run as continuous assurance rather than a time-based roadmap.

@@ -59,7 +59,7 @@ def get_default_session_config(session_id):
         "default_target_col": os.getenv("LINKX_DEFAULT_TARGET_COL", "benaccountno"),
         "default_relationship": os.getenv("LINKX_DEFAULT_RELATIONSHIP", "TRANSACTS_TO"),
         "dataframes_limit": int(os.getenv("LINKX_DATAFRAMES_LIMIT", "1000000")),
-        "large_search_backend": os.getenv("LINKX_LARGE_SEARCH_BACKEND", "hive"),
+        "large_search_backend": os.getenv("LINKX_LARGE_SEARCH_BACKEND", "elastic_scroll"),
         "elastic_scroll_enabled": os.getenv("LINKX_ELASTIC_SCROLL_ENABLED", "false").lower() in {"1", "true", "yes", "on"},
         "elastic_scroll_limit": int(os.getenv("LINKX_ELASTIC_SCROLL_LIMIT", os.getenv("LINKX_DATAFRAMES_LIMIT", "1000000"))),
         "elastic_scroll_batch_size": int(os.getenv("LINKX_ELASTIC_SCROLL_BATCH_SIZE", "10000")),

@@ -241,12 +241,14 @@ def _fetch_es_pages(API_URL, column, keyword, limit=None, offset=0, batch_size=N
         last_payload = payload
         scroll_id = result.get("scroll_id") if isinstance(result, dict) else None
 
+        has_more = bool(result.get("has_more")) if isinstance(result, dict) else False
+        total = result.get("total") if isinstance(result, dict) else None
         if not page:
+            if scroll_id and scroll_id != last_payload.get("scroll_id"):
+                continue
             break
         collected.extend(page)
 
-        has_more = bool(result.get("has_more")) if isinstance(result, dict) else False
-        total = result.get("total") if isinstance(result, dict) else None
         current_offset += len(page)
         if len(page) < request_limit and not has_more and not scroll_id:
             break
@@ -468,16 +470,18 @@ def es_keyword_search_spark_chunks(
                 response.raise_for_status()
                 last_result = response.json()
                 page = _extract_results(last_result)
+                scroll_id = last_result.get("scroll_id") if isinstance(last_result, dict) else None
+                has_more = bool(last_result.get("has_more")) if isinstance(last_result, dict) else False
+                total = last_result.get("total") if isinstance(last_result, dict) else None
                 if not page:
+                    if scroll_id:
+                        continue
                     break
                 written = write_page(page, mode)
                 if written:
                     total_written += written
                     mode = "append"
-                scroll_id = last_result.get("scroll_id") if isinstance(last_result, dict) else None
-                has_more = bool(last_result.get("has_more")) if isinstance(last_result, dict) else False
                 current_offset += len(page)
-                total = last_result.get("total") if isinstance(last_result, dict) else None
                 if len(page) < request_limit and not has_more and not scroll_id:
                     break
                 if total is not None:

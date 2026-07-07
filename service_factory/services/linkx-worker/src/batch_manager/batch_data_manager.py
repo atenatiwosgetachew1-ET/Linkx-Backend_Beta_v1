@@ -523,6 +523,8 @@ def batch_data_manager(payload):
                     search_column = file.get('column')    
                     keyword = file.get('keyword')                         
                     try:
+                        fetch_limit = load_temp_config("elastic_scroll_limit", session_id) or load_temp_config("dataframes_limit", session_id)
+                        fetch_batch_size = load_temp_config("elastic_scroll_batch_size", session_id) or 10000
                         if search_column:
                             search_columns = [{"field": search_column}]
                         else:
@@ -538,6 +540,27 @@ def batch_data_manager(payload):
                             date=date,
                             limit=limit,
                         )
+                        if df is None and search_column and keyword:
+                            fallback_endpoint = es_search_endpoint_strict if file.get('strict', False) else es_search_endpoint_fuzzy
+                            fallback_api_url = _elastic_api_url(session_id, fallback_endpoint, storage_address)
+                            if fallback_api_url:
+                                job_id = str(payload.get("job_id") or "no_job")
+                                safe_job_id = re.sub(r"[^0-9A-Za-z_.-]", "_", job_id)
+                                safe_column = re.sub(r"[^0-9A-Za-z_.-]", "_", str(search_column or "elastic"))
+                                chunk_dir = ensure_artifact_dir("dfparts", "elastic_chunks", session_id, f"{safe_job_id}_{safe_column}")
+                                df = es_keyword_search_spark_chunks(
+                                    fallback_api_url,
+                                    keyword,
+                                    search_column,
+                                    bool(file.get('strict', False)),
+                                    date_column,
+                                    spark,
+                                    chunk_dir,
+                                    date=date,
+                                    fetch_columns=fetch_columns,
+                                    limit=fetch_limit,
+                                    batch_size=fetch_batch_size,
+                                )
                         if df is not None:
                             dfs.append(df)
                             loaded_sources.append(_source_failure(file, "loaded"))

@@ -467,7 +467,7 @@ def _normalize_configuration(config):
     normalized.setdefault("tool_web_port", "")
     normalized.setdefault("active_tool_username", "")
     normalized.setdefault("active_tool_password", "")
-    normalized.setdefault("large_search_backend", "hive")
+    normalized.setdefault("large_search_backend", "elastic_scroll")
     normalized.setdefault("elastic_scroll_enabled", False)
     normalized.setdefault("elastic_scroll_limit", normalized.get("dataframes_limit", 1000000))
     normalized.setdefault("elastic_scroll_batch_size", 10000)
