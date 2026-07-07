@@ -3,445 +3,432 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Server 1 Stress Test Visuals</title>
+  <title>LinkX Stress Test Dashboard</title>
   <style>
     :root {
-      --bg: #0b1020;
-      --panel: #111936;
-      --panel-2: #162044;
-      --text: #eef2ff;
-      --muted: #b5bfdc;
-      --grid: rgba(255,255,255,0.08);
-      --line: #7dd3fc;
-      --line-2: #f59e0b;
-      --good: #34d399;
-      --warn: #fbbf24;
-      --bad: #fb7185;
+      --bg: #eef3ef;
+      --ink: #142018;
+      --muted: #5b6c60;
+      --panel: #fbfcf8;
+      --line: #dbe7db;
+      --accent: #1f7a4f;
+      --accent-2: #0f5b8d;
+      --warn: #d88b17;
+      --bad: #bf3f4f;
+      --soft-good: #e3f4ea;
+      --soft-warn: #fff2d8;
+      --soft-bad: #fde4e7;
+      --shadow: 0 14px 32px rgba(20, 32, 24, 0.08);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      color: var(--ink);
       background:
-        radial-gradient(circle at top left, rgba(125, 211, 252, 0.16), transparent 30%),
-        radial-gradient(circle at top right, rgba(52, 211, 153, 0.10), transparent 25%),
-        linear-gradient(180deg, #07101f, #0b1020 35%, #09111d 100%);
-      color: var(--text);
+        radial-gradient(circle at top left, rgba(31, 122, 79, 0.08), transparent 28%),
+        radial-gradient(circle at top right, rgba(15, 91, 141, 0.08), transparent 24%),
+        linear-gradient(180deg, #f5f8f4, #eef3ef 46%, #e9efe9 100%);
     }
     .wrap {
       max-width: 1480px;
       margin: 0 auto;
-      padding: 32px 20px 56px;
+      padding: 22px 18px 36px;
     }
     .hero {
       display: grid;
-      gap: 14px;
-      grid-template-columns: 1.35fr 0.9fr;
-      align-items: end;
-      margin-bottom: 22px;
-    }
-    .title h1 {
-      margin: 0 0 8px;
-      font-size: clamp(30px, 4vw, 52px);
-      line-height: 1;
-      letter-spacing: -0.04em;
-    }
-    .title p {
-      margin: 0;
-      color: var(--muted);
-      max-width: 72ch;
-      line-height: 1.55;
-    }
-    .stats {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 12px;
-    }
-    .card, .panel {
-      background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
-      border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 18px;
-      box-shadow: 0 18px 40px rgba(0,0,0,0.25);
-      backdrop-filter: blur(10px);
-    }
-    .card {
-      padding: 14px 16px;
-    }
-    .card .label {
-      font-size: 12px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--muted);
-      margin-bottom: 8px;
-    }
-    .card .value {
-      font-size: 22px;
-      font-weight: 700;
-    }
-    .card .sub {
-      font-size: 13px;
-      color: var(--muted);
-      margin-top: 6px;
-      line-height: 1.4;
-    }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 18px;
-      align-items: start;
+      grid-template-columns: 1.3fr 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
     }
     .panel {
-      padding: 18px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
     }
-    .panel-head {
-      display: flex;
-      justify-content: space-between;
-      align-items: start;
-      gap: 16px;
-      margin-bottom: 14px;
+    .hero-card {
+      padding: 20px 22px;
     }
-    .panel h2 {
-      margin: 0 0 4px;
-      font-size: 22px;
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(28px, 4vw, 46px);
+      line-height: 0.98;
+      letter-spacing: -0.04em;
     }
-    .panel .note {
+    .hero p {
       margin: 0;
       color: var(--muted);
-      line-height: 1.45;
+      line-height: 1.5;
+      max-width: 72ch;
     }
-    .chart-wrap {
-      overflow-x: hidden;
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
     }
-    svg {
-      width: 100%;
-      min-width: 760px;
-      height: auto;
-      display: block;
+    .metric {
+      padding: 14px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: #fff;
     }
-    .table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 14px;
-      overflow: hidden;
-      border-radius: 12px;
+    .metric .k {
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 7px;
     }
-    .table th, .table td {
-      text-align: left;
-      padding: 10px 12px;
-      border-bottom: 1px solid rgba(255,255,255,0.08);
-      font-size: 14px;
+    .metric .v {
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 1;
     }
-    .table th { color: var(--muted); font-weight: 600; }
-    .table td:last-child, .table th:last-child { text-align: right; }
-    .legend {
-      display: flex;
-      gap: 14px;
-      flex-wrap: wrap;
+    .metric .s {
+      margin-top: 7px;
       color: var(--muted);
       font-size: 13px;
-      margin-top: 8px;
+      line-height: 1.35;
     }
-    .swatch {
-      display: inline-block;
-      width: 12px;
-      height: 12px;
-      border-radius: 999px;
-      margin-right: 6px;
-      vertical-align: -2px;
-    }
-    .muted { color: var(--muted); }
-    .strong { color: var(--text); font-weight: 700; }
-    .callout {
-      margin-top: 14px;
-      padding: 14px 16px;
-      border-radius: 14px;
-      background: rgba(125, 211, 252, 0.08);
-      border: 1px solid rgba(125, 211, 252, 0.16);
-      color: var(--text);
-      line-height: 1.5;
-    }
-    .callout.warn {
-      background: rgba(251, 191, 36, 0.08);
-      border-color: rgba(251, 191, 36, 0.18);
-    }
-    .summary-list {
+    .layout {
       display: grid;
-      grid-template-columns: 1fr;
-      gap: 10px;
-      margin-top: 10px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
     }
-    .summary-item {
-      padding: 12px 14px;
-      border-radius: 12px;
-      background: rgba(255,255,255,0.03);
-      border: 1px solid rgba(255,255,255,0.07);
-      line-height: 1.45;
+    .server {
+      padding: 18px;
+      display: grid;
+      gap: 14px;
     }
-    .summary-item .k {
-      display: block;
-      font-size: 12px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
+    .server-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+    }
+    .server h2 {
+      margin: 0;
+      font-size: 24px;
+      line-height: 1.05;
+    }
+    .server .sub {
+      margin-top: 5px;
       color: var(--muted);
+      font-size: 14px;
+      line-height: 1.4;
+    }
+    .badge {
+      padding: 8px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .good { background: var(--soft-good); color: var(--accent); }
+    .warn { background: var(--soft-warn); color: var(--warn); }
+    .bad { background: var(--soft-bad); color: var(--bad); }
+    .specs {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+    .spec {
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: #fff;
+      border: 1px solid var(--line);
+    }
+    .spec .k {
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
       margin-bottom: 4px;
     }
-    .footer {
-      margin-top: 18px;
+    .spec .v {
+      font-size: 15px;
+      font-weight: 700;
+    }
+    .section-title {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
       color: var(--muted);
+      margin: 2px 0 -2px;
+    }
+    .mini-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .mini-panel {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fff;
+    }
+    .mini-panel h3 {
+      margin: 0 0 10px;
+      font-size: 16px;
+    }
+    .rows {
+      display: grid;
+      gap: 8px;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr) 64px;
+      gap: 8px;
+      align-items: center;
       font-size: 13px;
     }
-    @media (max-width: 900px) {
-      .hero { grid-template-columns: 1fr; }
-      .stats { grid-template-columns: 1fr; }
-      .grid { grid-template-columns: 1fr; }
+    .bar-track {
+      height: 10px;
+      border-radius: 999px;
+      background: #edf2ec;
+      overflow: hidden;
+      position: relative;
+    }
+    .bar {
+      height: 100%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent-2), var(--accent));
+    }
+    .bar.warn {
+      background: linear-gradient(90deg, #d6a11f, #ebbf49);
+    }
+    .bar.bad {
+      background: linear-gradient(90deg, #bb4150, #df6b79);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      padding: 8px 6px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    th { color: var(--muted); font-weight: 700; }
+    td:last-child, th:last-child { text-align: right; }
+    .note-box {
+      padding: 12px 13px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .callout {
+      padding: 12px 13px;
+      border-radius: 14px;
+      line-height: 1.45;
+      font-size: 14px;
+    }
+    .callout.good { background: var(--soft-good); }
+    .callout.warn { background: var(--soft-warn); }
+    .foot {
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    ul.tight {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    @media (max-width: 1100px) {
+      .hero, .layout, .metric-grid, .specs, .mini-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
   <div class="wrap">
     <section class="hero">
-      <div class="title">
-        <h1>Server 1 Stress Test Visuals</h1>
+      <div class="panel hero-card">
+        <h1>LinkX Stress Test Dashboard</h1>
         <p>
-          Recorded k6 results for the LinkX Server 1 Flask API / RBAC / Socket service.
-          These visuals summarize the current benchmark snapshot and are not live telemetry.
+          Compact visual summary of the completed stress-testing work across all four LinkX servers.
+          These are recorded benchmark results from the handoff, not live telemetry. Server 4 cleanup is
+          operationally validated, while its sustained burst-drain ceiling is still a future deep benchmark.
         </p>
       </div>
-      <div class="stats">
-        <div class="card">
-          <div class="label">Control plane</div>
-          <div class="value">15 VUs</div>
-          <div class="sub">Stable operating point before p95 crosses 1.5s.</div>
+      <div class="metric-grid">
+        <div class="metric">
+          <div class="k">Server 1 API</div>
+          <div class="v">15 VUs</div>
+          <div class="s">Control-plane ceiling before p95 crosses 1.5s.</div>
         </div>
-        <div class="card">
-          <div class="label">Graph routes</div>
-          <div class="value">11-12 VUs</div>
-          <div class="sub">Heavier route family; latency climbs sooner.</div>
+        <div class="metric">
+          <div class="k">Server 3 Worker</div>
+          <div class="v">12 VUs</div>
+          <div class="s">Worker-backed graph path passing point.</div>
         </div>
-        <div class="card">
-          <div class="label">STR route</div>
-          <div class="value">Unavailable</div>
-          <div class="sub">Linking logic is not present in the deployed environment.</div>
+        <div class="metric">
+          <div class="k">Server 4 Neo4j</div>
+          <div class="v">11 VUs</div>
+          <div class="s">Current graph-host ceiling under p95 &lt; 1.5s.</div>
+        </div>
+        <div class="metric">
+          <div class="k">Server 2 Data</div>
+          <div class="v">0 fails</div>
+          <div class="s">Both pgbench rounds and Redis checks stayed healthy.</div>
         </div>
       </div>
     </section>
 
-    <div class="grid">
-      <section class="panel">
-        <div class="panel-head">
+    <section class="layout">
+      <article class="panel server">
+        <div class="server-top">
           <div>
-            <h2>Control Plane p95 Latency</h2>
-            <p class="note">Login once, reuse the token/session, and test auth/session routes.</p>
+            <h2>Server 1</h2>
+            <div class="sub">`node-19` · Flask API / RBAC / Socket service · `172.27.23.95`</div>
           </div>
-          <div class="muted">5, 10, 15, 16, 17, 20 VUs</div>
+          <div class="badge warn">Interactive Ceiling: 15 VUs</div>
         </div>
-        <div class="chart-wrap">
-          <svg viewBox="0 0 960 360" role="img" aria-label="Control plane p95 latency chart">
-            <rect x="0" y="0" width="960" height="360" rx="18" fill="rgba(255,255,255,0.02)"/>
-            <g stroke="var(--grid)" stroke-width="1">
-              <line x1="70" y1="40" x2="70" y2="300"/>
-              <line x1="70" y1="300" x2="910" y2="300"/>
-              <line x1="70" y1="248" x2="910" y2="248"/>
-              <line x1="70" y1="196" x2="910" y2="196"/>
-              <line x1="70" y1="144" x2="910" y2="144"/>
-              <line x1="70" y1="92" x2="910" y2="92"/>
-            </g>
-            <g fill="var(--muted)" font-size="12">
-              <text x="18" y="304">0</text>
-              <text x="6" y="252">500</text>
-              <text x="0" y="200">1000</text>
-              <text x="0" y="148">1500</text>
-              <text x="0" y="96">2000</text>
-            </g>
-            <path d="M 100 247.0 L 260 203.7 L 420 150.4 L 500 142.2 L 580 131.8 L 730 109.1"
-                  fill="none" stroke="var(--line)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-            <g fill="var(--line)">
-              <circle cx="100" cy="247.0" r="5"/>
-              <circle cx="260" cy="203.7" r="5"/>
-              <circle cx="420" cy="150.4" r="5"/>
-              <circle cx="500" cy="142.2" r="5"/>
-              <circle cx="580" cy="131.8" r="5"/>
-              <circle cx="730" cy="109.1" r="5"/>
-            </g>
-            <g fill="var(--text)" font-size="12">
-              <text x="92" y="326">5</text>
-              <text x="250" y="326">10</text>
-              <text x="410" y="326">15</text>
-              <text x="490" y="326">16</text>
-              <text x="570" y="326">17</text>
-              <text x="720" y="326">20</text>
-            </g>
-          </svg>
+        <div class="specs">
+          <div class="spec"><div class="k">CPU</div><div class="v">4 vCPU</div></div>
+          <div class="spec"><div class="k">RAM</div><div class="v">8 GB</div></div>
+          <div class="spec"><div class="k">Storage</div><div class="v">290 GB</div></div>
         </div>
-        <table class="table">
-          <thead><tr><th>VUs</th><th>p95 latency</th><th>Failure rate</th></tr></thead>
-          <tbody>
-            <tr><td>5</td><td>452.43 ms</td><td>0.00%</td></tr>
-            <tr><td>10</td><td>931.03 ms</td><td>0.00%</td></tr>
-            <tr><td>15</td><td>1.43 s</td><td>0.00%</td></tr>
-            <tr><td>16</td><td>1.58 s</td><td>0.00%</td></tr>
-            <tr><td>17</td><td>1.68 s</td><td>0.00%</td></tr>
-            <tr><td>20</td><td>1.98 s</td><td>0.00%</td></tr>
-          </tbody>
-        </table>
-        <div class="legend"><span><span class="swatch" style="background:var(--line)"></span>p95 latency trend</span></div>
-      </section>
+        <div class="mini-grid">
+          <div class="mini-panel">
+            <h3>Control Plane p95</h3>
+            <div class="rows">
+              <div class="row"><span>5</span><div class="bar-track"><div class="bar" style="width:23%"></div></div><span>452ms</span></div>
+              <div class="row"><span>10</span><div class="bar-track"><div class="bar" style="width:47%"></div></div><span>931ms</span></div>
+              <div class="row"><span>15</span><div class="bar-track"><div class="bar warn" style="width:72%"></div></div><span>1.43s</span></div>
+              <div class="row"><span>16</span><div class="bar-track"><div class="bar bad" style="width:79%"></div></div><span>1.58s</span></div>
+              <div class="row"><span>20</span><div class="bar-track"><div class="bar bad" style="width:99%"></div></div><span>1.98s</span></div>
+            </div>
+          </div>
+          <div class="mini-panel">
+            <h3>Graph Route p95</h3>
+            <div class="rows">
+              <div class="row"><span>5</span><div class="bar-track"><div class="bar" style="width:26%"></div></div><span>650ms</span></div>
+              <div class="row"><span>10</span><div class="bar-track"><div class="bar" style="width:48%"></div></div><span>1.22s</span></div>
+              <div class="row"><span>11</span><div class="bar-track"><div class="bar warn" style="width:57%"></div></div><span>1.43s</span></div>
+              <div class="row"><span>12</span><div class="bar-track"><div class="bar bad" style="width:62%"></div></div><span>1.57s</span></div>
+              <div class="row"><span>20</span><div class="bar-track"><div class="bar bad" style="width:100%"></div></div><span>2.52s</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="callout warn">STR search/dataframe results are recorded, but they are not a valid capacity signal because the STR linking logic is unavailable in the deployed environment.</div>
+      </article>
 
-      <section class="panel">
-        <div class="panel-head">
+      <article class="panel server">
+        <div class="server-top">
           <div>
-            <h2>Graph Route p95 Latency</h2>
-            <p class="note">Graph link and graph fetch paths are heavier and hit threshold sooner.</p>
+            <h2>Server 2</h2>
+            <div class="sub">`node-20` · PostgreSQL + Redis control-data host · `172.27.23.106`</div>
           </div>
-          <div class="muted">5, 10, 11, 12, 13, 15, 20 VUs</div>
+          <div class="badge good">Stable In Both Rounds</div>
         </div>
-        <div class="chart-wrap">
-          <svg viewBox="0 0 960 360" role="img" aria-label="Graph route p95 latency chart">
-            <rect x="0" y="0" width="960" height="360" rx="18" fill="rgba(255,255,255,0.02)"/>
-            <g stroke="var(--grid)" stroke-width="1">
-              <line x1="70" y1="40" x2="70" y2="300"/>
-              <line x1="70" y1="300" x2="910" y2="300"/>
-              <line x1="70" y1="248" x2="910" y2="248"/>
-              <line x1="70" y1="196" x2="910" y2="196"/>
-              <line x1="70" y1="144" x2="910" y2="144"/>
-              <line x1="70" y1="92" x2="910" y2="92"/>
-            </g>
-            <g fill="var(--muted)" font-size="12">
-              <text x="18" y="304">0</text>
-              <text x="6" y="252">500</text>
-              <text x="0" y="200">1000</text>
-              <text x="0" y="148">1500</text>
-              <text x="0" y="96">2000</text>
-            </g>
-            <path d="M 100 216.5 L 240 182.4 L 360 159.6 L 460 151.4 L 560 146.0 L 680 110.7 L 840 72.5"
-                  fill="none" stroke="var(--line-2)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-            <g fill="var(--line-2)">
-              <circle cx="100" cy="216.5" r="5"/>
-              <circle cx="240" cy="182.4" r="5"/>
-              <circle cx="360" cy="159.6" r="5"/>
-              <circle cx="460" cy="151.4" r="5"/>
-              <circle cx="560" cy="146.0" r="5"/>
-              <circle cx="680" cy="110.7" r="5"/>
-              <circle cx="840" cy="72.5" r="5"/>
-            </g>
-            <g fill="var(--text)" font-size="12">
-              <text x="92" y="326">5</text>
-              <text x="230" y="326">10</text>
-              <text x="350" y="326">11</text>
-              <text x="450" y="326">12</text>
-              <text x="550" y="326">13</text>
-              <text x="670" y="326">15</text>
-              <text x="830" y="326">20</text>
-            </g>
-          </svg>
+        <div class="specs">
+          <div class="spec"><div class="k">PostgreSQL</div><div class="v">5432</div></div>
+          <div class="spec"><div class="k">Redis</div><div class="v">6379</div></div>
+          <div class="spec"><div class="k">Security</div><div class="v">Redis auth on</div></div>
         </div>
-        <table class="table">
-          <thead><tr><th>VUs</th><th>p95 latency</th><th>Failure rate</th></tr></thead>
-          <tbody>
-            <tr><td>5</td><td>650.11 ms</td><td>0.00%</td></tr>
-            <tr><td>10</td><td>1.22 s</td><td>0.00%</td></tr>
-            <tr><td>11</td><td>1.43 s</td><td>0.00%</td></tr>
-            <tr><td>12</td><td>1.57 s</td><td>0.00%</td></tr>
-            <tr><td>13</td><td>1.64 s</td><td>0.00%</td></tr>
-            <tr><td>15</td><td>1.97 s</td><td>0.00%</td></tr>
-            <tr><td>20</td><td>2.52 s</td><td>0.00%</td></tr>
-          </tbody>
-        </table>
-        <div class="legend"><span><span class="swatch" style="background:var(--line-2)"></span>p95 latency trend</span></div>
-      </section>
+        <div class="mini-grid">
+          <div class="mini-panel">
+            <h3>PostgreSQL pgbench</h3>
+            <table>
+              <thead><tr><th>Round</th><th>Clients</th><th>Latency</th><th>TPS</th></tr></thead>
+              <tbody>
+                <tr><td>1</td><td>10 / 2 thr</td><td>114.88 ms</td><td>87.05</td></tr>
+                <tr><td>2</td><td>20 / 4 thr</td><td>218.69 ms</td><td>91.45</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="mini-panel">
+            <h3>Redis Highlights</h3>
+            <table>
+              <thead><tr><th>Metric</th><th>Round 1</th><th>Round 2</th></tr></thead>
+              <tbody>
+                <tr><td>PING_INLINE</td><td>33.9k rps</td><td>45.1k rps</td></tr>
+                <tr><td>GET</td><td>40.0k rps</td><td>40.6k rps</td></tr>
+                <tr><td>MSET</td><td>24.2k rps</td><td>26.2k rps</td></tr>
+                <tr><td>LRANGE_600</td><td>2.1k rps</td><td>2.1k rps</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="callout good">Server 2 stayed correct under load. PostgreSQL latency roughly doubled with higher concurrency, while throughput stayed in the same band, which is a normal saturation shape.</div>
+      </article>
 
-      <section class="panel">
-        <div class="panel-head">
+      <article class="panel server">
+        <div class="server-top">
           <div>
-            <h2>STR Route Snapshot</h2>
-            <p class="note">The STR linking path is not currently available in the deployed environment.</p>
+            <h2>Server 3</h2>
+            <div class="sub">`node-21` · Worker service · `172.27.23.18` · graph queue path</div>
           </div>
-          <div class="muted">Expected limitation</div>
+          <div class="badge warn">Passing Point: 12 VUs</div>
         </div>
-        <div class="callout warn">
-          The high failure rate below is expected for this benchmark snapshot. It should not be read as a
-          server-wide outage. Use the control-plane and graph-route charts for the real capacity signal.
+        <div class="specs">
+          <div class="spec"><div class="k">Queues</div><div class="v">ingestion / dataframe / analysis / graph</div></div>
+          <div class="spec"><div class="k">Worker Concurrency</div><div class="v">5</div></div>
+          <div class="spec"><div class="k">Exporter</div><div class="v">not installed</div></div>
         </div>
-        <div class="chart-wrap" style="margin-top:14px;">
-          <svg viewBox="0 0 960 360" role="img" aria-label="STR route p95 latency chart">
-            <rect x="0" y="0" width="960" height="360" rx="18" fill="rgba(255,255,255,0.02)"/>
-            <g stroke="var(--grid)" stroke-width="1">
-              <line x1="70" y1="40" x2="70" y2="300"/>
-              <line x1="70" y1="300" x2="910" y2="300"/>
-              <line x1="70" y1="248" x2="910" y2="248"/>
-              <line x1="70" y1="196" x2="910" y2="196"/>
-              <line x1="70" y1="144" x2="910" y2="144"/>
-              <line x1="70" y1="92" x2="910" y2="92"/>
-            </g>
-            <g fill="var(--muted)" font-size="12">
-              <text x="18" y="304">0</text>
-              <text x="6" y="252">500</text>
-              <text x="0" y="200">1000</text>
-              <text x="0" y="148">1500</text>
-            </g>
-            <path d="M 100 250.6 L 240 202.3 L 380 157.0 L 520 145.6 L 620 137.3 L 760 129.7"
-                  fill="none" stroke="var(--good)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-            <g fill="var(--good)">
-              <circle cx="100" cy="250.6" r="5"/>
-              <circle cx="240" cy="202.3" r="5"/>
-              <circle cx="380" cy="157.0" r="5"/>
-              <circle cx="520" cy="145.6" r="5"/>
-              <circle cx="620" cy="137.3" r="5"/>
-              <circle cx="760" cy="129.7" r="5"/>
-            </g>
-            <g fill="var(--text)" font-size="12">
-              <text x="92" y="326">5</text>
-              <text x="230" y="326">10</text>
-              <text x="370" y="326">15</text>
-              <text x="510" y="326">18</text>
-              <text x="610" y="326">19</text>
-              <text x="750" y="326">20</text>
-            </g>
-          </svg>
+        <div class="mini-panel">
+          <h3>Worker-Backed Graph p95</h3>
+          <div class="rows">
+            <div class="row"><span>5</span><div class="bar-track"><div class="bar" style="width:29%"></div></div><span>585ms</span></div>
+            <div class="row"><span>10</span><div class="bar-track"><div class="bar" style="width:58%"></div></div><span>1.18s</span></div>
+            <div class="row"><span>12</span><div class="bar-track"><div class="bar warn" style="width:67%"></div></div><span>1.36s</span></div>
+            <div class="row"><span>13</span><div class="bar-track"><div class="bar bad" style="width:75%"></div></div><span>1.52s</span></div>
+            <div class="row"><span>15</span><div class="bar-track"><div class="bar bad" style="width:100%"></div></div><span>2.03s</span></div>
+          </div>
         </div>
-        <table class="table">
-          <thead><tr><th>VUs</th><th>p95 latency</th><th>Failure rate</th></tr></thead>
-          <tbody>
-            <tr><td>5</td><td>285.19 ms</td><td>99.70%</td></tr>
-            <tr><td>10</td><td>669.98 ms</td><td>99.72%</td></tr>
-            <tr><td>15</td><td>1.17 s</td><td>99.72%</td></tr>
-            <tr><td>18</td><td>1.40 s</td><td>99.72%</td></tr>
-            <tr><td>19</td><td>1.54 s</td><td>99.72%</td></tr>
-            <tr><td>20</td><td>1.61 s</td><td>99.72%</td></tr>
-          </tbody>
-        </table>
-      </section>
+        <div class="note-box">This pass validated the fresh-session graph flow with `/connect_to_tool` included. Earlier worker failures were caused by missing session `tool_credentials`, not by pure worker collapse.</div>
+      </article>
 
-      <section class="panel">
-        <div class="panel-head">
+      <article class="panel server">
+        <div class="server-top">
           <div>
-            <h2>Overall Reading</h2>
-            <p class="note">A concise interpretation of what the charts mean for Server 1 capacity.</p>
+            <h2>Server 4</h2>
+            <div class="sub">`node-22` · Neo4j + cleanup services · `172.27.23.85`</div>
           </div>
-          <div class="muted">Summary</div>
+          <div class="badge warn">Passing Point: 11 VUs</div>
         </div>
-        <div class="summary-list">
-          <div class="summary-item">
-            <span class="k">Control plane</span>
-            Handles moderate concurrent traffic well, with the practical ceiling around 15 VUs before latency crosses the target.
+        <div class="specs">
+          <div class="spec"><div class="k">Neo4j Bolt</div><div class="v">7687</div></div>
+          <div class="spec"><div class="k">Neo4j Browser</div><div class="v">7474 admin-only</div></div>
+          <div class="spec"><div class="k">Cleanup</div><div class="v">worker + scheduler healthy</div></div>
+        </div>
+        <div class="mini-grid">
+          <div class="mini-panel">
+            <h3>Graph Path p95</h3>
+            <div class="rows">
+              <div class="row"><span>5</span><div class="bar-track"><div class="bar" style="width:33%"></div></div><span>650ms</span></div>
+              <div class="row"><span>10</span><div class="bar-track"><div class="bar warn" style="width:73%"></div></div><span>1.43s</span></div>
+              <div class="row"><span>11</span><div class="bar-track"><div class="bar warn" style="width:73%"></div></div><span>1.44s</span></div>
+              <div class="row"><span>12</span><div class="bar-track"><div class="bar bad" style="width:80%"></div></div><span>1.58s</span></div>
+              <div class="row"><span>15</span><div class="bar-track"><div class="bar bad" style="width:100%"></div></div><span>1.97s</span></div>
+            </div>
           </div>
-          <div class="summary-item">
-            <span class="k">Graph routes</span>
-            Heavier than the control plane and start losing responsiveness earlier, around 11-12 VUs.
-          </div>
-          <div class="summary-item">
-            <span class="k">STR route</span>
-            Not a valid capacity benchmark right now because the linking logic is unavailable in the deployed environment.
+          <div class="mini-panel">
+            <h3>Cleanup Validation</h3>
+            <ul class="tight">
+              <li>Manual enqueue succeeded for `session_tree`, `neo4j_session`, `metadata_prune`, and `artifacts_expired`.</li>
+              <li>Worker logs show scheduled cleanup jobs finishing successfully.</li>
+              <li>`window` cleanup proved managed-secret Neo4j credential resolution works.</li>
+              <li>Sustained cleanup burst-drain ceiling is not yet deeply benchmarked.</li>
+            </ul>
           </div>
         </div>
-        <div class="callout" style="margin-top:14px;">
-          For actual capacity planning, use the control-plane and graph-route charts as the meaningful Server 1 signals.
-        </div>
-      </section>
-    </div>
+        <div class="callout good">Network posture remained tight: `7687` limited to Servers 1, 3, and 4; `7474` limited to the admin workstation.</div>
+      </article>
+    </section>
 
-    <div class="footer">
-      Source of truth: recorded k6 outputs for Server 1 shared in chat and the Server 1 stress-test handoff.
+    <div class="foot">
+      Source of truth: `docs/security_hardening_handoff.md`. This HTML is a compact static summary of the completed stress-test evidence.
     </div>
   </div>
 </body>

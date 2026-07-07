@@ -669,9 +669,9 @@ Server 2 is also not a browser-facing API host, so there is no Flask route inven
 - Redis remained healthy under benchmark load, with simple operations much faster than large range reads.
 - These results are good baseline evidence for Server 2. Read together, they reflect a simultaneous Server 2 stress sample from separate terminals, though a stricter shared-ceiling test would still be useful if we want to measure exact contention.
 
-## Server 4 Stress Scope
+## Server 4 Stress Results
 
-Server 4 should be documented at the same operational level as the other nodes, but its shape is again different from Server 1. It is the graph and cleanup host, not a public API surface.
+Server 4 was validated as the Neo4j and cleanup-services host behind the existing Server 1 and Server 3 flow. The graph stress path still entered through Server 1, but the live Bolt target was Server 4 at `172.27.23.85:7687`, so these results reflect the practical graph ceiling of the current Server 4-backed path.
 
 ### Server 4 Specification
 
@@ -681,37 +681,65 @@ Server 4 should be documented at the same operational level as the other nodes, 
 - Runtime:
   - Neo4j Docker Compose deployment
   - Python venv + systemd cleanup services
-- Services expected on this node:
+- Services verified live:
   - Neo4j Bolt on `7687`
   - Neo4j Browser on `7474` for admin-only access
   - `linkx-cleanup-worker`
   - `linkx-cleanup-scheduler`
 
-### Service Surface To Validate Next
+### Security And Service Posture
 
-Server 4 does not have a Flask endpoint list. Its real service inventory for the next pass is:
+- UFW restricts `7687/tcp` to Server 1 `172.27.23.95`, Server 3 `172.27.23.18`, and Server 4 itself `172.27.23.85`.
+- UFW restricts `7474/tcp` to the admin workstation `172.20.107.14`.
+- Docker publishes Neo4j on `0.0.0.0`, but the firewall posture keeps exposure aligned with the security handoff.
+- Cleanup services were active during this pass and continued to process scheduled jobs successfully.
 
-- Neo4j graph reads and writes over Bolt
-- Cleanup scheduler enqueue flow into `cleanup_runs`
-- Cleanup worker claim/execute flow from `cleanup_runs`
-- Supported cleanup task types in code:
-  - `session`
-  - `window`
-  - `session_tree`
-  - `run`
-  - `abandoned_sessions`
-  - `artifacts_expired`
-  - `artifacts_session`
-  - `neo4j_session`
-  - `metadata_prune`
-  - `neo4j_residue_scan`
+### Graph Stress Setup
 
-### Next Stress Focus
+- Runner: external desktop machine on the same network
+- Tool: `k6`
+- Entry target: `http://172.27.23.95:8000`
+- Graph target configured in session: `bolt://172.27.23.85:7687`
+- Request flow exercised:
+  - `POST /auth/login`
+  - `POST /init`
+  - `POST /connect_to_tool`
+  - `POST /graph_link`
+  - `POST /get_graph`
+- Measured outcome: practical ceiling of the full API -> worker -> Neo4j path with Server 4 as the graph host
 
-- Neo4j query latency under worker/API graph activity
-- Cleanup worker throughput and queue drain behavior
-- Residue scan cost versus normal graph traffic
-- Confirmation that Server 4 remains restricted to approved east-west callers only
+### Graph Route Results With Server 4 Neo4j
+
+| VUs | p95 latency | Failure rate | Notes |
+|---|---:|---:|---|
+| 5 | 649.66 ms | 0.00% | Healthy baseline |
+| 10 | 1.43 s | 0.00% | Passes the current `1.5s` threshold |
+| 11 | 1.44 s | 0.00% | Highest passing point under the current threshold |
+| 12 | 1.58 s | 0.00% | First threshold crossing |
+| 13 | 1.58 s | 0.00% | Still above threshold |
+| 15 | 1.97 s | 0.00% | Clear overload signal for latency |
+
+### Cleanup-Service Validation
+
+The cleanup enqueue path was also validated directly on Server 4 after loading the service `.env` into the shell. Manual enqueue calls succeeded and returned real cleanup run ids:
+
+- `session_tree` -> `3caec53e-4dca-4b74-8414-adf27656727e`
+- `neo4j_session` -> `163b0530-cace-4547-b3cb-432b421beae9`
+- `metadata_prune` -> `df64ebc1-8c25-47eb-b3d6-f235af3df88f`
+- `artifacts_expired` -> `3b43f979-019c-4ea8-97dd-14daefa59a2f`
+
+Additional live evidence from the worker logs during this session:
+
+- scheduled `artifacts_expired`, `metadata_prune`, `abandoned_sessions`, and `neo4j_residue_scan` runs continued to finish successfully
+- a prior `window` cleanup completed successfully using `source=managed_secret`, proving the managed-secret Neo4j credential path works on this host
+- the manual enqueue command initially failed until the service environment was loaded, which confirms these maintenance commands depend on the same `.env` contract as the running systemd services
+
+### Readout
+
+- Server 4 is healthy and properly fenced from a network perspective under the current UFW rules.
+- The practical graph ceiling of the current Server 4-backed path is about `11 VUs` under the existing `p95 < 1.5s` rule.
+- Latency rises before outright request failure, so the first limit is responsiveness rather than correctness.
+- Cleanup services are functioning and can accept manual maintenance jobs when run with the service environment loaded.
 
 ### Interpretation
 
