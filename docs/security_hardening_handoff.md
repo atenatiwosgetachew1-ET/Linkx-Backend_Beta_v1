@@ -545,7 +545,7 @@ The STR script also reused one login and one session id per run, but the current
 
 ## Server 2 Stress Results
 
-Server 2 was benchmarked as the control-data host for PostgreSQL and Redis. These are separate capacity samples, not a combined application test, so the Redis numbers show cache/queue behavior and the PostgreSQL numbers show transaction throughput for the control database.
+Server 2 was benchmarked as the control-data host for PostgreSQL and Redis. The PostgreSQL and Redis runs were launched in separate terminals during the same test window, so this section records them as a simultaneous Server 2 stress sample while still keeping the PostgreSQL and Redis figures separate.
 
 ### Round 1
 
@@ -578,7 +578,7 @@ Server 2 was benchmarked as the control-data host for PostgreSQL and Redis. Thes
 - PostgreSQL stayed stable with zero failures in both rounds.
 - Raising concurrency from 10 to 20 clients roughly doubled average PostgreSQL latency while throughput stayed in the same band, which is a normal saturation shape for a private control-data node.
 - Redis remained healthy under benchmark load, with simple operations much faster than large range reads.
-- These results are good baseline evidence for Server 2, but they are still separate PostgreSQL and Redis samples. A true shared-ceiling test would run both workloads at the same time and should be expected to reduce both numbers.
+- These results are good baseline evidence for Server 2. Read together, they reflect a simultaneous Server 2 stress sample from separate terminals, though a stricter shared-ceiling test would still be useful if we want to measure exact contention.
 
 ### Interpretation
 
