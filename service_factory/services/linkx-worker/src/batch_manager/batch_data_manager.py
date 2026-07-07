@@ -113,6 +113,7 @@ def batch_data_manager(payload):
     session_id = payload.get("session_id")
     storage_ip = load_temp_config("active_storage_address", session_id)
     storage_hdfs_uri = _storage_hdfs_uri(session_id, storage_ip)
+    storage_hdfs_user = load_temp_config("storage_hdfs_user", session_id)
     hive_metastore_uri = _hive_metastore_uri(session_id, storage_ip)
     # -----------------------------
     # SESSION MANAGEMENT
@@ -425,7 +426,7 @@ def batch_data_manager(payload):
             # ---------------------------------------------------------------- Raw HDFS files
             if len(hdfs_categories) > 0: #Consists an elastic datas
                 spark_port = load_temp_config("spark_port", session_id)
-                spark = get_spark_session(storage_ip, spark_port, hdfs_uri=storage_hdfs_uri)            
+                spark = get_spark_session(storage_ip, spark_port, hdfs_uri=storage_hdfs_uri, hdfs_user=storage_hdfs_user)            
                 hdfs_categories = _normalize_raw_hdfs_paths(hdfs_categories, storage_hdfs_uri)
                 print("Consists hdfs file values", redact_value(hdfs_categories))                               
                 try:
@@ -512,7 +513,7 @@ def batch_data_manager(payload):
                 hive_port = load_temp_config("hive_port", session_id)
                 spark_port = load_temp_config("spark_port", session_id)
                 thrift_port = load_temp_config("thrift_port",session_id)
-                spark = get_spark_session(storage_ip, spark_port, thrift_port, hdfs_uri=storage_hdfs_uri, hive_metastore_uri=hive_metastore_uri)            
+                spark = get_spark_session(storage_ip, spark_port, thrift_port, hdfs_uri=storage_hdfs_uri, hive_metastore_uri=hive_metastore_uri, hdfs_user=storage_hdfs_user)            
                 storage_database= load_temp_config("active_storage_database",session_id)
                 storage_tables = load_temp_config("active_storage_tables",session_id) or []
                 limit = load_temp_config("dataframes_limit",session_id)

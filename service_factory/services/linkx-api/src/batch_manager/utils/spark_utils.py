@@ -1,3 +1,4 @@
+import os
 from pyspark.sql import SparkSession
 from threading import Lock
 
@@ -12,6 +13,7 @@ def get_spark_session(
     hdfs_uri=None,
     hdfs_rpc_port=None,
     hive_metastore_uri=None,
+    hdfs_user=None,
 ):
     global _spark
 
@@ -40,6 +42,9 @@ def get_spark_session(
         return f"thrift://{host}:{thrift_port}"
 
     hdfs_addr = normalize_hdfs_addr(hdfs_addr)
+    hdfs_user = str(hdfs_user or "").strip() or None
+    if hdfs_user:
+        os.environ["HADOOP_USER_NAME"] = hdfs_user
 
     with _spark_lock:  # ensure only one thread creates Spark
         if _spark:
@@ -58,10 +63,23 @@ def get_spark_session(
             )
             if hdfs_addr:
                 builder = builder.config("spark.hadoop.fs.defaultFS", hdfs_addr)
+            if hdfs_user:
+                builder = (
+                    builder
+                    .config("spark.hadoop.hadoop.job.ugi", hdfs_user)
+                    .config("spark.hadoop.user.name", hdfs_user)
+                    .config("spark.executorEnv.HADOOP_USER_NAME", hdfs_user)
+                )
             thrift_addr = normalize_thrift_addr(hdfs_addr)
             if thrift_addr:
                 builder = builder.config("spark.hadoop.hive.metastore.uris", thrift_addr)
             _spark = builder.getOrCreate()
+
+        if hdfs_user:
+            hconf = _spark.sparkContext._jsc.hadoopConfiguration()
+            hconf.set("hadoop.job.ugi", hdfs_user)
+            hconf.set("user.name", hdfs_user)
+            hconf.set("HADOOP_USER_NAME", hdfs_user)
 
     print("Connected to HDFS:", _spark.sparkContext._jsc.hadoopConfiguration().get("fs.defaultFS"))
     print("Hive Metastore:", _spark.sparkContext._jsc.hadoopConfiguration().get("hive.metastore.uris"))
