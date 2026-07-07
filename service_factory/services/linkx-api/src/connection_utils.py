@@ -67,7 +67,8 @@ def HDFSstorage(id, webhdfs_url,session_id):
         address = raw_url if raw_url.startswith(("http://", "https://")) else "http://" + raw_url
         # print(f"Connecting to WebHDFS at: {address}")
         try:
-            client = InsecureClient(address)
+            hdfs_user = load_temp_config("storage_hdfs_user", session_id) or os.getenv("LINKX_STORAGE_HDFS_USER", "analyst1")
+            client = InsecureClient(address, user=hdfs_user)
             #print("Attempting to list root directory...")
             items = client.status('/')   # only checks root metadata
             # print(f"Items in root: {items}")
@@ -76,6 +77,7 @@ def HDFSstorage(id, webhdfs_url,session_id):
             storage_host = storage.split(":", 1)[0]
             webhdfs_port = storage.split(":", 1)[1] if ":" in storage else os.getenv("LINKX_STORAGE_WEBHDFS_PORT", "9870")
             hdfs_rpc_port = os.getenv("LINKX_HDFS_RPC_PORT", os.getenv("LINKX_HADOOP_RCP_PORT", "8020"))
+            save_temp_config("storage_hdfs_user", hdfs_user, session_id)
             save_temp_config("active_storage_address", storage, session_id)
             save_temp_config("active_storage_host", storage_host, session_id)
             save_temp_config("storage_webhdfs_url", f"http://{storage_host}:{webhdfs_port}", session_id)
