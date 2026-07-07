@@ -543,6 +543,43 @@ The STR script also reused one login and one session id per run, but the current
 | 19 | 1.54 s | 99.72% | Same limitation and threshold crossed |
 | 20 | 1.61 s | 99.72% | Same limitation and threshold crossed |
 
+## Server 2 Stress Results
+
+Server 2 was benchmarked as the control-data host for PostgreSQL and Redis. These are separate capacity samples, not a combined application test, so the Redis numbers show cache/queue behavior and the PostgreSQL numbers show transaction throughput for the control database.
+
+### Round 1
+
+- PostgreSQL pgbench:
+  - 10 clients, 2 threads
+  - 5249 transactions processed
+  - 0 failed transactions
+  - average latency: 114.880 ms
+  - throughput: 87.047670 tps
+- Redis redis-benchmark:
+  - simple commands stayed in the healthy multi-thousand to tens-of-thousands req/s range
+  - representative results: PING_INLINE 33921.30 rps, PING_MBULK 41000.41 rps, GET 39952.06 rps, MSET 24177.95 rps
+  - larger list reads slowed as expected: LRANGE_600 2115.78 rps, p50=7.799 ms
+
+### Round 2
+
+- PostgreSQL pgbench:
+  - 20 clients, 4 threads
+  - 5469 transactions processed
+  - 0 failed transactions
+  - average latency: 218.691 ms
+  - throughput: 91.453305 tps
+- Redis redis-benchmark:
+  - simple commands remained strong and slightly higher in the later run
+  - representative results: PING_INLINE 45106.00 rps, SET 53447.35 rps, GET 40600.89 rps, MSET 26181.44 rps
+  - larger reads again showed the expected size penalty: LRANGE_500 2529.66 rps, p50=17.215 ms; LRANGE_600 2133.24 rps, p50=18.607 ms
+
+### Readout
+
+- PostgreSQL stayed stable with zero failures in both rounds.
+- Raising concurrency from 10 to 20 clients roughly doubled average PostgreSQL latency while throughput stayed in the same band, which is a normal saturation shape for a private control-data node.
+- Redis remained healthy under benchmark load, with simple operations much faster than large range reads.
+- These results are good baseline evidence for Server 2, but they are still separate PostgreSQL and Redis samples. A true shared-ceiling test would run both workloads at the same time and should be expected to reduce both numbers.
+
 ### Interpretation
 
 - Server 1 is functionally healthy for auth and control-plane traffic.
