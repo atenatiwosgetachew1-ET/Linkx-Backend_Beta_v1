@@ -5,6 +5,7 @@ import requests
 from kafka import KafkaConsumer
 from hdfs import InsecureClient
 import json
+import traceback
 from globals import create_file,save_temp_config,load_temp_config,sockets_registry
 from batch_manager.utils.neo4j_utils import create_neo4j_driver, neo4j_database_name, redacted_neo4j_credentials
 
@@ -85,7 +86,10 @@ def HDFSstorage(id, webhdfs_url,session_id):
                 save_temp_config("storage_hdfs_uri", f"hdfs://{storage_host}:{hdfs_rpc_port}", session_id)
             return True
         except Exception as e:
-            print(f"Error: {e}")
+            print(f"[HDFSstorage] check failed for address={address!r} user={hdfs_user!r} session_id={session_id!r}")
+            print(f"[HDFSstorage] exception_type={type(e).__name__}")
+            print(f"[HDFSstorage] exception={e}")
+            print(traceback.format_exc())
             # print("hdfs not found")
             return False
     if id == "disconnect":
