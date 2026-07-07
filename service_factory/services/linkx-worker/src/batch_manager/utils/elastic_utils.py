@@ -27,6 +27,22 @@ def _log_es_request(label, api_url, payload):
     print(f"{label}: api={_safe_api_label(api_url)} payload={redact_value(safe_payload)}", flush=True)
 
 
+def _log_es_response(label, api_url, response, *, page_size=None, collected=None):
+    if not isinstance(response, dict):
+        print(f"{label}: api={_safe_api_label(api_url)} response_type={type(response).__name__}", flush=True)
+        return
+    summary = {
+        "keys": sorted(response.keys()),
+        "has_results": bool(response.get("results")),
+        "results_count": len(response.get("results") or []),
+        "has_scroll_id": bool(response.get("scroll_id")),
+        "total": response.get("total"),
+        "page_size": page_size,
+        "collected": collected,
+    }
+    print(f"{label}: api={_safe_api_label(api_url)} summary={summary}", flush=True)
+
+
 def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_column, date=None, fetch_columns=None, timeout=30, limit=None, offset=0, batch_size=None):
     if not search_column:
         print(-2, "search_column1:", search_column)
@@ -50,6 +66,7 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
                     response = requests.post(API_URL, json=used_payload, timeout=timeout)
                     response.raise_for_status()
                     result = response.json()
+                    _log_es_response("DF response ES", API_URL, result)
                     candidate_results = _extract_results(result)
                 else:
                     candidate_results, used_payload, result = _fetch_es_pages(
@@ -79,6 +96,7 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
                 response = requests.post(API_URL, json=payload, timeout=timeout)
                 response.raise_for_status()
                 result = response.json()
+                _log_es_response("DF response ES", API_URL, result)
                 candidate_results = _extract_results(result)
                 used_payload = payload
 
@@ -237,6 +255,7 @@ def _fetch_es_pages(API_URL, column, keyword, limit=None, offset=0, batch_size=N
         response = requests.post(API_URL, json=payload, timeout=timeout)
         response.raise_for_status()
         result = response.json()
+        _log_es_response("DF response ES page", API_URL, result, page_size=request_limit, collected=len(collected))
         page = _extract_results(result)
         last_payload = payload
         scroll_id = result.get("scroll_id") if isinstance(result, dict) else None
@@ -369,6 +388,21 @@ def es_keyword_search_spark_chunks(
     if not search_column or spark is None or not chunk_dir:
         return None
 
+    print(
+        "Elastic chunk fetch start:",
+        {
+            "api": _safe_api_label(API_URL),
+            "search_column": search_column,
+            "strict": bool(strict_mood),
+            "date": date,
+            "limit": limit,
+            "offset": offset,
+            "batch_size": batch_size,
+            "fetch_columns_count": len(fetch_columns or []),
+        },
+        flush=True,
+    )
+
     if isinstance(search_column, (list, tuple, set)):
         search_columns = [col for col in search_column if col]
     else:
@@ -469,6 +503,7 @@ def es_keyword_search_spark_chunks(
                 response = requests.post(API_URL, json=payload, timeout=timeout)
                 response.raise_for_status()
                 last_result = response.json()
+                _log_es_response("DF response ES chunk", API_URL, last_result, page_size=request_limit, collected=total_written)
                 page = _extract_results(last_result)
                 scroll_id = last_result.get("scroll_id") if isinstance(last_result, dict) else None
                 has_more = bool(last_result.get("has_more")) if isinstance(last_result, dict) else False

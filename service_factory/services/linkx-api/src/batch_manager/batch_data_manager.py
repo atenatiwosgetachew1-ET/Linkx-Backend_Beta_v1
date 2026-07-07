@@ -402,6 +402,7 @@ def batch_data_manager(payload):
             elastic_scroll_enabled = _truthy_config(load_temp_config("elastic_scroll_enabled", session_id))
             use_elastic_for_large_search = large_search_backend in {"elastic", "elastic_scroll", "scroll"} or elastic_scroll_enabled
             print("large_search_backend:", large_search_backend, "elastic_scroll_enabled:", elastic_scroll_enabled)
+            print("[fuzzy-df] session config", {"session_id": session_id, "backend": large_search_backend, "elastic_scroll_enabled": elastic_scroll_enabled, "fetch_columns_count": len(fetch_columns or []), "date_column": date_column}, flush=True)
             # ---------------------------------------------------------------- Categorize datas with identity (elastic,hive)
             hdfs_categories = []
             elastic_categories = []
@@ -454,7 +455,7 @@ def batch_data_manager(payload):
                     search_column = file.get('column')    
                     keyword = file.get('keyword')                         
                     strict_mood = file.get('strict')
-                    print("search_column:",search_column)
+                    print("search_column:", search_column, {"strict": bool(strict_mood), "source_type": file.get('type'), "large_result_backend": file.get('large_result_backend')}, flush=True)
                     if file.get('strict', False): #if data is from a stict search
                         print("strictttt")
                         endpoint = es_search_endpoint_strict
@@ -541,6 +542,7 @@ def batch_data_manager(payload):
                             limit=limit,
                         )
                         if df is None and search_column and keyword:
+                            print("[fuzzy-df] Hive path returned no dataframe, trying Elastic scroll fallback", {"search_column": search_column, "strict": bool(file.get('strict', False)), "keyword_len": len(str(keyword or ""))}, flush=True)
                             fallback_endpoint = es_search_endpoint_strict if file.get('strict', False) else es_search_endpoint_fuzzy
                             fallback_api_url = _elastic_api_url(session_id, fallback_endpoint, storage_address)
                             if fallback_api_url:
