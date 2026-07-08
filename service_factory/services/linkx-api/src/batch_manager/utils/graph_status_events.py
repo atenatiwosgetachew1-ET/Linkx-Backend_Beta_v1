@@ -1,9 +1,13 @@
 import json
 import os
+import time
 from datetime import datetime
 
 
 GRAPH_METADATA_CHANGED_EVENT = "graph_metadata_changed"
+_EVENT_CACHE = {}
+_ACTIVE_JOB_CACHE = {}
+_LOOKUP_INDEXES_CHECKED = False
 
 
 def _verbose_logging():
@@ -12,6 +16,57 @@ def _verbose_logging():
 
 def _database_url():
     return os.getenv("DATABASE_URL") or os.getenv("LINKX_POSTGRES_DSN")
+
+
+def _env_float(name, default):
+    try:
+        return max(0.1, float(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _cache_get(cache, key):
+    entry = cache.get(key)
+    if not entry:
+        return None
+    expires_at, value = entry
+    if time.monotonic() >= expires_at:
+        cache.pop(key, None)
+        return None
+    return value
+
+
+def _cache_set(cache, key, value, ttl):
+    cache[key] = (time.monotonic() + ttl, value)
+    return value
+
+
+def _ensure_lookup_indexes(dsn):
+    global _LOOKUP_INDEXES_CHECKED
+    if _LOOKUP_INDEXES_CHECKED:
+        return
+    _LOOKUP_INDEXES_CHECKED = True
+    try:
+        import psycopg
+
+        with psycopg.connect(dsn, application_name="linkx-graph-status-indexes") as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_job_events_session_type_id_desc
+                    ON job_events(session_id, event_type, id DESC)
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_jobs_session_status_finished
+                    ON jobs(session_id, status, finished_at)
+                    """
+                )
+            conn.commit()
+    except Exception:
+        if _verbose_logging():
+            print("[graph_status_event] lookup index check failed", flush=True)
 
 
 def _jsonable(value):
@@ -96,6 +151,17 @@ def latest_graph_metadata_event(session_id, after_event_id=0):
     except (TypeError, ValueError):
         after_id = 0
 
+    session_key = str(session_id)
+    _ensure_lookup_indexes(dsn)
+    ttl = _env_float("LINKX_GRAPH_STATUS_EVENT_CACHE_SECONDS", 1)
+    cached_latest = _cache_get(_EVENT_CACHE, session_key)
+    if cached_latest is not None:
+        event_id = cached_latest.get("event_id") if cached_latest else None
+        if event_id and int(event_id) > after_id:
+            return cached_latest
+        if event_id is None or int(event_id) <= after_id:
+            return None
+
     try:
         import psycopg
 
@@ -107,21 +173,23 @@ def latest_graph_metadata_event(session_id, after_event_id=0):
                     FROM job_events
                     WHERE session_id = %s
                       AND event_type = %s
-                      AND id > %s
                     ORDER BY id DESC
                     LIMIT 1
                     """,
-                    (str(session_id), GRAPH_METADATA_CHANGED_EVENT, after_id),
+                    (session_key, GRAPH_METADATA_CHANGED_EVENT),
                 )
                 row = cur.fetchone()
         if not row:
+            _cache_set(_EVENT_CACHE, session_key, {}, ttl)
             return None
         payload = row[1] or {}
-        return {
+        latest = {
             "event_id": row[0],
             "payload": payload if isinstance(payload, dict) else {},
             "created_at": row[2].isoformat() if row[2] else None,
         }
+        _cache_set(_EVENT_CACHE, session_key, latest, ttl)
+        return latest if int(latest["event_id"]) > after_id else None
     except Exception:
         if _verbose_logging():
             print(f"[graph_status_event] read failed session_id={session_id}", flush=True)
@@ -134,6 +202,13 @@ def has_active_graph_session_job(session_id):
     dsn = _database_url()
     if not dsn:
         return False
+    session_key = str(session_id)
+    _ensure_lookup_indexes(dsn)
+    ttl = _env_float("LINKX_GRAPH_STATUS_ACTIVE_JOB_CACHE_SECONDS", 2)
+    cached = _cache_get(_ACTIVE_JOB_CACHE, session_key)
+    if cached is not None:
+        return bool(cached)
+
     try:
         import psycopg
 
@@ -150,9 +225,10 @@ def has_active_graph_session_job(session_id):
                       )
                     LIMIT 1
                     """,
-                    (str(session_id),),
+                    (session_key,),
                 )
-                return cur.fetchone() is not None
+                active = cur.fetchone() is not None
+                return _cache_set(_ACTIVE_JOB_CACHE, session_key, active, ttl)
     except Exception:
         if _verbose_logging():
             print(f"[graph_status_event] active job check failed session_id={session_id}", flush=True)

@@ -4,6 +4,9 @@ from globals import _session_store
 from batch_manager.utils.graph_status_events import has_active_graph_session_job, latest_graph_metadata_event
 
 
+_RELATIONSHIP_STATUS_CACHE = {}
+
+
 def _env_float(name, default):
     try:
         return max(0.1, float(os.getenv(name, str(default))))
@@ -45,6 +48,23 @@ def _current_session_run_id(driver, session_id):
         return None
 
 
+def _relationship_cache_get(key):
+    entry = _RELATIONSHIP_STATUS_CACHE.get(key)
+    if not entry:
+        return None
+    expires_at, relationships = entry
+    if time.monotonic() >= expires_at:
+        _RELATIONSHIP_STATUS_CACHE.pop(key, None)
+        return None
+    return [dict(item) for item in relationships]
+
+
+def _relationship_cache_set(key, relationships, ttl):
+    stored = [dict(item) for item in relationships]
+    _RELATIONSHIP_STATUS_CACHE[key] = (time.monotonic() + ttl, stored)
+    return [dict(item) for item in stored]
+
+
 def _log_graph_status(stage, session_id, sid=None, **details):
     verbose = str(os.getenv("LINKX_GRAPH_STATUS_VERBOSE", "0")).lower() in {"1", "true", "yes", "on"}
     always_log = {
@@ -63,65 +83,77 @@ def _log_graph_status(stage, session_id, sid=None, **details):
     print(" ".join(parts), flush=True)
 
 
-def get_graph_metadata(driver, session_id, tool_credentials=None):
+def get_graph_metadata(
+    driver,
+    session_id,
+    tool_credentials=None,
+    static_cache=None,
+    schema_cache=None,
+    refresh_schema=True,
+):
     batch_prefix = _session_batch_prefix(session_id)
     run_id = _current_session_run_id(driver, session_id)
+    static_cache = static_cache or {}
+    schema_cache = schema_cache or {}
+    database_name = static_cache.get("database")
+    username = static_cache.get("user")
+    version = static_cache.get("neo4j_version")
+
     with driver.session() as session:
-        # Database info
-        db_info_record = session.run("CALL db.info()").single()
-        database_name = db_info_record["name"] if db_info_record else None
+        if database_name is None:
+            db_info_record = session.run("CALL db.info()").single()
+            database_name = db_info_record["name"] if db_info_record else None
 
-        # User
-        username = tool_credentials.get("username") if tool_credentials else None
+        if username is None:
+            username = tool_credentials.get("username") if tool_credentials else None
 
-        # Nodes tied to this exact session ownership set.
-        total_nodes_record = session.run(
-            f"MATCH (n) WHERE {_session_scope_clause('n', include_run=True)} RETURN count(DISTINCT n) AS total_nodes",
+        if version is None:
+            version_record = session.run(
+                """
+                CALL dbms.components()
+                YIELD name, versions
+                WHERE name CONTAINS 'Neo4j'
+                RETURN versions
+                """
+            ).single()
+            version = version_record["versions"][0] if version_record else None
+
+        # Keep the hot path to one Neo4j round trip: exact node count, relationship count, and rel labels.
+        summary_record = session.run(
+            f"""
+            CALL {{
+                MATCH (n)
+                WHERE {_session_scope_clause('n', include_run=True)}
+                RETURN count(DISTINCT n) AS total_nodes
+            }}
+            CALL {{
+                MATCH ()-[r]->()
+                WHERE {_session_scope_clause('r', include_run=True)}
+                RETURN count(DISTINCT r) AS total_relationships,
+                       collect(DISTINCT type(r)) AS relationship_labels
+            }}
+            RETURN total_nodes, total_relationships, relationship_labels
+            """,
             session_id=session_id,
             batch_prefix=batch_prefix,
             run_id=run_id,
         ).single()
-        total_nodes = total_nodes_record["total_nodes"] if total_nodes_record else 0
+        total_nodes = summary_record["total_nodes"] if summary_record else 0
+        total_relationships = summary_record["total_relationships"] if summary_record else 0
+        relationship_labels = summary_record["relationship_labels"] if summary_record else []
 
-        # Relationships tied to this exact session ownership set.
-        total_relationships_record = session.run(
-            f"MATCH ()-[r]->() WHERE {_session_scope_clause('r', include_run=True)} RETURN count(DISTINCT r) AS total_relationships",
-            session_id=session_id,
-            batch_prefix=batch_prefix,
-            run_id=run_id,
-        ).single()
-        total_relationships = total_relationships_record["total_relationships"] if total_relationships_record else 0
-
-        # Relationship labels
-        relationship_labels_record = session.run(
-            f"MATCH ()-[r]->() WHERE {_session_scope_clause('r', include_run=True)} RETURN COLLECT(DISTINCT type(r)) AS labels",
-            session_id=session_id,
-            batch_prefix=batch_prefix,
-            run_id=run_id,
-        ).single()
-        relationship_labels = relationship_labels_record["labels"] if relationship_labels_record else []
-
-        # Property keys tied to session
-        property_keys = [
-            record["key"]
-            for record in session.run(
-                f"MATCH (n) WHERE {_session_scope_clause('n', include_run=True)} UNWIND keys(n) AS key RETURN DISTINCT key",
-                session_id=session_id,
-                batch_prefix=batch_prefix,
-                run_id=run_id,
-            )
-        ]
-
-        # Neo4j version
-        version_record = session.run(
-            """
-            CALL dbms.components()
-            YIELD name, versions
-            WHERE name CONTAINS 'Neo4j'
-            RETURN versions
-            """
-        ).single()
-        version = version_record["versions"][0] if version_record else None
+        if refresh_schema or "property_keys" not in schema_cache:
+            property_keys = [
+                record["key"]
+                for record in session.run(
+                    f"MATCH (n) WHERE {_session_scope_clause('n', include_run=True)} UNWIND keys(n) AS key RETURN DISTINCT key",
+                    session_id=session_id,
+                    batch_prefix=batch_prefix,
+                    run_id=run_id,
+                )
+            ]
+        else:
+            property_keys = schema_cache.get("property_keys") or []
 
     return {
         "sourceId": session_id,
@@ -135,6 +167,46 @@ def get_graph_metadata(driver, session_id, tool_credentials=None):
         "live_analysis": _session_store.get(session_id, {}).get("live_analysis"),
     }
 
+
+def _fetch_relationship_status(driver, session_id, run_id=None, cache_seconds=None):
+    if cache_seconds is None:
+        cache_seconds = _env_float("LINKX_GRAPH_STATUS_RELATIONSHIPS_CACHE_SECONDS", 2)
+    if run_id is None:
+        run_id = _current_session_run_id(driver, session_id)
+    session_key = str(session_id)
+    batch_prefix = _session_batch_prefix(session_key)
+    cache_key = (id(driver), session_key, run_id)
+    cached = _relationship_cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    with driver.session() as session:
+        result = session.run(
+            f"""
+            MATCH ()-[r]->()
+            WHERE {_session_scope_clause('r', include_run=True)}
+            WITH type(r) AS type, min(elementId(r)) AS representative_id
+            MATCH ()-[rep]->()
+            WHERE elementId(rep) = representative_id
+            WITH type, rep, properties(rep) AS props
+            RETURN
+                type,
+                elementId(rep) AS id,
+                coalesce(props.color, '#333') AS color,
+                coalesce(props.bgcolor, '#DDD') AS bgcolor
+            ORDER BY type
+            """,
+            session_id=session_key,
+            batch_prefix=batch_prefix,
+            run_id=run_id,
+        )
+        relationships = [{
+            "id": r["id"],
+            "type": r["type"],
+            "color": r["color"] or "#333",
+            "bgcolor": r["bgcolor"] or "#DDD",
+        } for r in result]
+    return _relationship_cache_set(cache_key, relationships, cache_seconds)
 
 def _fetch_relationship_graph(driver, session_id, relationship_type=None, limit=None):
     if limit is None:
@@ -193,6 +265,7 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
     metadata_slow_after_changes = _env_int("LINKX_GRAPH_STATUS_METADATA_SLOW_AFTER_CHANGES", 5)
     metadata_event_check_interval = _env_float("LINKX_GRAPH_STATUS_METADATA_EVENT_CHECK_INTERVAL", 1)
     metadata_debounce_seconds = _env_float("LINKX_GRAPH_STATUS_METADATA_DEBOUNCE_SECONDS", 3)
+    metadata_schema_interval = _env_float("LINKX_GRAPH_STATUS_METADATA_SCHEMA_INTERVAL", 60)
     relationships_active_interval = _env_float("LINKX_GRAPH_STATUS_RELATIONSHIPS_ACTIVE_INTERVAL", 3)
     relationships_idle_interval = _env_float("LINKX_GRAPH_STATUS_RELATIONSHIPS_IDLE_INTERVAL", 10)
     relationships_idle_after_cycles = _env_int("LINKX_GRAPH_STATUS_RELATIONSHIPS_IDLE_AFTER_CYCLES", 2)
@@ -202,6 +275,9 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
     tool_credentials = registry_entry["tool_credentials"]
     registry_entry["latest_relationships"] = []
     registry_entry["metadata_complete"] = False
+    metadata_static_cache = registry_entry.setdefault("metadata_static_cache", {})
+    metadata_schema_cache = registry_entry.setdefault("metadata_schema_cache", {})
+    relationship_run_id = registry_entry.setdefault("session_run_id", _current_session_run_id(driver, session_id))
     last_rel_hash = None
     unchanged_relationship_cycles = 0
 
@@ -241,6 +317,7 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
         last_metadata_fingerprint = None
         last_metadata_fetch_at = None
         last_graph_event_id = 0
+        last_schema_refresh_at = None
         next_fallback_check = 0.0
         pending_graph_event = None
         pending_graph_event_at = None
@@ -279,9 +356,28 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
                 continue
 
             try:
-                metadata = get_graph_metadata(driver, session_id, tool_credentials)
+                refresh_schema = bool(
+                    last_schema_refresh_at is None
+                    or (now - last_schema_refresh_at) >= metadata_schema_interval
+                )
+                metadata = get_graph_metadata(
+                    driver,
+                    session_id,
+                    tool_credentials,
+                    static_cache=metadata_static_cache,
+                    schema_cache=metadata_schema_cache,
+                    refresh_schema=refresh_schema,
+                )
                 metadata_polls += 1
                 last_metadata_fetch_at = time.monotonic()
+                metadata_static_cache.update({
+                    "database": metadata.get("database"),
+                    "user": metadata.get("user"),
+                    "neo4j_version": metadata.get("neo4j_version"),
+                })
+                if refresh_schema:
+                    metadata_schema_cache["property_keys"] = metadata.get("property_keys") or []
+                    last_schema_refresh_at = last_metadata_fetch_at
                 registry_entry["static_infos"] = metadata
                 fingerprint = _metadata_fingerprint(metadata)
                 if stop_event.is_set() or registry_entry.get("metadata_complete"):
@@ -426,34 +522,11 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
         nonlocal last_rel_hash, unchanged_relationship_cycles
         while not stop_event.is_set():
             try:
-                with driver.session() as session:
-                    result = session.run(
-                        """
-                        MATCH ()-[r]->()
-                        WHERE r.session_id = $session_id
-                        WITH
-                            type(r) AS type,
-                            collect(r) AS rels
-                        WITH
-                            type,
-                            rels[0] AS rep
-                        WITH type, rep, properties(rep) AS props
-                        RETURN
-                            type,
-                            elementId(rep) AS id,
-                            coalesce(props.color, '#333') AS color,
-                            coalesce(props.bgcolor, '#DDD') AS bgcolor
-                        ORDER BY type
-                        """,
-                        session_id=session_id
-                    )
-
-                    relationships = [{
-                        "id": r["id"],
-                        "type": r["type"],
-                        "color": r["color"] or "#333",
-                        "bgcolor": r["bgcolor"] or "#DDD",
-                    } for r in result]
+                relationships = _fetch_relationship_status(
+                    driver,
+                    session_id,
+                    run_id=relationship_run_id,
+                )
 
                 # only emit if changed
                 new_hash = hash(tuple((r["id"], r["type"], r["color"], r["bgcolor"]) for r in relationships))
