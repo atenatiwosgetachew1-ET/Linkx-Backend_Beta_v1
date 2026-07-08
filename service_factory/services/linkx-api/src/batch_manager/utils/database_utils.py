@@ -121,12 +121,12 @@ def get_graph_metadata(
         # Keep the hot path to one Neo4j round trip: exact node count, relationship count, and rel labels.
         summary_record = session.run(
             f"""
-            CALL {{
+            CALL () {{
                 MATCH (n)
                 WHERE {_session_scope_clause('n', include_run=True)}
                 RETURN count(DISTINCT n) AS total_nodes
             }}
-            CALL {{
+            CALL () {{
                 MATCH ()-[r]->()
                 WHERE {_session_scope_clause('r', include_run=True)}
                 RETURN count(DISTINCT r) AS total_relationships,
