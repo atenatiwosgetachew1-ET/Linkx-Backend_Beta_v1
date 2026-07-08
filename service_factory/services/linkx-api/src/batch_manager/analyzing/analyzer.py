@@ -386,7 +386,6 @@ def neo4j_row_data_injector(payload, batch_size=500):
     session_id = payload.get("session_id")
     run_id = payload.get("run_id")
     job_id = payload.get("job_id")
-    print("neo4j_row_data_injector_session_id:",session_id)
     if not tool_credentials or df is None:
         log_writer(log_file, f"{datetime.now()} [Error] - Missing Neo4j credentials or dataframe")
         return

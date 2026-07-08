@@ -65,10 +65,6 @@ def emit_pending_notifications(session_id, sid):
 def queue_str_report_payload(payload, frontend_session_id=None):
     session_key = str(frontend_session_id) if frontend_session_id else "__broadcast__"
     globals.str_report_pending_registry.setdefault(session_key, []).append(payload)
-    print(
-        f"[str_report_socket] queued str_report_link_analysis "
-        f"(session_key={session_key}, queue_depth={len(globals.str_report_pending_registry[session_key])})"
-    )
 
 
 def flush_str_report_pending(session_id, sid):
@@ -88,10 +84,6 @@ def flush_str_report_pending(session_id, sid):
         for payload in pending:
             _socketio.emit("str_report_link_analysis", payload, to=sid)
             emitted += 1
-            print(
-                f"[str_report_socket] flushed queued str_report_link_analysis "
-                f"to sid={sid} (session_key={key}, request_id={payload.get('request_id')})"
-            )
             notification = _build_notification(
                 session_id,
                 "info",
@@ -124,10 +116,6 @@ def queue_status_payload(payload, frontend_session_id=None):
         return
 
     globals.str_report_status_registry.setdefault(session_id, {})[status_type] = payload
-    print(
-        f"[str_report_socket] queued status payload "
-        f"(session_id={session_id}, type={status_type})"
-    )
 
 
 def flush_status_pending(session_id, sid):
@@ -142,10 +130,6 @@ def flush_status_pending(session_id, sid):
         if payload:
             _socketio.emit("status", payload, to=sid)
             emitted += 1
-            print(
-                f"[str_report_socket] flushed status payload "
-                f"to sid={sid} (session_id={session_id}, type={status_type})"
-            )
     return emitted
 
 
@@ -173,10 +157,6 @@ def emit_str_report_link_analysis(payload, frontend_session_id=None):
     timestamp = datetime.utcnow().isoformat() + "Z"
 
     if _socketio is None:
-        print(
-            f"[str_report_socket] {timestamp} emit skipped: socketio not initialized "
-            f"(request_id={request_id}, analysis_session_id={analysis_session_id})"
-        )
         return 0
 
     connected_sids = list(globals.sockets_registry.keys())
@@ -193,22 +173,11 @@ def emit_str_report_link_analysis(payload, frontend_session_id=None):
     else:
         target_sids = connected_sids
 
-    print(
-        f"[str_report_socket] {timestamp} initiating emit "
-        f"(request_id={request_id}, analysis_session_id={analysis_session_id}, "
-        f"frontend_session_id={frontend_session_id or 'broadcast'}, mode={delivery_mode}, "
-        f"connected_sockets={len(connected_sids)}, target_sockets={len(target_sids)}, "
-        f"target_sids={target_sids})"
-    )
 
     emitted = 0
     for socket_id in target_sids:
         _socketio.emit("str_report_link_analysis", payload, to=socket_id)
         emitted += 1
-        print(
-            f"[str_report_socket] {timestamp} emitted str_report_link_analysis "
-            f"to sid={socket_id} (request_id={request_id})"
-        )
 
     delivered_to_expected_session = False
     if frontend_session_id and target_sids:
@@ -233,22 +202,5 @@ def emit_str_report_link_analysis(payload, frontend_session_id=None):
             queue_str_report_payload(payload, frontend_session_id)
     else:
         queue_str_report_payload(payload, None)
-
-    if emitted == 0:
-        print(
-            f"[str_report_socket] {timestamp} no live socket received str_report_link_analysis "
-            f"(request_id={request_id}, frontend_session_id={frontend_session_id or 'broadcast'}; "
-            f"payload queued for subscribe/reconnect)"
-        )
-    elif not delivered_to_expected_session and frontend_session_id:
-        print(
-            f"[str_report_socket] {timestamp} emit reached {emitted} socket(s) but not session "
-            f"{frontend_session_id}; payload queued for subscribe"
-        )
-    else:
-        print(
-            f"[str_report_socket] {timestamp} emit complete "
-            f"(request_id={request_id}, delivered_to={emitted} socket(s))"
-        )
 
     return emitted

@@ -35,7 +35,6 @@ def register_socket_handlers(socketio: SocketIO):
     Register all Socket.IO event handlers here.
     """
     set_notification_socketio(socketio)
-    print("[str_report_socket] socket handlers registered (socketio ready)")
 
     disconnect_grace_seconds = int(os.getenv("LINKX_SOCKET_DISCONNECT_GRACE_SECONDS", "45"))
 
@@ -67,9 +66,8 @@ def register_socket_handlers(socketio: SocketIO):
         if driver:
             try:
                 driver.close()
-            except Exception as exc:
-                print(f"[str_report_socket] graph driver close failed: {exc}")
-
+            except Exception:
+                pass
     def _has_live_socket_for_session(session_id):
         session_key = str(session_id)
         for sid, entry in list(sockets_registry.items()):
@@ -116,17 +114,14 @@ def register_socket_handlers(socketio: SocketIO):
         session_key = str(session_id)
         socketio.sleep(disconnect_grace_seconds)
         if _has_live_socket_for_session(session_key):
-            print(f"[str_report_socket] session {session_key} reconnected before abandonment grace")
             return
-        print(f"[str_report_socket] stopping abandoned API session {session_key}")
         _queue_session_lost_notification(session_key)
         if session_key in _session_store:
             try:
                 result = end_session({"session_id": session_key, "reason": "socket_disconnect_abandoned"})
-                print(f"[str_report_socket] abandoned session stop result session_id={session_key}: {result}")
                 return
-            except Exception as exc:
-                print(f"[str_report_socket] failed to stop abandoned API session {session_key}: {exc}")
+            except Exception:
+                pass
         try:
             result = request_session_cancellation(
                 session_key,
@@ -135,9 +130,8 @@ def register_socket_handlers(socketio: SocketIO):
                 neo4j_credentials=load_temp_config("tool_credentials", session_key),
                 cancel_session=False,
             )
-            print(f"[str_report_socket] abandoned worker session stop result session_id={session_key}: {result}")
-        except Exception as exc:
-            print(f"[str_report_socket] failed to stop abandoned worker session {session_key}: {exc}")
+        except Exception:
+            pass
 
     @socketio.on("connect")
     def handle_connect(auth=None):
@@ -152,13 +146,11 @@ def register_socket_handlers(socketio: SocketIO):
             else:
                 actor = get_user_by_id(payload.get("sub"))
         if not actor:
-            print(f"[str_report_socket] rejected unauthenticated sid={sid}")
             return False
 
         entry = get_or_create_socket_entry(sid)
         entry["actor"] = public_actor(actor)
         actor_name = actor.get("username") or actor.get("client_id")
-        print(f"[str_report_socket] client connected sid={sid} actor={actor_name}")
 
     # --------------------------
     # NOTIFICATION SUBSCRIBE
@@ -167,16 +159,11 @@ def register_socket_handlers(socketio: SocketIO):
         sid = request.sid
         session_id = data.get("session_id") if data else None
         if not session_id:
-            print(f"[str_report_socket] {source_event} sid={sid} ignored: missing session_id")
             return
 
         entry = get_or_create_socket_entry(sid)
         _track_socket_session(sid, session_id)
         subscribe_str_report_session(session_id, sid)
-        print(
-            f"[str_report_socket] {source_event} sid={sid} session_id={session_id} "
-            f"(subscribed_sessions={sorted(entry.get('notification_sessions', set()))})"
-        )
 
     @socketio.on("notification_subscribe")
     def handle_notification_subscribe(data):
@@ -206,10 +193,6 @@ def register_socket_handlers(socketio: SocketIO):
         filename = data.get('filename')
         session_id = data.get('session_id')
         sid = request.sid
-        print(
-            f"[str_report_socket] log_stream_plug sid={sid} "
-            f"session_id={session_id} filename={filename}"
-        )
 
         stop_event = threading.Event()
         task = socketio.start_background_task(
@@ -255,7 +238,6 @@ def register_socket_handlers(socketio: SocketIO):
                 log_stream["stop_event"].set()
                 entry.pop("log_stream", None)
     
-        print("sockets_registry_from_logs:", sockets_registry)
 
 
 
@@ -354,16 +336,12 @@ def register_socket_handlers(socketio: SocketIO):
 
         tool = load_temp_config("tool", session_id)
         if not tool:
-            print("tool not found")
             return
 
         driver = tools(tool.lower(), "check", {"session_id": session_id})
         session_info = _session_store.get(session_id) or {}
         if not session_info:
-            print(
-                "[str_report_socket] graph status using persisted graph state "
-                f"for session {session_id}; API stream registry is not present"
-            )
+            pass
 
         stop_event = threading.Event()
         tool_credentials = load_temp_config("tool_credentials", session_id)
@@ -409,7 +387,6 @@ def register_socket_handlers(socketio: SocketIO):
     @socketio.on("disconnect")
     def handle_disconnect(*_args):
         sid = request.sid
-        print(f"[str_report_socket] client disconnected sid={sid}")
         entry = sockets_registry.pop(sid, {})
         watched_sessions = set(str(value) for value in entry.get("analysis_sessions", set()) if value)
         watched_sessions.update(str(value) for value in entry.get("notification_sessions", set()) if value)

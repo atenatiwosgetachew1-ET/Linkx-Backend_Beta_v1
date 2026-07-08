@@ -108,7 +108,6 @@ def tools(id,action,payload):
             username=credentials["username"]
             password=credentials["password"]
             session_id=credentials["session_id"]
-            print("creds_to_connect:", {**redacted_neo4j_credentials(credentials), "session_id": session_id})
             try:
                 # response=[]
                 neo4j_driver=create_neo4j_driver(credentials)
@@ -144,7 +143,6 @@ def tools(id,action,payload):
             return True
         if action == "check":
             session_id = payload["session_id"]
-            print("session_id:", session_id)
             try:
                 creds = load_session_neo4j_credentials(session_id, purpose="tools_check")
                 neo4j_driver = create_neo4j_driver(creds)

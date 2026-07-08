@@ -125,7 +125,6 @@ def resolve_neo4j_credentials(credentials):
 
 def create_neo4j_driver(credentials):
     credentials = resolve_neo4j_credentials(credentials)
-    print("neo4j_credentials:", redacted_neo4j_credentials(credentials))
     driver = GraphDatabase.driver(
         credentials["url"],
         auth=(credentials["username"], credentials["password"]),
@@ -148,16 +147,6 @@ def load_session_neo4j_credentials(session_id, purpose="neo4j"):
         raise Neo4jCredentialConfigError(f"Session config is invalid for {session_id}")
 
     credentials = config.get("tool_credentials")
-    print(
-        "neo4j_session_credentials:",
-        {
-            "session_id": str(session_id),
-            "purpose": purpose,
-            "config_found": True,
-            "creds": redacted_neo4j_credentials(credentials) if isinstance(credentials, dict) else None,
-        },
-        flush=True,
-    )
     if not credentials:
         raise Neo4jCredentialConfigError(f"Neo4j tool_credentials missing for session {session_id}")
     if not isinstance(credentials, dict):

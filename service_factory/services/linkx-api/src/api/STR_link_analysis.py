@@ -409,17 +409,9 @@ def STR_link_analysis():
                 else:
                     API_URL = f"http://{storage_address}:{api_port}/{api_search_endpoint}"
 
-            print("STR link analysis request received")
-            print("session_id:", session_id)
-            print("entity:", entity)
-            print("type:", type)
-            print("value_length:", len(value))
-            print("elastic_api_url:", API_URL)
-            print("search_column:", search_column)
-
+                                                        
             response = es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_column, date)
-            print("STR link analysis elastic response:", response)
-
+        
             result_size = 0
             if response and isinstance(response, dict):
                 results = response.get("results") or []
@@ -442,10 +434,8 @@ def STR_link_analysis():
                         }
                     ],
                 }
-                print("STR link analysis dataframe payload:", dataframe_payload)
 
                 dataframe_response = create_dataframe_response(dataframe_payload, session_id)
-                print("STR link analysis dataframe response:", dataframe_response)
 
                 dataframe_status = getattr(dataframe_response, "status_code", None)
                 if isinstance(dataframe_response, tuple) and len(dataframe_response) > 1:
