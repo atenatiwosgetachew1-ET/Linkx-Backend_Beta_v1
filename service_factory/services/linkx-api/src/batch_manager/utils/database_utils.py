@@ -44,6 +44,15 @@ def _current_session_run_id(driver, session_id):
         return None
 
 
+def _log_graph_status(stage, session_id, sid=None, **details):
+    parts = [f"[graph_status] {stage}", f"session_id={session_id}"]
+    if sid:
+        parts.append(f"sid={sid}")
+    for key, value in details.items():
+        parts.append(f"{key}={value}")
+    print(" ".join(parts), flush=True)
+
+
 def get_graph_metadata(driver, session_id, tool_credentials=None):
     batch_prefix = _session_batch_prefix(session_id)
     run_id = _current_session_run_id(driver, session_id)
@@ -228,6 +237,15 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
                 if fingerprint != last_metadata_fingerprint:
                     unchanged_metadata_cycles = 0
                     last_metadata_fingerprint = fingerprint
+                    _log_graph_status(
+                        "metadata_emit",
+                        session_id,
+                        sid=sid,
+                        poll=metadata_polls + 1,
+                        total_nodes=metadata.get("total_nodes"),
+                        total_relationships=metadata.get("total_relationships"),
+                        relationship_labels=len(metadata.get("relationship_labels") or []),
+                    )
                     socketio.emit(
                         "status",
                         {
@@ -239,10 +257,27 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
                     )
                 else:
                     unchanged_metadata_cycles += 1
+                    _log_graph_status(
+                        "metadata_unchanged",
+                        session_id,
+                        sid=sid,
+                        poll=metadata_polls + 1,
+                        unchanged_cycles=unchanged_metadata_cycles,
+                        total_nodes=metadata.get("total_nodes"),
+                        total_relationships=metadata.get("total_relationships"),
+                    )
                     if unchanged_metadata_cycles >= metadata_max_cycles:
                         registry_entry["metadata_complete"] = True
+                        _log_graph_status(
+                            "metadata_complete",
+                            session_id,
+                            sid=sid,
+                            poll=metadata_polls + 1,
+                            unchanged_cycles=unchanged_metadata_cycles,
+                        )
                         break
             except Exception as e:
+                _log_graph_status("metadata_error", session_id, sid=sid, error=str(e))
                 socketio.emit(
                     "status",
                     {
@@ -304,6 +339,13 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
                     last_rel_hash = new_hash
                     unchanged_relationship_cycles = 0
                     registry_entry["latest_relationships"] = relationships
+                    _log_graph_status(
+                        "relationships_emit",
+                        session_id,
+                        sid=sid,
+                        relationship_count=len(relationships),
+                        unchanged_cycles=unchanged_relationship_cycles,
+                    )
                     socketio.emit(
                         "status",
                         {
