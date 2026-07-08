@@ -34,18 +34,46 @@ def _session_scope_clause(alias, include_run=False):
     )
 
 
-def _current_session_run_id(driver, session_id):
+def _current_session_state(driver, session_id):
     if not session_id:
-        return None
+        return {"run_id": None, "status": None}
+    session_key = str(session_id)
+    batch_prefix = _session_batch_prefix(session_key)
+    node_scope = _session_scope_clause("n")
+    rel_scope = _session_scope_clause("r")
     try:
         with driver.session() as session:
             record = session.run(
-                "MATCH (s:Session {id:$session_id}) RETURN s.run_id AS run_id LIMIT 1",
-                session_id=str(session_id),
+                "MATCH (s:Session {id:$session_id}) RETURN s.run_id AS run_id, s.status AS status LIMIT 1",
+                session_id=session_key,
             ).single()
-        return str(record["run_id"]) if record and record.get("run_id") else None
+            run_id = str(record["run_id"]) if record and record.get("run_id") else None
+            status = str(record["status"]) if record and record.get("status") else None
+
+            # Some live sessions expose ownership on graph objects before the Session node is fully updated.
+            if run_id is None:
+                run_record = session.run(
+                    f"MATCH (n) WHERE {node_scope} AND n.run_id IS NOT NULL RETURN n.run_id AS run_id LIMIT 1",
+                    session_id=session_key,
+                    batch_prefix=batch_prefix,
+                ).single()
+                run_id = str(run_record["run_id"]) if run_record and run_record.get("run_id") else None
+
+            if run_id is None:
+                run_record = session.run(
+                    f"MATCH ()-[r]->() WHERE {rel_scope} AND r.run_id IS NOT NULL RETURN r.run_id AS run_id LIMIT 1",
+                    session_id=session_key,
+                    batch_prefix=batch_prefix,
+                ).single()
+                run_id = str(run_record["run_id"]) if run_record and run_record.get("run_id") else None
+
+        return {"run_id": run_id, "status": status}
     except Exception:
-        return None
+        return {"run_id": None, "status": None}
+
+
+def _current_session_run_id(driver, session_id):
+    return _current_session_state(driver, session_id).get("run_id")
 
 
 def _relationship_cache_get(key):
@@ -92,12 +120,16 @@ def get_graph_metadata(
     refresh_schema=True,
 ):
     batch_prefix = _session_batch_prefix(session_id)
-    run_id = _current_session_run_id(driver, session_id)
+    session_state = _current_session_state(driver, session_id)
+    run_id = session_state.get("run_id")
     static_cache = static_cache or {}
     schema_cache = schema_cache or {}
     database_name = static_cache.get("database")
     username = static_cache.get("user")
     version = static_cache.get("neo4j_version")
+    session_status = session_state.get("status")
+    if not session_status:
+        session_status = "ACTIVE" if has_active_graph_session_job(session_id) else "UNKNOWN"
 
     with driver.session() as session:
         if database_name is None:
@@ -117,6 +149,9 @@ def get_graph_metadata(
                 """
             ).single()
             version = version_record["versions"][0] if version_record else None
+
+        if session_status is None:
+            session_status = session_state.get("status")
 
         # Keep the hot path to one Neo4j round trip: exact node count, relationship count, and rel labels.
         summary_record = session.run(
@@ -164,6 +199,16 @@ def get_graph_metadata(
         "relationship_labels": relationship_labels,
         "property_keys": property_keys,
         "neo4j_version": version,
+        "status": session_status,
+        "run_id": run_id,
+        "session_status": session_status,
+        "summary": {
+            "total_nodes": total_nodes,
+            "total_relationships": total_relationships,
+            "status": session_status,
+            "session_status": session_status,
+            "run_id": run_id,
+        },
         "live_analysis": _session_store.get(session_id, {}).get("live_analysis"),
     }
 
@@ -172,7 +217,8 @@ def _fetch_relationship_status(driver, session_id, run_id=None, cache_seconds=No
     if cache_seconds is None:
         cache_seconds = _env_float("LINKX_GRAPH_STATUS_RELATIONSHIPS_CACHE_SECONDS", 2)
     if run_id is None:
-        run_id = _current_session_run_id(driver, session_id)
+        session_state = _current_session_state(driver, session_id)
+        run_id = session_state.get("run_id")
     session_key = str(session_id)
     batch_prefix = _session_batch_prefix(session_key)
     cache_key = (id(driver), session_key, run_id)
@@ -277,7 +323,9 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
     registry_entry["metadata_complete"] = False
     metadata_static_cache = registry_entry.setdefault("metadata_static_cache", {})
     metadata_schema_cache = registry_entry.setdefault("metadata_schema_cache", {})
-    relationship_run_id = registry_entry.setdefault("session_run_id", _current_session_run_id(driver, session_id))
+    session_state = registry_entry.setdefault("session_state", _current_session_state(driver, session_id))
+    relationship_run_id = registry_entry.setdefault("session_run_id", session_state.get("run_id"))
+    last_session_status = registry_entry.setdefault("session_status", session_state.get("status"))
     last_rel_hash = None
     unchanged_relationship_cycles = 0
 
@@ -294,6 +342,9 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
             "relationship_labels",
             "property_keys",
             "neo4j_version",
+            "status",
+            "run_id",
+            "session_status",
             "live_analysis",
         )
         normalized = []
@@ -380,6 +431,25 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
                     last_schema_refresh_at = last_metadata_fetch_at
                 registry_entry["static_infos"] = metadata
                 fingerprint = _metadata_fingerprint(metadata)
+                session_status = metadata.get("session_status")
+                if session_status != last_session_status:
+                    last_session_status = session_status
+                    registry_entry["session_status"] = session_status
+                    socketio.emit(
+                        "status",
+                        {
+                            "type": "session_status",
+                            "data": {
+                                "session_id": session_id,
+                                "status": session_status,
+                                "session_status": session_status,
+                                "run_id": metadata.get("run_id") or relationship_run_id,
+                            },
+                            "session_id": session_id,
+                        },
+                        to=sid,
+                    )
+
                 if stop_event.is_set() or registry_entry.get("metadata_complete"):
                     break
 

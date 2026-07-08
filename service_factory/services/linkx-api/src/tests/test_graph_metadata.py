@@ -45,7 +45,7 @@ class _Driver:
 class GraphMetadataTest(unittest.TestCase):
     def test_metadata_counts_use_exact_session_batch_and_run_scope(self):
         query_session = _Session([
-            _Record({"run_id": "run-123"}),
+            _Record({"run_id": "run-123", "status": "ANALYZING"}),
         ])
         metadata_session = _Session([
             _Record({"name": "neo4j"}),
@@ -68,6 +68,11 @@ class GraphMetadataTest(unittest.TestCase):
         self.assertEqual(metadata["relationship_labels"], ["HAS_RELATIONSHIP"])
         self.assertEqual(metadata["property_keys"], ["NodeId", "batch_id"])
         self.assertEqual(metadata["neo4j_version"], "2026.05.0")
+        self.assertEqual(metadata["run_id"], "run-123")
+        self.assertEqual(metadata["session_status"], "ANALYZING")
+        self.assertEqual(metadata["status"], "ANALYZING")
+        self.assertEqual(metadata["summary"]["status"], "ANALYZING")
+        self.assertEqual(metadata["summary"]["run_id"], "run-123")
 
         summary_query, summary_params = metadata_session.calls[2]
         property_query, property_params = metadata_session.calls[3]
@@ -82,7 +87,7 @@ class GraphMetadataTest(unittest.TestCase):
 
     def test_metadata_uses_static_and_schema_caches_when_available(self):
         query_session = _Session([
-            _Record({"run_id": "run-123"}),
+            _Record({"run_id": "run-123", "status": "ANALYZING"}),
         ])
         metadata_session = _Session([
             _Record({
@@ -108,7 +113,38 @@ class GraphMetadataTest(unittest.TestCase):
         self.assertEqual(metadata["relationship_labels"], ["FUND_FLOW"])
         self.assertEqual(metadata["property_keys"], ["NodeId", "batch_id"])
         self.assertEqual(len(metadata_session.calls), 1)
+        self.assertEqual(metadata["session_status"], "ANALYZING")
+        self.assertEqual(metadata["status"], "ANALYZING")
+        self.assertEqual(metadata["summary"]["session_status"], "ANALYZING")
         self.assertIn("RETURN total_nodes, total_relationships, relationship_labels", metadata_session.calls[0][0])
+
+
+    def test_metadata_falls_back_to_owned_graph_run_id_and_non_null_status(self):
+        query_session = _Session([
+            _Record({"run_id": None, "status": None}),
+            _Record({"run_id": "run-from-node"}),
+        ])
+        metadata_session = _Session([
+            _Record({"name": "neo4j"}),
+            _Record({"versions": ["2026.05.0"]}),
+            _Record({
+                "total_nodes": 3,
+                "total_relationships": 2,
+                "relationship_labels": ["FUND_FLOW"],
+            }),
+            [],
+        ])
+        sessions = [query_session, metadata_session]
+        driver = _Driver(lambda: sessions.pop(0))
+
+        with patch("batch_manager.utils.database_utils.has_active_graph_session_job", return_value=True):
+            metadata = get_graph_metadata(driver, "1_618421", {"username": "neo4j"})
+
+        self.assertEqual(metadata["run_id"], "run-from-node")
+        self.assertEqual(metadata["session_status"], "ACTIVE")
+        self.assertEqual(metadata["status"], "ACTIVE")
+        self.assertEqual(metadata["summary"]["status"], "ACTIVE")
+        self.assertEqual(metadata["summary"]["run_id"], "run-from-node")
 
     def test_relationship_status_uses_exact_session_batch_and_run_scope(self):
         metadata_session = _Session([
