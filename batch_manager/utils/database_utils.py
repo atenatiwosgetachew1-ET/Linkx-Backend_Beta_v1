@@ -146,8 +146,12 @@ def _fetch_relationship_graph(driver, session_id, relationship_type=None, limit=
 
 def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=None, primary_rel_type=None):
     """
-    Stream metadata every 5 seconds and relationships/graph payloads when changed.
+    Stream metadata and relationship payloads while the graph is still changing.
     """
+
+    metadata_interval = _env_float("LINKX_GRAPH_STATUS_METADATA_INTERVAL", 2)
+    metadata_max_cycles = _env_int("LINKX_GRAPH_STATUS_METADATA_MAX_CYCLES", 2)
+    metadata_max_polls = _env_int("LINKX_GRAPH_STATUS_METADATA_MAX_POLLS", 60)
 
     stop_event = registry_entry["stop_event"]
     driver = registry_entry["driver"]
@@ -155,6 +159,30 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
     registry_entry["latest_relationships"] = []
     last_rel_hash = None
     last_graph_hash = None
+
+    def _metadata_fingerprint(metadata):
+        if not isinstance(metadata, dict):
+            return metadata
+        keys = (
+            "sourceId",
+            "database",
+            "user",
+            "total_nodes",
+            "total_relationships",
+            "relationship_labels",
+            "property_keys",
+            "neo4j_version",
+            "live_analysis",
+        )
+        normalized = []
+        for key in keys:
+            value = metadata.get(key)
+            if isinstance(value, list):
+                value = tuple(value)
+            elif isinstance(value, dict):
+                value = tuple(sorted(value.items()))
+            normalized.append((key, value))
+        return tuple(normalized)
 
     def emit_metadata_once():
         metadata = get_graph_metadata(driver, session_id, tool_credentials)
@@ -229,22 +257,32 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
     # Metadata loop (every 5s)
     # -------------------------
     def emit_metadata():
-        while not stop_event.is_set():
+        metadata_polls = 0
+        unchanged_metadata_cycles = 0
+        last_metadata_fingerprint = _metadata_fingerprint(registry_entry.get("static_infos"))
+        while not stop_event.is_set() and metadata_polls < metadata_max_polls:
             try:
-                # ALWAYS fetch fresh metadata
                 metadata = get_graph_metadata(driver, session_id, tool_credentials)
-                registry_entry["static_infos"] = metadata  # optional caching if needed
+                registry_entry["static_infos"] = metadata
                 if stop_event.is_set():
                     break
-                socketio.emit(
-                    "status",
-                    {
-                        "type": "metadata",
-                        "data": metadata,
-                        "session_id": session_id
-                    },
-                    to=sid
-                )
+                fingerprint = _metadata_fingerprint(metadata)
+                if fingerprint != last_metadata_fingerprint:
+                    unchanged_metadata_cycles = 0
+                    last_metadata_fingerprint = fingerprint
+                    socketio.emit(
+                        "status",
+                        {
+                            "type": "metadata",
+                            "data": metadata,
+                            "session_id": session_id
+                        },
+                        to=sid
+                    )
+                else:
+                    unchanged_metadata_cycles += 1
+                    if unchanged_metadata_cycles >= metadata_max_cycles:
+                        break
             except Exception as e:
                 socketio.emit(
                     "status",
@@ -255,7 +293,9 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
                     },
                     to=sid
                 )
-            socketio.sleep(5)  # emits every 5 seconds
+            metadata_polls += 1
+            if not stop_event.is_set():
+                socketio.sleep(metadata_interval)
 
     # -------------------------
     # Relationships loop (on change)

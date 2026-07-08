@@ -169,6 +169,7 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
 
     metadata_interval = _env_float("LINKX_GRAPH_STATUS_METADATA_INTERVAL", 2)
     metadata_max_cycles = _env_int("LINKX_GRAPH_STATUS_METADATA_MAX_CYCLES", 2)
+    metadata_max_polls = _env_int("LINKX_GRAPH_STATUS_METADATA_MAX_POLLS", 60)
     relationships_active_interval = _env_float("LINKX_GRAPH_STATUS_RELATIONSHIPS_ACTIVE_INTERVAL", 3)
     relationships_idle_interval = _env_float("LINKX_GRAPH_STATUS_RELATIONSHIPS_IDLE_INTERVAL", 10)
     relationships_idle_after_cycles = _env_int("LINKX_GRAPH_STATUS_RELATIONSHIPS_IDLE_AFTER_CYCLES", 2)
@@ -181,30 +182,66 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
     last_rel_hash = None
     unchanged_relationship_cycles = 0
 
+    def _metadata_fingerprint(metadata):
+        if not isinstance(metadata, dict):
+            return metadata
+        # Keep comparison stable so equivalent payloads do not cause extra emits.
+        keys = (
+            "sourceId",
+            "database",
+            "user",
+            "total_nodes",
+            "total_relationships",
+            "relationship_labels",
+            "property_keys",
+            "neo4j_version",
+            "live_analysis",
+        )
+        normalized = []
+        for key in keys:
+            value = metadata.get(key)
+            if isinstance(value, list):
+                value = tuple(value)
+            elif isinstance(value, dict):
+                value = tuple(sorted(value.items()))
+            normalized.append((key, value))
+        return tuple(normalized)
+
     # -------------------------
     # Metadata loop
     # -------------------------
     def emit_metadata():
-        metadata_cycles = 0
+        metadata_polls = 0
+        unchanged_metadata_cycles = 0
+        last_metadata_fingerprint = None
         while (
             not stop_event.is_set()
             and not registry_entry.get("metadata_complete")
-            and metadata_cycles < metadata_max_cycles
+            and metadata_polls < metadata_max_polls
         ):
             try:
                 metadata = get_graph_metadata(driver, session_id, tool_credentials)
                 registry_entry["static_infos"] = metadata
+                fingerprint = _metadata_fingerprint(metadata)
                 if stop_event.is_set() or registry_entry.get("metadata_complete"):
                     break
-                socketio.emit(
-                    "status",
-                    {
-                        "type": "metadata",
-                        "data": metadata,
-                        "session_id": session_id
-                    },
-                    to=sid
-                )
+                if fingerprint != last_metadata_fingerprint:
+                    unchanged_metadata_cycles = 0
+                    last_metadata_fingerprint = fingerprint
+                    socketio.emit(
+                        "status",
+                        {
+                            "type": "metadata",
+                            "data": metadata,
+                            "session_id": session_id
+                        },
+                        to=sid
+                    )
+                else:
+                    unchanged_metadata_cycles += 1
+                    if unchanged_metadata_cycles >= metadata_max_cycles:
+                        registry_entry["metadata_complete"] = True
+                        break
             except Exception as e:
                 socketio.emit(
                     "status",
@@ -215,8 +252,9 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
                     },
                     to=sid
                 )
-            metadata_cycles += 1
-            socketio.sleep(metadata_interval)
+            metadata_polls += 1
+            if not registry_entry.get("metadata_complete") and not stop_event.is_set():
+                socketio.sleep(metadata_interval)
         registry_entry["metadata_complete"] = True
 
     # -------------------------
