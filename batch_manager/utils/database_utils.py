@@ -1,7 +1,36 @@
 import time
 from globals import _session_store
 
+
+def _session_batch_prefix(session_id):
+    return f"{str(session_id or '')}_"
+
+
+def _session_scope_clause(alias, include_run=False):
+    run_clause = f" OR ($run_id IS NOT NULL AND {alias}.run_id = $run_id)" if include_run else ""
+    return (
+        f"({alias}.session_id = $session_id "
+        f"OR coalesce({alias}.batch_id, '') STARTS WITH $batch_prefix"
+        f"{run_clause})"
+    )
+
+
+def _current_session_run_id(driver, session_id):
+    if not session_id:
+        return None
+    try:
+        with driver.session() as session:
+            record = session.run(
+                "MATCH (s:Session {id:$session_id}) RETURN s.run_id AS run_id LIMIT 1",
+                session_id=str(session_id),
+            ).single()
+        return str(record["run_id"]) if record and record.get("run_id") else None
+    except Exception:
+        return None
+
 def get_graph_metadata(driver, session_id, tool_credentials=None):
+    batch_prefix = _session_batch_prefix(session_id)
+    run_id = _current_session_run_id(driver, session_id)
     with driver.session() as session:
         # Database info
         db_info_record = session.run("CALL db.info()").single()
@@ -10,24 +39,30 @@ def get_graph_metadata(driver, session_id, tool_credentials=None):
         # User
         username = tool_credentials.get("username") if tool_credentials else None
 
-        # Nodes tied to session
+        # Nodes tied to this exact session ownership set.
         total_nodes_record = session.run(
-            "MATCH (n) WHERE n.batch_id STARTS WITH $session_id RETURN count(n) AS total_nodes",
-            session_id=session_id
+            f"MATCH (n) WHERE {_session_scope_clause('n', include_run=True)} RETURN count(DISTINCT n) AS total_nodes",
+            session_id=session_id,
+            batch_prefix=batch_prefix,
+            run_id=run_id,
         ).single()
         total_nodes = total_nodes_record["total_nodes"] if total_nodes_record else 0
 
-        # Relationships tied to session
+        # Relationships tied to this exact session ownership set.
         total_relationships_record = session.run(
-            "MATCH ()-[r]->() WHERE r.session_id = $session_id RETURN count(r) AS total_relationships",
-            session_id=session_id
+            f"MATCH ()-[r]->() WHERE {_session_scope_clause('r', include_run=True)} RETURN count(DISTINCT r) AS total_relationships",
+            session_id=session_id,
+            batch_prefix=batch_prefix,
+            run_id=run_id,
         ).single()
         total_relationships = total_relationships_record["total_relationships"] if total_relationships_record else 0
 
         # Relationship labels
         relationship_labels_record = session.run(
-            "MATCH ()-[r]->() WHERE r.session_id = $session_id RETURN COLLECT(DISTINCT type(r)) AS labels",
-            session_id=session_id
+            f"MATCH ()-[r]->() WHERE {_session_scope_clause('r', include_run=True)} RETURN COLLECT(DISTINCT type(r)) AS labels",
+            session_id=session_id,
+            batch_prefix=batch_prefix,
+            run_id=run_id,
         ).single()
         relationship_labels = relationship_labels_record["labels"] if relationship_labels_record else []
 
@@ -35,15 +70,10 @@ def get_graph_metadata(driver, session_id, tool_credentials=None):
         property_keys = [
             record["key"]
             for record in session.run(
-                """
-                MATCH (n)
-                WHERE n.session_id = $session_id OR n.batch_id STARTS WITH $session_id
-                WITH n LIMIT 500
-                UNWIND keys(n) AS key
-                RETURN DISTINCT key
-                ORDER BY key
-                """,
+                f"MATCH (n) WHERE {_session_scope_clause('n', include_run=True)} WITH n LIMIT 500 UNWIND keys(n) AS key RETURN DISTINCT key ORDER BY key",
                 session_id=session_id,
+                batch_prefix=batch_prefix,
+                run_id=run_id,
             )
         ]
 
