@@ -152,6 +152,8 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
     metadata_interval = _env_float("LINKX_GRAPH_STATUS_METADATA_INTERVAL", 2)
     metadata_max_cycles = _env_int("LINKX_GRAPH_STATUS_METADATA_MAX_CYCLES", 2)
     metadata_max_polls = _env_int("LINKX_GRAPH_STATUS_METADATA_MAX_POLLS", 60)
+    metadata_slow_interval = _env_float("LINKX_GRAPH_STATUS_METADATA_SLOW_INTERVAL", 10)
+    metadata_slow_after_changes = _env_int("LINKX_GRAPH_STATUS_METADATA_SLOW_AFTER_CHANGES", 5)
 
     stop_event = registry_entry["stop_event"]
     driver = registry_entry["driver"]
@@ -259,6 +261,8 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
     def emit_metadata():
         metadata_polls = 0
         unchanged_metadata_cycles = 0
+        changed_metadata_emits = 0
+        current_metadata_interval = metadata_interval
         last_metadata_fingerprint = _metadata_fingerprint(registry_entry.get("static_infos"))
         while not stop_event.is_set() and metadata_polls < metadata_max_polls:
             try:
@@ -270,6 +274,9 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
                 if fingerprint != last_metadata_fingerprint:
                     unchanged_metadata_cycles = 0
                     last_metadata_fingerprint = fingerprint
+                    changed_metadata_emits += 1
+                    if changed_metadata_emits >= metadata_slow_after_changes:
+                        current_metadata_interval = metadata_slow_interval
                     socketio.emit(
                         "status",
                         {
@@ -295,7 +302,7 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
                 )
             metadata_polls += 1
             if not stop_event.is_set():
-                socketio.sleep(metadata_interval)
+                socketio.sleep(current_metadata_interval)
 
     # -------------------------
     # Relationships loop (on change)

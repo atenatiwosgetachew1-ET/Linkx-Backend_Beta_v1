@@ -179,6 +179,8 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
     metadata_interval = _env_float("LINKX_GRAPH_STATUS_METADATA_INTERVAL", 2)
     metadata_max_cycles = _env_int("LINKX_GRAPH_STATUS_METADATA_MAX_CYCLES", 2)
     metadata_max_polls = _env_int("LINKX_GRAPH_STATUS_METADATA_MAX_POLLS", 60)
+    metadata_slow_interval = _env_float("LINKX_GRAPH_STATUS_METADATA_SLOW_INTERVAL", 10)
+    metadata_slow_after_changes = _env_int("LINKX_GRAPH_STATUS_METADATA_SLOW_AFTER_CHANGES", 5)
     relationships_active_interval = _env_float("LINKX_GRAPH_STATUS_RELATIONSHIPS_ACTIVE_INTERVAL", 3)
     relationships_idle_interval = _env_float("LINKX_GRAPH_STATUS_RELATIONSHIPS_IDLE_INTERVAL", 10)
     relationships_idle_after_cycles = _env_int("LINKX_GRAPH_STATUS_RELATIONSHIPS_IDLE_AFTER_CYCLES", 2)
@@ -222,6 +224,8 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
     def emit_metadata():
         metadata_polls = 0
         unchanged_metadata_cycles = 0
+        changed_metadata_emits = 0
+        current_metadata_interval = metadata_interval
         last_metadata_fingerprint = None
         while (
             not stop_event.is_set()
@@ -237,6 +241,9 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
                 if fingerprint != last_metadata_fingerprint:
                     unchanged_metadata_cycles = 0
                     last_metadata_fingerprint = fingerprint
+                    changed_metadata_emits += 1
+                    if changed_metadata_emits >= metadata_slow_after_changes:
+                        current_metadata_interval = metadata_slow_interval
                     _log_graph_status(
                         "metadata_emit",
                         session_id,
@@ -245,6 +252,8 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
                         total_nodes=metadata.get("total_nodes"),
                         total_relationships=metadata.get("total_relationships"),
                         relationship_labels=len(metadata.get("relationship_labels") or []),
+                        changed_emits=changed_metadata_emits,
+                        next_interval=current_metadata_interval,
                     )
                     socketio.emit(
                         "status",
@@ -265,6 +274,8 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
                         unchanged_cycles=unchanged_metadata_cycles,
                         total_nodes=metadata.get("total_nodes"),
                         total_relationships=metadata.get("total_relationships"),
+                        changed_emits=changed_metadata_emits,
+                        next_interval=current_metadata_interval,
                     )
                     if unchanged_metadata_cycles >= metadata_max_cycles:
                         registry_entry["metadata_complete"] = True
@@ -274,6 +285,7 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
                             sid=sid,
                             poll=metadata_polls + 1,
                             unchanged_cycles=unchanged_metadata_cycles,
+                            changed_emits=changed_metadata_emits,
                         )
                         break
             except Exception as e:
@@ -289,7 +301,7 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
                 )
             metadata_polls += 1
             if not registry_entry.get("metadata_complete") and not stop_event.is_set():
-                socketio.sleep(metadata_interval)
+                socketio.sleep(current_metadata_interval)
         registry_entry["metadata_complete"] = True
 
     # -------------------------
@@ -330,8 +342,6 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
 
                 # only emit if changed
                 new_hash = hash(tuple((r["id"], r["type"], r["color"], r["bgcolor"]) for r in relationships))
-                if relationships:
-                    registry_entry["metadata_complete"] = True
 
                 if new_hash != last_rel_hash:
                     if stop_event.is_set():
