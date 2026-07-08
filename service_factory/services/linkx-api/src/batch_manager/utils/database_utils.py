@@ -183,6 +183,7 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
     metadata_slow_interval = _env_float("LINKX_GRAPH_STATUS_METADATA_SLOW_INTERVAL", 10)
     metadata_slow_after_changes = _env_int("LINKX_GRAPH_STATUS_METADATA_SLOW_AFTER_CHANGES", 5)
     metadata_event_check_interval = _env_float("LINKX_GRAPH_STATUS_METADATA_EVENT_CHECK_INTERVAL", 1)
+    metadata_debounce_seconds = _env_float("LINKX_GRAPH_STATUS_METADATA_DEBOUNCE_SECONDS", 3)
     relationships_active_interval = _env_float("LINKX_GRAPH_STATUS_RELATIONSHIPS_ACTIVE_INTERVAL", 3)
     relationships_idle_interval = _env_float("LINKX_GRAPH_STATUS_RELATIONSHIPS_IDLE_INTERVAL", 10)
     relationships_idle_after_cycles = _env_int("LINKX_GRAPH_STATUS_RELATIONSHIPS_IDLE_AFTER_CYCLES", 2)
@@ -231,15 +232,33 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
         last_metadata_fingerprint = None
         last_graph_event_id = 0
         next_fallback_check = 0.0
+        pending_graph_event = None
+        pending_graph_event_at = None
 
         while not stop_event.is_set() and not registry_entry.get("metadata_complete"):
             graph_event = latest_graph_metadata_event(session_id, last_graph_event_id)
             if graph_event:
                 last_graph_event_id = graph_event.get("event_id") or last_graph_event_id
                 registry_entry["last_graph_metadata_event"] = graph_event
+                pending_graph_event = graph_event
+                pending_graph_event_at = time.monotonic()
 
             now = time.monotonic()
-            should_fetch_metadata = metadata_polls == 0 or bool(graph_event) or now >= next_fallback_check
+            event_is_hot = bool(pending_graph_event and pending_graph_event_at is not None and (now - pending_graph_event_at) < metadata_debounce_seconds)
+            if metadata_polls > 0 and event_is_hot:
+                _log_graph_status(
+                    "metadata_debounce_wait",
+                    session_id,
+                    sid=sid,
+                    poll=metadata_polls,
+                    debounce_seconds=metadata_debounce_seconds,
+                    event_id=pending_graph_event.get("event_id") if pending_graph_event else None,
+                    remaining_seconds=round(metadata_debounce_seconds - (now - pending_graph_event_at), 2),
+                )
+                socketio.sleep(metadata_event_check_interval)
+                continue
+
+            should_fetch_metadata = metadata_polls == 0 or bool(pending_graph_event) or now >= next_fallback_check
             if not should_fetch_metadata:
                 socketio.sleep(metadata_event_check_interval)
                 continue
@@ -252,16 +271,18 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
                 if stop_event.is_set() or registry_entry.get("metadata_complete"):
                     break
 
-                event_payload = (graph_event or {}).get("payload") or {}
-                if graph_event:
+                event_payload = (pending_graph_event or {}).get("payload") or {}
+                if pending_graph_event:
                     _log_graph_status(
                         "metadata_event",
                         session_id,
                         sid=sid,
                         poll=metadata_polls,
-                        event_id=graph_event.get("event_id"),
+                        event_id=pending_graph_event.get("event_id"),
                         phase=event_payload.get("phase"),
                     )
+                    pending_graph_event = None
+                    pending_graph_event_at = None
 
                 if fingerprint != last_metadata_fingerprint:
                     unchanged_metadata_cycles = 0
