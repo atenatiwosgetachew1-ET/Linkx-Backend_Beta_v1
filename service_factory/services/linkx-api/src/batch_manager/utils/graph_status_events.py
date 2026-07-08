@@ -6,6 +6,10 @@ from datetime import datetime
 GRAPH_METADATA_CHANGED_EVENT = "graph_metadata_changed"
 
 
+def _verbose_logging():
+    return str(os.getenv("LINKX_GRAPH_STATUS_VERBOSE", "0")).lower() in {"1", "true", "yes", "on"}
+
+
 def _database_url():
     return os.getenv("DATABASE_URL") or os.getenv("LINKX_POSTGRES_DSN")
 
@@ -75,8 +79,9 @@ def record_graph_metadata_changed(
                 event_id = cur.fetchone()[0]
             conn.commit()
         return event_id
-    except Exception as exc:
-        print(f"[graph_status_event] record failed session_id={session_id} phase={phase}: {exc}", flush=True)
+    except Exception:
+        if _verbose_logging():
+            print(f"[graph_status_event] record failed session_id={session_id} phase={phase}", flush=True)
         return None
 
 
@@ -117,8 +122,9 @@ def latest_graph_metadata_event(session_id, after_event_id=0):
             "payload": payload if isinstance(payload, dict) else {},
             "created_at": row[2].isoformat() if row[2] else None,
         }
-    except Exception as exc:
-        print(f"[graph_status_event] read failed session_id={session_id}: {exc}", flush=True)
+    except Exception:
+        if _verbose_logging():
+            print(f"[graph_status_event] read failed session_id={session_id}", flush=True)
         return None
 
 
@@ -147,6 +153,7 @@ def has_active_graph_session_job(session_id):
                     (str(session_id),),
                 )
                 return cur.fetchone() is not None
-    except Exception as exc:
-        print(f"[graph_status_event] active job check failed session_id={session_id}: {exc}", flush=True)
+    except Exception:
+        if _verbose_logging():
+            print(f"[graph_status_event] active job check failed session_id={session_id}", flush=True)
         return False

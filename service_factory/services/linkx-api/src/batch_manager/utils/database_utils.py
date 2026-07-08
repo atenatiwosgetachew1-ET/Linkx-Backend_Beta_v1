@@ -46,6 +46,15 @@ def _current_session_run_id(driver, session_id):
 
 
 def _log_graph_status(stage, session_id, sid=None, **details):
+    verbose = str(os.getenv("LINKX_GRAPH_STATUS_VERBOSE", "0")).lower() in {"1", "true", "yes", "on"}
+    always_log = {
+        "metadata_error",
+        "metadata_complete",
+        "metadata_max_polls_complete",
+        "metadata_max_polls_active_reset",
+    }
+    if not verbose and stage not in always_log:
+        return
     parts = [f"[graph_status] {stage}", f"session_id={session_id}"]
     if sid:
         parts.append(f"sid={sid}")
