@@ -73,6 +73,9 @@ def _truthy_config(value):
         return False
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
+def _search_diagnostic_logs_enabled():
+    return str(os.getenv("LINKX_SEARCH_DIAGNOSTIC_LOGS", "false")).lower() in {"1", "true", "yes", "on"}
+
 
 def _source_failure(source, message, error=None):
     item = dict(source or {})
@@ -646,8 +649,30 @@ def batch_data_manager(payload):
             hive_payload=[storage_address, keyword, search_columns_hive, strict, hive_port, tables, date_column, date] #For further hive searchings
             #--------------------------------------------------------------------------            
             #print("search params:","keyword:",keyword,"date:",date,"offset:",offset,"limit:",limit,"hybrid:",hybrid,"strict:",strict,"api_search_endpoint:",api_search_endpoint,"search_columns_elastic:",search_columns_elastic,"search_columns_hive:",search_columns_hive)
+            if _search_diagnostic_logs_enabled():
+                print("[worker-search-exec] endpoint", {
+                    "session_id": session_id,
+                    "strict": bool(strict),
+                    "hybrid": bool(hybrid),
+                    "column": search_columns_elastic,
+                    "keyword_len": len(str(keyword or "")),
+                    "api": API_URL,
+                    "limit": limit,
+                    "offset": offset,
+                }, flush=True)
             response = es_keyword_search(action_id, API_URL, keyword, search_columns_elastic, strict, date_column, date, limit=limit, offset=offset) #Overrides to hive (Result out of bound)        
-            print("es_response:", redact_value(response))
+            if _search_diagnostic_logs_enabled():
+                response_results = response.get("results") if isinstance(response, dict) else None
+                print("[worker-search-exec] response", {
+                    "session_id": session_id,
+                    "strict": bool(strict),
+                    "api": API_URL,
+                    "response_type": type(response).__name__ if response is not None else "None",
+                    "result_keys": list(response.keys()) if isinstance(response, dict) else None,
+                    "total": response.get("total") if isinstance(response, dict) else None,
+                    "result_count": len(response_results) if isinstance(response_results, list) else None,
+                    "message": response.get("message") if isinstance(response, dict) else None,
+                }, flush=True)
         else:#Staric Row files search
             normalized_keyword = str(keyword or "").strip()
             if normalized_keyword and not re.search(r"[A-Za-z0-9]", normalized_keyword):

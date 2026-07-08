@@ -18,8 +18,14 @@ def _safe_api_label(url):
     except Exception:
         return "<invalid-url>"
 
+def _elastic_diagnostic_logs_enabled():
+    value = os.getenv("LINKX_ELASTIC_DIAGNOSTIC_LOGS", os.getenv("LINKX_SEARCH_DIAGNOSTIC_LOGS", "false"))
+    return str(value).lower() in {"1", "true", "yes", "on"}
+
 
 def _log_es_request(label, api_url, payload):
+    if not _elastic_diagnostic_logs_enabled():
+        return
     safe_payload = dict(payload or {})
     for key in list(safe_payload.keys()):
         if str(key).lower() not in {"limit", "offset", "size", "from", "batch_size", "page_size", "scroll_size"}:
@@ -28,6 +34,8 @@ def _log_es_request(label, api_url, payload):
 
 
 def _log_es_response(label, api_url, response, *, page_size=None, collected=None):
+    if not _elastic_diagnostic_logs_enabled():
+        return
     if not isinstance(response, dict):
         print(f"{label}: api={_safe_api_label(api_url)} response_type={type(response).__name__}", flush=True)
         return
@@ -204,7 +212,7 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
             }
         return None
     except Exception as e:
-        print("Elastic error:", str(e))
+        print("Elastic error:", type(e).__name__, {"api": _safe_api_label(API_URL)}, flush=True)
         return None
 
 

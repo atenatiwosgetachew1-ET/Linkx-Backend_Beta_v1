@@ -193,6 +193,9 @@ def _async_worker_jobs_enabled():
 def _async_search_jobs_enabled():
     return _async_worker_jobs_enabled() and str(os.getenv("LINKX_ASYNC_SEARCH_JOBS", "false")).lower() in {"1", "true", "yes"}
 
+def _search_diagnostic_logs_enabled():
+    return str(os.getenv("LINKX_SEARCH_DIAGNOSTIC_LOGS", "false")).lower() in {"1", "true", "yes", "on"}
+
 
 def _new_session_log_file(session_id):
     current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -1700,16 +1703,18 @@ def live_batch_files():
             "session_id": data.get("session_id"),
         }
         search_async = _async_search_jobs_enabled()
-        print("[api-search] request", {
-            "session_id": session_id,
-            "strict": bool(payload.get("strict")),
-            "hybrid": bool(payload.get("hybrid")),
-            "column": payload.get("search_column"),
-            "keyword_len": len(str(payload.get("keyword") or "")),
-            "offset": payload.get("offset"),
-            "limit": payload.get("limit"),
-            "async": search_async,
-        }, flush=True)
+        search_diag = _search_diagnostic_logs_enabled()
+        if search_diag:
+            print("[api-search] request", {
+                "session_id": session_id,
+                "strict": bool(payload.get("strict")),
+                "hybrid": bool(payload.get("hybrid")),
+                "column": payload.get("search_column"),
+                "keyword_len": len(str(payload.get("keyword") or "")),
+                "offset": payload.get("offset"),
+                "limit": payload.get("limit"),
+                "async": search_async,
+            }, flush=True)
         if search_async:
             job = enqueue_worker_job(
                 "search",
@@ -1719,14 +1724,15 @@ def live_batch_files():
                 priority=70,
                 max_attempts=1,
             )
-            print("[api-search] queued", {
-                "session_id": session_id,
-                "job_id": job["job_id"],
-                "queue": "search",
-                "strict": bool(payload.get("strict")),
-                "hybrid": bool(payload.get("hybrid")),
-                "column": payload.get("search_column"),
-            }, flush=True)
+            if search_diag:
+                print("[api-search] queued", {
+                    "session_id": session_id,
+                    "job_id": job["job_id"],
+                    "queue": "search",
+                    "strict": bool(payload.get("strict")),
+                    "hybrid": bool(payload.get("hybrid")),
+                    "column": payload.get("search_column"),
+                }, flush=True)
             return jsonify({
                 "message": "success",
                 "results": {
@@ -1740,19 +1746,21 @@ def live_batch_files():
                 },
             }), 202
 
-        print("[api-search] inline start", {
-            "session_id": session_id,
-            "strict": bool(payload.get("strict")),
-            "hybrid": bool(payload.get("hybrid")),
-            "column": payload.get("search_column"),
-        }, flush=True)
+        if search_diag:
+            print("[api-search] inline start", {
+                "session_id": session_id,
+                "strict": bool(payload.get("strict")),
+                "hybrid": bool(payload.get("hybrid")),
+                "column": payload.get("search_column"),
+            }, flush=True)
         # delegate working logic to batch_data_manager
         result = batch_data_manager(payload)
-        print("[api-search] inline done", {
-            "session_id": session_id,
-            "result_type": type(result).__name__ if result is not None else "None",
-            "result_count": len(result.get("results") or []) if isinstance(result, dict) and isinstance(result.get("results"), list) else None,
-        }, flush=True)
+        if search_diag:
+            print("[api-search] inline done", {
+                "session_id": session_id,
+                "result_type": type(result).__name__ if result is not None else "None",
+                "result_count": len(result.get("results") or []) if isinstance(result, dict) and isinstance(result.get("results"), list) else None,
+            }, flush=True)
         if result is None:
             return jsonify({
                 "results": 0,
