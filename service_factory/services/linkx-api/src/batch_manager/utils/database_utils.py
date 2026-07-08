@@ -1,6 +1,7 @@
 import os
 import time
 from globals import _session_store
+from batch_manager.utils.graph_status_events import has_active_graph_session_job, latest_graph_metadata_event
 
 
 def _env_float(name, default):
@@ -181,6 +182,7 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
     metadata_max_polls = _env_int("LINKX_GRAPH_STATUS_METADATA_MAX_POLLS", 60)
     metadata_slow_interval = _env_float("LINKX_GRAPH_STATUS_METADATA_SLOW_INTERVAL", 10)
     metadata_slow_after_changes = _env_int("LINKX_GRAPH_STATUS_METADATA_SLOW_AFTER_CHANGES", 5)
+    metadata_event_check_interval = _env_float("LINKX_GRAPH_STATUS_METADATA_EVENT_CHECK_INTERVAL", 1)
     relationships_active_interval = _env_float("LINKX_GRAPH_STATUS_RELATIONSHIPS_ACTIVE_INTERVAL", 3)
     relationships_idle_interval = _env_float("LINKX_GRAPH_STATUS_RELATIONSHIPS_IDLE_INTERVAL", 10)
     relationships_idle_after_cycles = _env_int("LINKX_GRAPH_STATUS_RELATIONSHIPS_IDLE_AFTER_CYCLES", 2)
@@ -227,17 +229,40 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
         changed_metadata_emits = 0
         current_metadata_interval = metadata_interval
         last_metadata_fingerprint = None
-        while (
-            not stop_event.is_set()
-            and not registry_entry.get("metadata_complete")
-            and metadata_polls < metadata_max_polls
-        ):
+        last_graph_event_id = 0
+        next_fallback_check = 0.0
+
+        while not stop_event.is_set() and not registry_entry.get("metadata_complete"):
+            graph_event = latest_graph_metadata_event(session_id, last_graph_event_id)
+            if graph_event:
+                last_graph_event_id = graph_event.get("event_id") or last_graph_event_id
+                registry_entry["last_graph_metadata_event"] = graph_event
+
+            now = time.monotonic()
+            should_fetch_metadata = metadata_polls == 0 or bool(graph_event) or now >= next_fallback_check
+            if not should_fetch_metadata:
+                socketio.sleep(metadata_event_check_interval)
+                continue
+
             try:
                 metadata = get_graph_metadata(driver, session_id, tool_credentials)
+                metadata_polls += 1
                 registry_entry["static_infos"] = metadata
                 fingerprint = _metadata_fingerprint(metadata)
                 if stop_event.is_set() or registry_entry.get("metadata_complete"):
                     break
+
+                event_payload = (graph_event or {}).get("payload") or {}
+                if graph_event:
+                    _log_graph_status(
+                        "metadata_event",
+                        session_id,
+                        sid=sid,
+                        poll=metadata_polls,
+                        event_id=graph_event.get("event_id"),
+                        phase=event_payload.get("phase"),
+                    )
+
                 if fingerprint != last_metadata_fingerprint:
                     unchanged_metadata_cycles = 0
                     last_metadata_fingerprint = fingerprint
@@ -248,12 +273,13 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
                         "metadata_emit",
                         session_id,
                         sid=sid,
-                        poll=metadata_polls + 1,
+                        poll=metadata_polls,
                         total_nodes=metadata.get("total_nodes"),
                         total_relationships=metadata.get("total_relationships"),
                         relationship_labels=len(metadata.get("relationship_labels") or []),
                         changed_emits=changed_metadata_emits,
                         next_interval=current_metadata_interval,
+                        event_id=(graph_event or {}).get("event_id"),
                     )
                     socketio.emit(
                         "status",
@@ -264,31 +290,60 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
                         },
                         to=sid
                     )
+                elif graph_event:
+                    unchanged_metadata_cycles = 0
+                    _log_graph_status(
+                        "metadata_event_no_change",
+                        session_id,
+                        sid=sid,
+                        poll=metadata_polls,
+                        event_id=graph_event.get("event_id"),
+                        phase=event_payload.get("phase"),
+                        total_nodes=metadata.get("total_nodes"),
+                        total_relationships=metadata.get("total_relationships"),
+                        changed_emits=changed_metadata_emits,
+                    )
                 else:
                     unchanged_metadata_cycles += 1
+                    active_job = has_active_graph_session_job(session_id)
                     _log_graph_status(
                         "metadata_unchanged",
                         session_id,
                         sid=sid,
-                        poll=metadata_polls + 1,
+                        poll=metadata_polls,
                         unchanged_cycles=unchanged_metadata_cycles,
                         total_nodes=metadata.get("total_nodes"),
                         total_relationships=metadata.get("total_relationships"),
                         changed_emits=changed_metadata_emits,
                         next_interval=current_metadata_interval,
+                        active_job=active_job,
                     )
                     if unchanged_metadata_cycles >= metadata_max_cycles:
-                        registry_entry["metadata_complete"] = True
-                        _log_graph_status(
-                            "metadata_complete",
-                            session_id,
-                            sid=sid,
-                            poll=metadata_polls + 1,
-                            unchanged_cycles=unchanged_metadata_cycles,
-                            changed_emits=changed_metadata_emits,
-                        )
-                        break
+                        if active_job:
+                            unchanged_metadata_cycles = 0
+                            _log_graph_status(
+                                "metadata_wait_active_job",
+                                session_id,
+                                sid=sid,
+                                poll=metadata_polls,
+                                changed_emits=changed_metadata_emits,
+                                next_interval=current_metadata_interval,
+                            )
+                        else:
+                            registry_entry["metadata_complete"] = True
+                            _log_graph_status(
+                                "metadata_complete",
+                                session_id,
+                                sid=sid,
+                                poll=metadata_polls,
+                                unchanged_cycles=unchanged_metadata_cycles,
+                                changed_emits=changed_metadata_emits,
+                            )
+                            break
+
+                next_fallback_check = time.monotonic() + current_metadata_interval
             except Exception as e:
+                metadata_polls += 1
                 _log_graph_status("metadata_error", session_id, sid=sid, error=str(e))
                 socketio.emit(
                     "status",
@@ -299,9 +354,32 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
                     },
                     to=sid
                 )
-            metadata_polls += 1
+                next_fallback_check = time.monotonic() + current_metadata_interval
+
+            if not registry_entry.get("metadata_complete") and metadata_polls >= metadata_max_polls:
+                active_job = has_active_graph_session_job(session_id)
+                if active_job:
+                    _log_graph_status(
+                        "metadata_max_polls_active_reset",
+                        session_id,
+                        sid=sid,
+                        poll=metadata_polls,
+                        changed_emits=changed_metadata_emits,
+                    )
+                    metadata_polls = 0
+                else:
+                    registry_entry["metadata_complete"] = True
+                    _log_graph_status(
+                        "metadata_max_polls_complete",
+                        session_id,
+                        sid=sid,
+                        poll=metadata_polls,
+                        changed_emits=changed_metadata_emits,
+                    )
+                    break
+
             if not registry_entry.get("metadata_complete") and not stop_event.is_set():
-                socketio.sleep(current_metadata_interval)
+                socketio.sleep(metadata_event_check_interval)
         registry_entry["metadata_complete"] = True
 
     # -------------------------

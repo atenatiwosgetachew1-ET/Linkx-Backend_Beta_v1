@@ -17,6 +17,7 @@ from batch_manager.utils.Classified_entities import load_session_risk_entities, 
 from batch_manager.processing.realtime_source_loader import records_to_dataframe, iter_kafka_messages, iter_api_messages
 from batch_manager.processing.rules_compiler import normalize_rule_key
 from batch_manager.analyzing import LA_rules_script
+from batch_manager.utils.graph_status_events import record_graph_metadata_changed
 from globals import load_temp_config,_session_store
 
 try:
@@ -384,6 +385,7 @@ def neo4j_row_data_injector(payload, batch_size=500):
     stop_event = payload.get("stop_event")
     session_id = payload.get("session_id")
     run_id = payload.get("run_id")
+    job_id = payload.get("job_id")
     print("neo4j_row_data_injector_session_id:",session_id)
     if not tool_credentials or df is None:
         log_writer(log_file, f"{datetime.now()} [Error] - Missing Neo4j credentials or dataframe")
@@ -432,6 +434,14 @@ def neo4j_row_data_injector(payload, batch_size=500):
                         SET n += row
                     """, rows=batch)
                     total_rows += len(batch)
+                    record_graph_metadata_changed(
+                        session_id,
+                        job_id=job_id,
+                        run_id=run_id,
+                        phase="store_batch_inserted",
+                        nodes_inserted=len(batch),
+                        extra={"batch_number": batch_number, "action": action},
+                    )
 
                     log_writer(
                         log_file,
@@ -604,6 +614,21 @@ def neo4j_row_data_injector(payload, batch_size=500):
                         parent_session_id=_parent_session_id(session_id),
                         relationship_type=relationship_type,
                         rows=batch)
+                        record_graph_metadata_changed(
+                            session_id,
+                            job_id=job_id,
+                            run_id=run_id,
+                            phase="relationship_batch_inserted",
+                            relationships_inserted=len(batch),
+                            extra={
+                                "action": action,
+                                "relationship_type": relationship_type,
+                                "source": source_col,
+                                "target": target_col,
+                                "source_value": source_value,
+                                "batch_number": i // batch_size + 1,
+                            },
+                        )
 
                         log_writer(
                             log_file,
@@ -652,6 +677,15 @@ def neo4j_row_data_injector(payload, batch_size=500):
                     session.run(query, rows=batch)
                     total_rows += len(batch)
                     batches_inserted = batch_number
+                    record_graph_metadata_changed(
+                        session_id,
+                        job_id=job_id,
+                        run_id=run_id,
+                        batch_id=batch_id,
+                        phase="link_analysis_batch_inserted",
+                        nodes_inserted=len(batch),
+                        extra={"action": action, "rule": rule, "node_label": node_label, "batch_number": batch_number},
+                    )
 
                     if module:
                         try:
@@ -668,6 +702,15 @@ def neo4j_row_data_injector(payload, batch_size=500):
                                 log_writer(
                                     log_file,
                                     f"[{datetime.now()}] [Info] Live analysis batch {batch_number} flags: {live_counts}"
+                                )
+                                record_graph_metadata_changed(
+                                    session_id,
+                                    job_id=job_id,
+                                    run_id=run_id,
+                                    batch_id=batch_id,
+                                    phase="incremental_analysis_updated",
+                                    analysis_updated=True,
+                                    extra={"flags": live_counts, "rule": rule, "node_label": node_label, "batch_number": batch_number},
                                 )
                         except Exception as e:
                             log_writer(
@@ -715,6 +758,14 @@ def neo4j_row_data_injector(payload, batch_size=500):
 
 
             set_session_status(driver, session_id, "ANALYZED", run_id=run_id)
+            record_graph_metadata_changed(
+                session_id,
+                job_id=job_id,
+                run_id=run_id,
+                phase="full_analysis_completed",
+                analysis_updated=True,
+                extra={"rule": rule, "node_label": node_label, "total_batches": batches_inserted},
+            )
             log_writer(log_file, f"[{datetime.now()}] [Info] - Full-graph recomputation finished for rule '{rule}'")
     finally:
         try:
@@ -794,6 +845,7 @@ def _load_rule_module(rule, session_id):
 def realtime_neo4j_message_ingest(payload, df, batch_number):
     session_id = payload.get("session_id")
     run_id = payload.get("run_id")
+    job_id = payload.get("job_id")
     log_file = payload.get("log_file")
     action = payload.get("action") or "Link Analysis"
     rule = payload.get("rule")
@@ -849,6 +901,15 @@ def realtime_neo4j_message_ingest(payload, df, batch_number):
                         SET b += row.props
                         CREATE (a)-[rel:{relationship_type} {{session_id: $session_id, run_id: $run_id, parent_session_id: $parent_session_id, batch_id: $batch_id, created_by: 'linkx', linkx_managed: true, weight: 1}}]->(b)
                     """, rows=relationship_rows, session_id=session_id, run_id=run_id, parent_session_id=_parent_session_id(session_id), batch_id=batch_id)
+                record_graph_metadata_changed(
+                    session_id,
+                    job_id=job_id,
+                    run_id=run_id,
+                    batch_id=batch_id,
+                    phase="realtime_relationship_batch_inserted",
+                    relationships_inserted=len(relationship_rows),
+                    extra={"action": action, "relationship_type": relationship_type, "batch_number": batch_number},
+                )
             log_writer(log_file, f"[{datetime.now()}] [Info] - Realtime relationship batch {batch_id} ingested ({len(relationship_rows)} rows)")
             return
 
@@ -860,6 +921,15 @@ def realtime_neo4j_message_ingest(payload, df, batch_number):
                     ON CREATE SET n.node_identity = 'Entity Node'
                     SET n += row
                 """, rows=clean_rows)
+            record_graph_metadata_changed(
+                session_id,
+                job_id=job_id,
+                run_id=run_id,
+                batch_id=batch_id,
+                phase="realtime_store_batch_inserted",
+                nodes_inserted=len(clean_rows),
+                extra={"action": action, "batch_number": batch_number},
+            )
             log_writer(log_file, f"[{datetime.now()}] [Info] - Realtime storage batch {batch_id} ingested ({len(clean_rows)} rows)")
             return
 
@@ -879,6 +949,15 @@ def realtime_neo4j_message_ingest(payload, df, batch_number):
                 SET n += row
             """
             session.run(query, rows=clean_rows)
+        record_graph_metadata_changed(
+            session_id,
+            job_id=job_id,
+            run_id=run_id,
+            batch_id=batch_id,
+            phase="realtime_link_analysis_batch_inserted",
+            nodes_inserted=len(clean_rows),
+            extra={"action": action, "rule": rule, "node_label": node_label, "batch_number": batch_number},
+        )
 
         if module:
             live_counts = run_incremental_rule(module, driver, session_id, node_label, batch_id, log_file)
@@ -890,6 +969,15 @@ def realtime_neo4j_message_ingest(payload, df, batch_number):
                     "flags": live_counts,
                     "provisional": True,
                 }
+            record_graph_metadata_changed(
+                session_id,
+                job_id=job_id,
+                run_id=run_id,
+                batch_id=batch_id,
+                phase="realtime_incremental_analysis_updated",
+                analysis_updated=True,
+                extra={"flags": live_counts, "rule": rule, "node_label": node_label, "batch_number": batch_number},
+            )
             log_writer(log_file, f"[{datetime.now()}] [Info] - Realtime incremental analysis for {batch_id}: {live_counts}")
         else:
             log_writer(log_file, f"[{datetime.now()}] [Warning] - {rule_status}")
@@ -1076,6 +1164,7 @@ def analyzer(payload):
                     "target": payload.get("target"),
                     "relationship": payload.get("relationship"),
                     "log_file": payload.get("log_file"),
+                    "job_id": payload.get("job_id"),
                     "stop_event": stop_event
                 }
                 if not _neo4j_inject_with_retry(params):
