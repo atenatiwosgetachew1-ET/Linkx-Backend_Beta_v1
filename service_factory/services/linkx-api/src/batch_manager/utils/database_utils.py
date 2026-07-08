@@ -230,6 +230,7 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
         changed_metadata_emits = 0
         current_metadata_interval = metadata_interval
         last_metadata_fingerprint = None
+        last_metadata_fetch_at = None
         last_graph_event_id = 0
         next_fallback_check = 0.0
         pending_graph_event = None
@@ -245,7 +246,11 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
 
             now = time.monotonic()
             event_is_hot = bool(pending_graph_event and pending_graph_event_at is not None and (now - pending_graph_event_at) < metadata_debounce_seconds)
-            if metadata_polls > 0 and event_is_hot:
+            fetch_due_during_hot_stream = bool(
+                last_metadata_fetch_at is None
+                or (now - last_metadata_fetch_at) >= current_metadata_interval
+            )
+            if metadata_polls > 0 and event_is_hot and not fetch_due_during_hot_stream:
                 _log_graph_status(
                     "metadata_debounce_wait",
                     session_id,
@@ -254,6 +259,7 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
                     debounce_seconds=metadata_debounce_seconds,
                     event_id=pending_graph_event.get("event_id") if pending_graph_event else None,
                     remaining_seconds=round(metadata_debounce_seconds - (now - pending_graph_event_at), 2),
+                    next_forced_refresh_in=round(current_metadata_interval - (now - last_metadata_fetch_at), 2) if last_metadata_fetch_at is not None else 0,
                 )
                 socketio.sleep(metadata_event_check_interval)
                 continue
@@ -266,6 +272,7 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
             try:
                 metadata = get_graph_metadata(driver, session_id, tool_credentials)
                 metadata_polls += 1
+                last_metadata_fetch_at = time.monotonic()
                 registry_entry["static_infos"] = metadata
                 fingerprint = _metadata_fingerprint(metadata)
                 if stop_event.is_set() or registry_entry.get("metadata_complete"):
