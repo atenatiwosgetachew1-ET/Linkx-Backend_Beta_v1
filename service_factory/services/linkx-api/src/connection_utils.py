@@ -24,10 +24,8 @@ def rest_api(id, api_url, session_id):
                 save_temp_config("active_REST_API", api_url, session_id)
                 return True
             else:
-                print(f"API not reachable! Status code: {response.status_code}")
                 return False
         except Exception as e:
-            print(f"[REST API Error] {e}")
             return False
 
     elif id == "disconnect":
@@ -85,7 +83,6 @@ def HDFSstorage(id, webhdfs_url,session_id):
                 save_temp_config("storage_hdfs_uri", f"hdfs://{storage_host}:{hdfs_rpc_port}", session_id)
             return True
         except Exception as e:
-            print(f"Error: {e}")
             # print("hdfs not found")
             return False
     if id == "disconnect":
@@ -125,11 +122,9 @@ def tools(id,action,payload):
                             status["sent_static"] = False
                         return True
                     except Exception as e:
-                        print(str(e))
                         # response={"state":"failed","message":"Entered wrong credentials!"}
                         return False
             except Exception as e:
-                print(str(e))
                 #response={"state":"failed","message":"URI scheme not supported!"}
                 return False
         if action == "disconnect":  
@@ -157,6 +152,5 @@ def tools(id,action,payload):
                         # response={"state":"failed","message":"Entered wrong credentials!"}
                         return False
             except Exception as e:
-                print(e)
                 #response={"state":"failed","message":"URI scheme not supported!"}
                 return False

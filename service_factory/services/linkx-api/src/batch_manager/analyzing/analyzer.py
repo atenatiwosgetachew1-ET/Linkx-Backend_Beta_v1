@@ -99,7 +99,6 @@ def _neo4j_inject_with_retry(params, max_attempts=4):
                 f"cleaned partial run result={cleanup_result}; "
                 f"retrying attempt {attempt + 1}/{max_attempts} after {delay:.1f}s: {exc}"
             )
-            print(message)
             if log_file:
                 log_writer(log_file, message)
             if _stop_aware_sleep(stop_event, delay):
@@ -752,7 +751,6 @@ def neo4j_row_data_injector(payload, batch_size=500):
                         "provisional": False,
                     }
             else:
-                print(rule_status)
                 log_writer(log_file, f"[{datetime.now()}] [Warning] - {rule_status}")
 
 
@@ -1060,7 +1058,6 @@ def realtime_analyzer(payload):
 # ----------------- Analyzer -----------------
 
 def analyzer(payload):
-    print("analyzer called")
     if payload.get("id") == "realtime_data":
         realtime_analyzer(payload)
         return True
@@ -1074,37 +1071,28 @@ def analyzer(payload):
     # Spark is opt-in; API nodes in the split deployment do not require Java.
     use_spark = bool(payload.get("use_spark", False))
 
-    print(f"[{session_id}] Loading dataframe id={dataframe_id} path={dataframe_dir} use_spark={use_spark} expected_rows={expected_rows}")
     df = load_file(dataframe_dir, session_id, use_spark=use_spark)
     if df is None:
-        print(f"[{session_id}] Failed to load DataFrame from: {dataframe_dir}")
         return False
 
-    print(f"[{session_id}] DataFrame loaded successfully: {df}")
     actual_rows = None
     try:
         actual_rows = df.count() if hasattr(df, "count") and "pyspark" in str(type(df)).lower() else len(df)
     except Exception as exc:
-        print(f"[{session_id}] Unable to count loaded DataFrame rows: {exc}")
-    print(f"[{session_id}] Loaded dataframe rows actual={actual_rows} expected={expected_rows} id={dataframe_id} path={dataframe_dir}")
+        pass
     try:
         expected_int = int(expected_rows) if expected_rows not in (None, "", "None") else None
     except (TypeError, ValueError):
         expected_int = None
     if expected_int is not None and actual_rows is not None and int(actual_rows) != expected_int:
-        print(f"[{session_id}] DataFrame row count mismatch: actual={actual_rows} expected={expected_int}")
         return False
 
     # ---------- Batch Data Processing ----------
     if payload.get("id") == "batch_data" and payload.get("type") == "new":
-        print(1)
         if stop_event and stop_event.is_set():
-            print(0)
-            print(f"[{session_id}] Analyzer aborted early due to stop signal.")
             return
 
         if payload.get("tool") == "neo4j":
-            print(2)
             driver = None
             tool_credentials = payload.get("tool_credentials")
             if tool_credentials:
@@ -1116,7 +1104,6 @@ def analyzer(payload):
                     log_writer(payload.get("log_file"), f"[{datetime.now()}] [Error] - Invalid Neo4j credential configuration: {exc}")
                     return False
                 except Exception as exc:
-                    print(f"[{session_id}] Payload Neo4j credential check failed creds={redacted_neo4j_credentials(tool_credentials)} error={exc}")
                     log_writer(payload.get("log_file"), f"[{datetime.now()}] [Error] - Neo4j connection verification failed: {exc}")
                     try:
                         if driver:
@@ -1135,7 +1122,6 @@ def analyzer(payload):
                     log_writer(payload.get("log_file"), f"[{datetime.now()}] [Error] - Invalid Neo4j credential configuration: {exc}")
                     return False
                 except Exception as exc:
-                    print(f"[{session_id}] Session Neo4j credential check failed error={exc}")
                     log_writer(payload.get("log_file"), f"[{datetime.now()}] [Error] - Neo4j connection verification failed: {exc}")
                     try:
                         if driver:
@@ -1144,7 +1130,6 @@ def analyzer(payload):
                         driver = None
                     return False
             if not driver:
-                print(f"[{session_id}] Neo4j driver not found after credential resolution")
                 log_writer(payload.get("log_file"), f"[{datetime.now()}] [Error] - Neo4j driver not found after credential resolution")
                 return False
 
@@ -1167,12 +1152,9 @@ def analyzer(payload):
                     "stop_event": stop_event
                 }
                 if not _neo4j_inject_with_retry(params):
-                    print(f"[{session_id}] Batch analysis cancelled before completion.")
                     return False
-                print(f"[{session_id}] Batch analysis completed successfully.")
                 return True
             except Exception as e:
-                print(f"[{session_id}] Batch analysis failed: {e}")
                 log_writer(payload.get("log_file"), f"[Error] Analyzing session {session_id} failed {e}")
                 if enqueue_cleanup_run and payload.get("run_id"):
                     try:
@@ -1191,4 +1173,3 @@ def analyzer(payload):
 
 
 
-    print(f"[{session_id}] Analyzer finished")

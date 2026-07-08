@@ -102,11 +102,9 @@ def _base_analyzer_payload(session_id, credentials):
 
 
 def _run_analyzer(payload, step_name):
-    print(f"STR link analysis {step_name} analyzer payload:", redact_value(payload))
     try:
         return analyzer(payload) is True
     except Exception as e:
-        print(f"STR link analysis {step_name} analyzer failed:", e)
         return False
 
 
@@ -118,7 +116,6 @@ def _ingest_dataframe_to_neo4j(session_id, entity):
 
     credentials = _neo4j_credentials(session_id)
     if not credentials:
-        print("STR link analysis missing neo4j credentials")
         return False
 
     link_payload = _base_analyzer_payload(session_id, credentials)
@@ -171,7 +168,6 @@ def _analysis_summary(session_id, entity):
 
     driver = tools("neo4j", "check", {"session_id": session_id})
     if not driver:
-        print("STR link analysis summary failed: missing neo4j driver")
         return None
 
     node_label = rule_to_node_label("bank transactions", session_id)
@@ -245,7 +241,6 @@ def _analysis_summary(session_id, entity):
             },
         }
     except Exception as e:
-        print("STR link analysis summary failed:", e)
         return None
 
 
@@ -300,7 +295,6 @@ def _relationship_panel_payload(session_id, entity, status):
             ])
             return relationships
     except Exception as e:
-        print("STR link analysis relationships summary failed:", e)
         return relationships
 
 

@@ -850,7 +850,6 @@ def _load_reusable_parent_session(current_actor, requested_session=None):
 @auth_required
 @validate_json_payload(COMMON_SCHEMAS["init"])
 def init():
-    print("Initializing ....")
     data = validated_json()
     current_actor = current_actor_from_request()
     old_session = data.get('existing_session') or data.get('session_id')
@@ -1003,7 +1002,6 @@ def configuration():
             except PayloadValidationError as exc:
                 return _validation_error_response(exc)
             for file, filename, _ext in safe_files:
-                print(f"Uploaded file: {filename}")
                 #Check uploading folder exists
                 upload_dir = ensure_artifact_dir("uploads", session_id)
                 os.makedirs(upload_dir, exist_ok=True)
@@ -1015,7 +1013,6 @@ def configuration():
                 try:
                     rule_json = validate_rules_json(file_path)
                     if rule_json:
-                        print("The rule is valid:", filename)
                         uploaded_rule_name = rule_json.get("rule_name") or filename.rsplit(".", 1)[0]
                         rule_name = data.get("rule_name", "").strip() or uploaded_rule_name
                         rule_key = normalize_rule_key(rule_name)
@@ -1030,7 +1027,6 @@ def configuration():
                         register_artifact(output_py, "rule", session_id=session_id, filename=os.path.basename(output_py), metadata={"source": "compiled_rule"})
 
                         # Register rule into configuration
-                        print("Rule uploaded", session_id)
                         config = load_temp_config("all", session_id)
                         config_dict = config.get("data", {}) or {}
 
@@ -1052,7 +1048,6 @@ def configuration():
 
                         return _configuration_success(config_dict)
                     else:
-                        print("The rule is invalid")
                         return jsonify({'results': "Invalid rule file.", 'message': 'failed!'}), 200
                 except Exception as e:
                     current_app.logger.warning("rule upload failed session_id=%s: %s", session_id, e)
@@ -1183,7 +1178,6 @@ def configuration():
 @permission_required("source:create")
 @validate_json_payload(COMMON_SCHEMAS["init_source"])
 def init_source():
-    print("Initializing source window....")
     data = validated_json()
     active_session = data.get('session_id')
     window_id = data.get('window_id')
@@ -1247,7 +1241,6 @@ def connect_to_source():
         if not address:
             return jsonify({'status': 'error', 'message': 'Connection failed! Missing broker address.'}), 400
         if kafka_broker("check", address, session_id, topic=topic) is True:
-            print("broker verified")
             save_temp_config("active_source_type", "broker", session_id)
             save_temp_config("active_source_mode", "batch" if _is_kafka_batch_topic(topic) else "realtime", session_id)
             save_temp_config("dataframe_ready", False, session_id)
@@ -1259,7 +1252,6 @@ def connect_to_source():
                         df = load_latest_kafka_message(address, topic, session_id)
                     return _source_connected_response(df, session_id)
                 except Exception as e:
-                    print(f"[Kafka latest message error] {e}")
                     return jsonify({'status': 'warning', 'message': 'Broker connected, but latest message could not be loaded.'}), 200
             return jsonify({'status': 'success', 'message': 'Connection established!'}), 200
         return jsonify({'status': 'error', 'message': 'Connection failed!'}), 200
@@ -1268,7 +1260,6 @@ def connect_to_source():
         if not address:
             return jsonify({'status': 'error', 'message': 'Connection failed! Missing API address.'}), 400
         if rest_api("check", address, session_id) is True:
-            print("api verified")
             save_temp_config("active_source_type", "api", session_id)
             save_temp_config("active_source_mode", "batch" if source_mode == "batch" else "realtime", session_id)
             save_temp_config("dataframe_ready", False, session_id)
@@ -1276,7 +1267,6 @@ def connect_to_source():
                 df = load_realtime_api(address, session_id)
                 return _source_connected_response(df, session_id)
             except Exception as e:
-                print(f"[API latest message error] {e}")
                 return jsonify({'status': 'warning', 'message': 'API connected, but latest message could not be loaded.'}), 200
         return jsonify({'status': 'error', 'message': 'Connection failed!'}), 200
 
@@ -1347,15 +1337,14 @@ def disconnect_source():
                 neo4j_credentials=tool_credentials if isinstance(tool_credentials, dict) else None,
                 payload={"cleanup_targets": ["neo4j", "artifacts"], "event": "disconnect_source"},
             )
-        except Exception as exc:
-            print(f"[cleanup] failed to enqueue window cleanup for {session_id}: {exc}")
+        except Exception:
+            pass
 
         response = {'status': 'success', 'message': 'Disconnected!'}
         if cleanup_id:
             response['cleanup_id'] = cleanup_id
         return jsonify(response), 200
     except Exception as e:
-        print(e)
         return jsonify({'status': 'error', 'message': 'Disconnecting failed!'}), 500
 
 def _log_connect_to_tool_validation_failure(detail, field=None, *, payload=None, session_id=None, source_id=None):
@@ -1557,8 +1546,8 @@ def disconnect_tool():
                     neo4j_credentials=tool_credentials if isinstance(tool_credentials, dict) else None,
                     payload={"cleanup_targets": ["neo4j"], "event": "disconnect_tool", "tool_name": tool_name},
                 )
-            except Exception as exc:
-                print(f"[cleanup] failed to enqueue tool cleanup for {session_id}: {exc}")
+            except Exception:
+                pass
             response = {'status': 'success', 'message': 'Disconnected!'}
             if cleanup_id:
                 response['cleanup_id'] = cleanup_id
@@ -1610,8 +1599,7 @@ def close_source_window():
                 "window_id": str(data.get('window_id')) if data.get('window_id') is not None else None,
             },
         )
-    except Exception as exc:
-        print(f"[cleanup] failed to enqueue close_source_window cleanup for {session_id}: {exc}")
+    except Exception:
         return jsonify({'status': 'error', 'message': 'cleanup_enqueue_failed'}), 500
 
     return jsonify({
@@ -1704,17 +1692,6 @@ def live_batch_files():
         }
         search_async = _async_search_jobs_enabled()
         search_diag = _search_diagnostic_logs_enabled()
-        if search_diag:
-            print("[api-search] request", {
-                "session_id": session_id,
-                "strict": bool(payload.get("strict")),
-                "hybrid": bool(payload.get("hybrid")),
-                "column": payload.get("search_column"),
-                "keyword_len": len(str(payload.get("keyword") or "")),
-                "offset": payload.get("offset"),
-                "limit": payload.get("limit"),
-                "async": search_async,
-            }, flush=True)
         if search_async:
             job = enqueue_worker_job(
                 "search",
@@ -1724,15 +1701,6 @@ def live_batch_files():
                 priority=70,
                 max_attempts=1,
             )
-            if search_diag:
-                print("[api-search] queued", {
-                    "session_id": session_id,
-                    "job_id": job["job_id"],
-                    "queue": "search",
-                    "strict": bool(payload.get("strict")),
-                    "hybrid": bool(payload.get("hybrid")),
-                    "column": payload.get("search_column"),
-                }, flush=True)
             return jsonify({
                 "message": "success",
                 "results": {
@@ -1746,21 +1714,8 @@ def live_batch_files():
                 },
             }), 202
 
-        if search_diag:
-            print("[api-search] inline start", {
-                "session_id": session_id,
-                "strict": bool(payload.get("strict")),
-                "hybrid": bool(payload.get("hybrid")),
-                "column": payload.get("search_column"),
-            }, flush=True)
         # delegate working logic to batch_data_manager
         result = batch_data_manager(payload)
-        if search_diag:
-            print("[api-search] inline done", {
-                "session_id": session_id,
-                "result_type": type(result).__name__ if result is not None else "None",
-                "result_count": len(result.get("results") or []) if isinstance(result, dict) and isinstance(result.get("results"), list) else None,
-            }, flush=True)
         if result is None:
             return jsonify({
                 "results": 0,
@@ -1787,7 +1742,7 @@ def live_batch_files():
         if _async_worker_jobs_enabled():
             reactivation = reactivate_analysis_session(session_id)
             if reactivation.get("reactivated"):
-                print("create_DF session reactivated:", reactivation)
+                pass
             payload = dict(data)
             payload.setdefault("id", "create_DF")
             payload["session_id"] = session_id
@@ -1849,7 +1804,7 @@ def live_batch_files():
         if _async_worker_jobs_enabled():
             reactivation = reactivate_analysis_session(session_id)
             if reactivation.get("reactivated"):
-                print("stream session reactivated:", reactivation)
+                pass
             run_id = uuid.uuid4().hex
             log_file = _new_session_log_file(session_id)
             payload = dict(values)
@@ -1886,7 +1841,6 @@ def live_batch_files():
             values["id"] = "start_session"
             stream = batch_data_manager(values)
             if stream is not None:
-                print("stream:", stream)
                 return jsonify({'results': stream, 'message': 'success'}), 200
             return jsonify({'results': stream, 'message': 'failed!'}), 400
         return jsonify({'results': session, 'message': 'failed!'}), 400
@@ -2026,4 +1980,4 @@ def get_graph():
 if __name__ == "__main__":
     #socketio.run(app, host="0.0.0.0", port=8000, debug=True)
     port = int(os.getenv("PORT", "8100"))
-    eventlet.wsgi.server(eventlet.listen(('0.0.0.0', port)), app)
+    eventlet.wsgi.server(eventlet.listen(('0.0.0.0', port)), app, log_output=False)

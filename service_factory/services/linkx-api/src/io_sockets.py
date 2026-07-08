@@ -303,7 +303,6 @@ def register_socket_handlers(socketio: SocketIO):
         if not session_id:
             return
 
-        print(f"[str_report_socket] graph_status_subscribe sid={sid} session_id={session_id}")
 
         entry = get_or_create_socket_entry(sid)
         _track_socket_session(sid, session_id)
@@ -317,10 +316,8 @@ def register_socket_handlers(socketio: SocketIO):
             g_entry = entry["graph_statuses"][session_id]
 
             if is_socket_alive(sid, socketio):
-                print(f"Graph status already running for session {session_id}, sid {sid}")
                 return
             else:
-                print(f"Cleaning up stale graph status for session {session_id}, sid {sid}")
 
                 task = g_entry.get("task")
                 stop_event = g_entry.get("stop_event")
