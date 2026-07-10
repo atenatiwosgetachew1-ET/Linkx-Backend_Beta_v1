@@ -6,14 +6,17 @@ Move all heavy search and dataframe work to the worker server, keep the API thin
 
 ## Implementation Checklist
 
-### 1. Make the worker Spark-ready
+### 1. Make the worker Spark-ready - Done
 
-- Install Spark on the worker host.
+- Worker venv provides Spark/PySpark `3.5.5`.
 - Set `JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64`.
-- Set `SPARK_HOME` to the Spark install root.
-- Add Spark `bin` to `PATH`.
-- Verify `spark-submit --version` works.
-- Verify `pyspark --version` works.
+- Set `PYSPARK_PYTHON=/opt/linkx-worker/.venv/bin/python`.
+- Set `PYSPARK_DRIVER_PYTHON=/opt/linkx-worker/.venv/bin/python`.
+- Add `/opt/linkx-worker/.venv/bin` and Java `bin` to worker `PATH`.
+- Verified `/opt/linkx-worker/.venv/bin/spark-submit --version` works.
+- Verified `/opt/linkx-worker/.venv/bin/pyspark --version` works.
+- Verified worker-side Spark smoke test returns Spark `3.5.5` and `s.range(1).count() == 1`.
+- Current smoke-test HDFS default is `file:///`; storage/HDFS config should be validated before moving HDFS dataframe jobs.
 
 ### 2. Keep the API as intake only
 
