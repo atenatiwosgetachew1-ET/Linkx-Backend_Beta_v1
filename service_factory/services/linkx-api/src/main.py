@@ -1690,30 +1690,6 @@ def live_batch_files():
             "storage": storage_ip,
             "session_id": data.get("session_id"),
         }
-        search_async = _async_search_jobs_enabled()
-        search_diag = _search_diagnostic_logs_enabled()
-        if search_async:
-            job = enqueue_worker_job(
-                "search",
-                "search",
-                session_id=session_id,
-                payload=payload,
-                priority=70,
-                max_attempts=1,
-            )
-            return jsonify({
-                "message": "success",
-                "results": {
-                    "accepted": True,
-                    "status": "queued",
-                    "job_id": job["job_id"],
-                    "job": job,
-                    "session_id": session_id,
-                    "queue": "search",
-                    "poll_url": f"/jobs/{job['job_id']}",
-                },
-            }), 202
-
         # delegate working logic to batch_data_manager
         result = batch_data_manager(payload)
         if result is None:
@@ -1739,33 +1715,6 @@ def live_batch_files():
     # -----------------------------
     if action_id == "create_DF":
         current_app.logger.info("create_DF requested session_id=%s kind=%s type=%s", session_id, data.get("kind", ""), data.get("type", ""))
-        if _async_worker_jobs_enabled():
-            reactivation = reactivate_analysis_session(session_id)
-            if reactivation.get("reactivated"):
-                pass
-            payload = dict(data)
-            payload.setdefault("id", "create_DF")
-            payload["session_id"] = session_id
-            job = enqueue_worker_job(
-                "dataframe",
-                "create_DF",
-                session_id=session_id,
-                payload=payload,
-                priority=60,
-                max_attempts=1,
-            )
-            return jsonify({
-                "message": "success",
-                "results": {
-                    "accepted": True,
-                    "status": "queued",
-                    "job_id": job["job_id"],
-                    "job": job,
-                    "session_id": session_id,
-                    "queue": "dataframe",
-                    "poll_url": f"/jobs/{job['job_id']}",
-                },
-            }), 202
         return create_dataframe_response(data, session_id)
     # -----------------------------
     # START SESSION

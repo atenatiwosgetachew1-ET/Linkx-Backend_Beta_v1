@@ -24,6 +24,45 @@ class STRLinkAnalysisApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), {"message": "success!"})
 
+    def test_live_batch_files_search_runs_synchronously(self):
+        import main
+
+        client = main.app.test_client()
+        login_response = client.post("/auth/login", json={"username": "admin", "password": "TestAdminPassword123!"})
+        self.assertEqual(login_response.status_code, 200)
+        token = login_response.get_json()["token"]
+        init_response = client.post("/init", json={}, headers={"Authorization": f"Bearer {token}"})
+        self.assertEqual(init_response.status_code, 200)
+        session_id = str(init_response.get_json()["results"])
+
+        with patch("main._async_search_jobs_enabled", return_value=True):
+            with patch("main.enqueue_worker_job") as enqueue_mock:
+                with patch("main.batch_data_manager", return_value={
+                    "results": [{"name": "Results found for '5642153'", "keyword": "5642153", "size": 1, "strict": True, "type": "elastic", "column": ["accountno", "benaccountno"]}],
+                    "has_more": 0,
+                    "offset": 0,
+                    "limit": 0,
+                    "message": "1 results found",
+                }) as batch_mock:
+                    response = client.post(
+                        "/live_batch_files",
+                        json={
+                            "id": "search",
+                            "session_id": session_id,
+                            "value": {
+                                "keyword": "5642153",
+                                "hybrid": True,
+                                "strict_mood": True,
+                            },
+                        },
+                        headers={"Authorization": f"Bearer {token}"},
+                    )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["message"], "success")
+        batch_mock.assert_called_once()
+        enqueue_mock.assert_not_called()
+
     def test_STR_link_analysis_creates_dataframe_when_elastic_has_results(self):
         elastic_response = {
             "results": [
@@ -39,7 +78,8 @@ class STRLinkAnalysisApiTest(unittest.TestCase):
             "message": "1 results found",
         }
 
-        with patch("api.STR_link_analysis._prepare_session", return_value=True), \
+        with patch("api.STR_link_analysis._async_worker_jobs_enabled", return_value=True), \
+             patch("api.STR_link_analysis._prepare_session", return_value=True), \
              patch("api.STR_link_analysis.load_temp_config", side_effect=lambda key, session_id: {
                  "date_column": "transactiondate",
                  "active_storage_address": "172.20.137.129",

@@ -348,34 +348,6 @@ def STR_link_analysis():
     if not entity or not type or not value:
         return jsonify({'message': 'failed!'}), 400
 
-    if _async_worker_jobs_enabled():
-        payload = dict(data)
-        payload["entity"] = entity
-        payload["type"] = type
-        payload["value"] = value
-        payload["session_id"] = session_id
-        payload.setdefault("str_id", session_id)
-        job = enqueue_worker_job(
-            "analysis",
-            "str_link_analysis",
-            session_id=session_id,
-            payload=payload,
-            priority=55,
-            max_attempts=1,
-        )
-        return jsonify({
-            "message": "accepted",
-            "session_id": session_id,
-            "wait_for_prepare": True,
-            "results": {
-                "status": "queued",
-                "job_id": job["job_id"],
-                "job": job,
-                "session_id": session_id,
-                "queue": "analysis",
-            },
-        }), 202
-
     if entity == "bank":
         if type == "account_number":
             if not _prepare_session(session_id):

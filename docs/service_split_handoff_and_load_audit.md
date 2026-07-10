@@ -465,6 +465,8 @@ Deployment touches Server 1 API and Server 3 worker. No database migration is re
 
 ## Notes For A New Chat
 
+- Search, strict/fuzzy dataframe creation, and STR link analysis are currently kept synchronous in the API while the strict/fuzzy Elastic behavior is being stabilized. The worker queue paths still exist in the codebase, but the default runtime path for these flows should be treated as synchronous for now.
+
 - The active deployment is the service-factory split, not the root monolith.
 - Be careful not to break current frontend contracts while migrating heavy routes.
 - API port is `8000` on Server 1.

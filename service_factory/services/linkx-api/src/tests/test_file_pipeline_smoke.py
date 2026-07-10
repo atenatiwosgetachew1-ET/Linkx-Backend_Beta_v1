@@ -3,6 +3,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 class FilePipelineSmokeTest(unittest.TestCase):
@@ -33,21 +34,24 @@ class FilePipelineSmokeTest(unittest.TestCase):
         )
         self.assertEqual(upload_response.status_code, 200)
 
-        create_response = client.post(
-            "/live_batch_files",
-            json={
-                "id": "create_DF",
-                "session_id": session_id,
-                "kind": "files",
-                "type": "array",
-                "value": ["sample.csv"],
-            },
-        )
+        with patch("main._async_worker_jobs_enabled", return_value=True):
+            with patch("main.enqueue_worker_job") as enqueue_mock:
+                create_response = client.post(
+                    "/live_batch_files",
+                    json={
+                        "id": "create_DF",
+                        "session_id": session_id,
+                        "kind": "files",
+                        "type": "array",
+                        "value": ["sample.csv"],
+                    },
+                )
         self.assertEqual(create_response.status_code, 200)
 
         payload = create_response.get_json()
-        self.assertEqual(payload["message"], "success!")
+        self.assertEqual(payload["message"], "success")
         self.assertEqual(payload["results"]["num_rows"], 2)
+        enqueue_mock.assert_not_called()
         self.assertTrue(
             os.path.exists(f"public/temp_dfParts/merged_dfpart_{session_id}/merged_dfpart_{session_id}.parquet")
         )
