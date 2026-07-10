@@ -1,50 +1,61 @@
 # Server 1 Stress Test Visuals
 
-These charts are based on the recorded k6 results already captured for Server 1 in chat.
-They are not live exports from a time-series backend, so they should be treated as a
-clear visual summary of the current benchmark snapshot.
+These charts summarize the latest Server 1 rechecks used for the backend ISO assessment.
+They are point-in-time benchmark snapshots, not live exports from a monitoring system.
+Older extended concurrency ladders remain documented in the broader handoff materials.
 
 ## Control Plane
 
 Script: `tests/stress/k6/server1_session_control_plane.js`
 
-| VUs | p95 latency |
-|---|---:|
-| 5 | 452.43 ms |
-| 10 | 931.03 ms |
-| 15 | 1.43 s |
-| 16 | 1.58 s |
-| 17 | 1.68 s |
-| 20 | 1.98 s |
+| VUs | avg latency | p95 latency | iteration p95 |
+|---|---:|---:|---:|
+| 1 | 135.95 ms | 202.93 ms | 797.19 ms |
+| 5 | 271.91 ms | 448.07 ms | 1.46 s |
+| 10 | 583.87 ms | 928.24 ms | 2.76 s |
 
 ```mermaid
 xychart-beta
     title "Server 1 Control Plane p95 Latency"
-    x-axis [5, 10, 15, 16, 17, 20]
-    y-axis "p95 latency (ms)" 0 --> 2200
-    line [452.43, 931.03, 1430, 1580, 1680, 1980]
+    x-axis [1, 5, 10]
+    y-axis "p95 latency (ms)" 0 --> 1000
+    line [202.93, 448.07, 928.24]
 ```
 
 ## Graph Routes
 
 Script: `tests/stress/k6/server1_graph_routes.js`
 
-| VUs | p95 latency |
-|---|---:|
-| 5 | 650.11 ms |
-| 10 | 1.22 s |
-| 11 | 1.43 s |
-| 12 | 1.57 s |
-| 13 | 1.64 s |
-| 15 | 1.97 s |
-| 20 | 2.52 s |
+| VUs | avg latency | p95 latency | iteration p95 |
+|---|---:|---:|---:|
+| 1 | 209.54 ms | 306.97 ms | 820.75 ms |
+| 5 | 442.91 ms | 694.67 ms | 1.48 s |
+| 10 | 995.13 ms | 1.48 s | 2.95 s |
 
 ```mermaid
 xychart-beta
     title "Server 1 Graph Route p95 Latency"
-    x-axis [5, 10, 11, 12, 13, 15, 20]
-    y-axis "p95 latency (ms)" 0 --> 2700
-    line [650.11, 1220, 1430, 1570, 1640, 1970, 2520]
+    x-axis [1, 5, 10]
+    y-axis "p95 latency (ms)" 0 --> 1600
+    line [306.97, 694.67, 1480]
+```
+
+## Graph Throughput
+
+Graph-route throughput derived from the same rechecks:
+
+| VUs | analyses/sec |
+|---|---:|
+| 1 | 1.47724 |
+| 5 | 4.473422 |
+| 10 | 4.94063 |
+
+```mermaid
+xychart-beta
+    title "Server 1 Graph Route Throughput"
+    x-axis [1, 5, 10]
+    y-axis "analyses/sec" 0 --> 6
+    line [1.47724, 4.473422, 4.94063]
 ```
 
 ## STR Search / Dataframe
@@ -73,7 +84,8 @@ xychart-beta
 
 ## Short Read
 
-- Control-plane traffic stays healthy longer than graph traffic.
-- Graph routes become noticeably slower earlier, around 11-12 VUs.
-- STR is currently not a valid capacity benchmark because the linking path is not available.
-- The most useful live capacity signals for Server 1 are the control-plane and graph-route charts.
+- Control-plane traffic stays within the `300 ms` average target at `1 VU` and `5 VUs`, but not at `10 VUs`.
+- Graph routes exceed the `300 ms` average target from `5 VUs` upward.
+- End-to-end graph-route time remains below `2 sec` through `5 VUs` and rises above that target at `10 VUs`.
+- Graph-route throughput improved with concurrency, but remained far below the `5,000 analyses/sec` target.
+- STR is currently not a valid capacity benchmark because the linking path is not available in the deployed environment.
