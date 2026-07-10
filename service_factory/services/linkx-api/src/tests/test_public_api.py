@@ -24,7 +24,7 @@ class STRLinkAnalysisApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), {"message": "success!"})
 
-    def test_live_batch_files_search_runs_synchronously(self):
+    def test_live_batch_files_search_enqueues_worker_job(self):
         import main
 
         client = main.app.test_client()
@@ -35,15 +35,10 @@ class STRLinkAnalysisApiTest(unittest.TestCase):
         self.assertEqual(init_response.status_code, 200)
         session_id = str(init_response.get_json()["results"])
 
-        with patch("main._async_search_jobs_enabled", return_value=True):
-            with patch("main.enqueue_worker_job") as enqueue_mock:
-                with patch("main.batch_data_manager", return_value={
-                    "results": [{"name": "Results found for '5642153'", "keyword": "5642153", "size": 1, "strict": True, "type": "elastic", "column": ["accountno", "benaccountno"]}],
-                    "has_more": 0,
-                    "offset": 0,
-                    "limit": 0,
-                    "message": "1 results found",
-                }) as batch_mock:
+        job = {"job_id": "search-job-1", "status": "queued", "queue": "search", "job_type": "search", "session_id": session_id}
+        with patch("main._async_worker_jobs_enabled", return_value=True):
+            with patch("main.enqueue_worker_job", return_value=job) as enqueue_mock:
+                with patch("main.batch_data_manager") as batch_mock:
                     response = client.post(
                         "/live_batch_files",
                         json={
@@ -58,10 +53,14 @@ class STRLinkAnalysisApiTest(unittest.TestCase):
                         headers={"Authorization": f"Bearer {token}"},
                     )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["message"], "success")
-        batch_mock.assert_called_once()
-        enqueue_mock.assert_not_called()
+        self.assertEqual(response.status_code, 202)
+        payload = response.get_json()
+        self.assertEqual(payload["message"], "success")
+        self.assertEqual(payload["job_id"], "search-job-1")
+        self.assertEqual(payload["results"]["poll_url"], "/jobs/search-job-1")
+        batch_mock.assert_not_called()
+        enqueue_mock.assert_called_once()
+        self.assertEqual(enqueue_mock.call_args.args[:2], ("search", "search"))
 
     def test_STR_link_analysis_creates_dataframe_when_elastic_has_results(self):
         elastic_response = {

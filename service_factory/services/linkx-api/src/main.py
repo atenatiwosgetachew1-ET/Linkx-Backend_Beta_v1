@@ -193,6 +193,25 @@ def _async_worker_jobs_enabled():
 def _async_search_jobs_enabled():
     return _async_worker_jobs_enabled() and str(os.getenv("LINKX_ASYNC_SEARCH_JOBS", "false")).lower() in {"1", "true", "yes"}
 
+
+def _queued_worker_response(job, action_id, queue_name):
+    return jsonify({
+        "message": "success",
+        "results": {
+            "accepted": True,
+            "status": "queued",
+            "action": action_id,
+            "job_id": job["job_id"],
+            "job": job,
+            "queue": queue_name,
+            "poll_url": f"/jobs/{job['job_id']}",
+        },
+        "job": job,
+        "job_id": job["job_id"],
+        "status": "queued",
+        "queued": True,
+    }), 202
+
 def _search_diagnostic_logs_enabled():
     return str(os.getenv("LINKX_SEARCH_DIAGNOSTIC_LOGS", "false")).lower() in {"1", "true", "yes", "on"}
 
@@ -1677,20 +1696,31 @@ def live_batch_files():
     # -----------------------------
     if action_id == "search":
         value = data.get("value", {})
-        storage_ip = load_temp_config("active_storage_address",session_id)
+        storage_ip = load_temp_config("active_storage_address", session_id)
         payload = {
             "id": "search",
             "keyword": value.get("keyword", ""),
             "date": value.get("date") or None,
             "offset": value.get("offset", 0),
             "limit": value.get("limit", 50),
-            "search_column": value.get("search_column", "transactionid"), #falback to 'transaction id'
+            "search_column": value.get("search_column", "transactionid"),
             "hybrid": value.get("hybrid", False),
             "strict": value.get("strict_mood", False),
             "storage": storage_ip,
             "session_id": data.get("session_id"),
         }
-        # delegate working logic to batch_data_manager
+        if _async_worker_jobs_enabled():
+            job = enqueue_worker_job(
+                "search",
+                "search",
+                session_id=session_id,
+                payload=payload,
+                priority=60,
+                max_attempts=1,
+            )
+            current_app.logger.info("search queued session_id=%s job_id=%s", session_id, job.get("job_id"))
+            return _queued_worker_response(job, "search", "search")
+
         result = batch_data_manager(payload)
         if result is None:
             return jsonify({
@@ -1699,8 +1729,7 @@ def live_batch_files():
                 "offset": 0,
                 "limit": 0,
                 "message": "No results!"
-            }), 200            
-        # main.py handles returning the JSON
+            }), 200
         return jsonify({
             "results": result.get("results") or [],
             "has_more": result.get("has_more") or False,
@@ -1715,6 +1744,19 @@ def live_batch_files():
     # -----------------------------
     if action_id == "create_DF":
         current_app.logger.info("create_DF requested session_id=%s kind=%s type=%s", session_id, data.get("kind", ""), data.get("type", ""))
+        if _async_worker_jobs_enabled():
+            payload = dict(data)
+            payload.setdefault("session_id", session_id)
+            job = enqueue_worker_job(
+                "dataframe",
+                "create_DF",
+                session_id=session_id,
+                payload=payload,
+                priority=55,
+                max_attempts=1,
+            )
+            current_app.logger.info("create_DF queued session_id=%s job_id=%s", session_id, job.get("job_id"))
+            return _queued_worker_response(job, "create_DF", "dataframe")
         return create_dataframe_response(data, session_id)
     # -----------------------------
     # START SESSION

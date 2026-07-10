@@ -20,23 +20,29 @@ Move all heavy search and dataframe work to the worker server, keep the API thin
 - Verified worker Spark can bind Hive Metastore to `thrift://172.27.23.43:9083`.
 - Removed duplicate blank `LINKX_ACTIVE_STORAGE_ADDRESS=` from `/opt/linkx-worker/.env` on `node-21`.
 
-### 2. Keep the API as intake only
+### 2. Keep the API as intake only - In Progress
 
 - Keep upload acceptance and validation on the API.
 - Keep session creation and request routing on the API.
 - Remove heavy raw file parsing, search execution, and dataframe creation from the API path.
+- Progress: `/live_batch_files` `search` and `create_DF` now enqueue worker jobs when `LINKX_ASYNC_WORKER_JOBS` is enabled.
+- Progress: direct API execution remains only as the explicit `LINKX_ASYNC_WORKER_JOBS=false` fallback.
 
-### 3. Move `/live_batch_files` heavy work to the worker
+### 3. Move `/live_batch_files` heavy work to the worker - Done
 
 - Replace direct API execution with worker job enqueueing.
 - Return `202 Accepted` with `job_id` and `poll_url`.
 - Use the same worker-job pattern already used by `stream` and graph flows.
+- Verified syntax with `python3 -m py_compile`.
+- Focused unit tests are blocked in this workspace by missing `eventlet`.
 
-### 4. Route work by queue
+### 4. Route work by queue - Done for `/live_batch_files`
 
 - Use the `search` queue for raw search, strict search, and fuzzy search jobs.
 - Use the `dataframe` queue for `load_sourceData` and `create_DF`.
 - Keep `analysis` for STR or related analysis work.
+- Progress: `/live_batch_files` search routes to `search` queue with job type `search`.
+- Progress: `/live_batch_files` create_DF routes to `dataframe` queue with job type `create_DF`.
 
 ### 5. Move raw file handling to the worker
 

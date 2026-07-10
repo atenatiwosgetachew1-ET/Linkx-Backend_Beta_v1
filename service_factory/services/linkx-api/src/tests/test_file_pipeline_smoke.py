@@ -16,7 +16,7 @@ class FilePipelineSmokeTest(unittest.TestCase):
         os.chdir(self.project_cwd)
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-    def test_upload_then_create_dataframe_writes_session_parquet(self):
+    def test_upload_then_create_dataframe_enqueues_worker_job(self):
         import main
 
         client = main.app.test_client()
@@ -34,8 +34,9 @@ class FilePipelineSmokeTest(unittest.TestCase):
         )
         self.assertEqual(upload_response.status_code, 200)
 
+        job = {"job_id": "df-job-1", "status": "queued", "queue": "dataframe", "job_type": "create_DF", "session_id": session_id}
         with patch("main._async_worker_jobs_enabled", return_value=True):
-            with patch("main.enqueue_worker_job") as enqueue_mock:
+            with patch("main.enqueue_worker_job", return_value=job) as enqueue_mock:
                 create_response = client.post(
                     "/live_batch_files",
                     json={
@@ -46,15 +47,15 @@ class FilePipelineSmokeTest(unittest.TestCase):
                         "value": ["sample.csv"],
                     },
                 )
-        self.assertEqual(create_response.status_code, 200)
+        self.assertEqual(create_response.status_code, 202)
 
         payload = create_response.get_json()
         self.assertEqual(payload["message"], "success")
-        self.assertEqual(payload["results"]["num_rows"], 2)
-        enqueue_mock.assert_not_called()
-        self.assertTrue(
-            os.path.exists(f"public/temp_dfParts/merged_dfpart_{session_id}/merged_dfpart_{session_id}.parquet")
-        )
+        self.assertEqual(payload["job_id"], "df-job-1")
+        self.assertEqual(payload["results"]["poll_url"], "/jobs/df-job-1")
+        enqueue_mock.assert_called_once()
+        self.assertEqual(enqueue_mock.call_args.args[:2], ("dataframe", "create_DF"))
+
 
 
 if __name__ == "__main__":
