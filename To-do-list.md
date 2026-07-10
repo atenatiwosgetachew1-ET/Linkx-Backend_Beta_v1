@@ -16,7 +16,9 @@ Move all heavy search and dataframe work to the worker server, keep the API thin
 - Verified `/opt/linkx-worker/.venv/bin/spark-submit --version` works.
 - Verified `/opt/linkx-worker/.venv/bin/pyspark --version` works.
 - Verified worker-side Spark smoke test returns Spark `3.5.5` and `s.range(1).count() == 1`.
-- Current smoke-test HDFS default is `file:///`; storage/HDFS config should be validated before moving HDFS dataframe jobs.
+- Verified worker Spark can bind `fs.defaultFS` to `hdfs://172.27.23.43:9000`.
+- Verified worker Spark can bind Hive Metastore to `thrift://172.27.23.43:9083`.
+- Removed duplicate blank `LINKX_ACTIVE_STORAGE_ADDRESS=` from `/opt/linkx-worker/.env` on `node-21`.
 
 ### 2. Keep the API as intake only
 
