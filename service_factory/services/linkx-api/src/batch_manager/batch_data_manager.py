@@ -423,7 +423,7 @@ def batch_data_manager(payload):
             failed_sources = []
             loaded_sources = []
             allow_partial_dataframe = _truthy_config(load_temp_config("allow_partial_dataframe", session_id))
-            large_search_backend = str(load_temp_config("large_search_backend", session_id) or "hive").strip().lower()
+            large_search_backend = str(load_temp_config("large_search_backend", session_id) or "elastic_scroll").strip().lower()
             elastic_scroll_enabled = _truthy_config(load_temp_config("elastic_scroll_enabled", session_id))
             use_elastic_for_large_search = large_search_backend in {"elastic", "elastic_scroll", "scroll"} or elastic_scroll_enabled
             print("large_search_backend:", large_search_backend, "elastic_scroll_enabled:", elastic_scroll_enabled)
