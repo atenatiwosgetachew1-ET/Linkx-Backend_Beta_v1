@@ -425,7 +425,6 @@ def batch_data_manager(payload):
             allow_partial_dataframe = _truthy_config(load_temp_config("allow_partial_dataframe", session_id))
             large_search_backend = str(load_temp_config("large_search_backend", session_id) or "elastic_scroll").strip().lower()
             elastic_scroll_enabled = _truthy_config(load_temp_config("elastic_scroll_enabled", session_id))
-            elastic_auth_header = load_temp_config("elastic_api_authorization", session_id)
             use_elastic_for_large_search = large_search_backend in {"elastic", "elastic_scroll", "scroll"} or elastic_scroll_enabled
             print("large_search_backend:", large_search_backend, "elastic_scroll_enabled:", elastic_scroll_enabled)
             print("[fuzzy-df] session config", {"session_id": session_id, "backend": large_search_backend, "elastic_scroll_enabled": elastic_scroll_enabled, "fetch_columns_count": len(fetch_columns or []), "date_column": date_column}, flush=True)
@@ -490,6 +489,7 @@ def batch_data_manager(payload):
                         endpoint = es_search_endpoint_fuzzy
                     #trigger a fetching logic (call a function that returns the df)
                     API_URL = _elastic_api_url(session_id, endpoint, storage_address)
+                    elastic_auth_header = load_temp_config("elastic_api_authorization", session_id) if strict_mood else None
                     try:
                         fetch_limit = None
                         fetch_batch_size = None
@@ -661,7 +661,7 @@ def batch_data_manager(payload):
                 search_columns_hive = load_temp_config("search_columns_fuzzy",session_id)
             #--------------------------------------------------------------------------
             API_URL = _elastic_api_url(session_id, api_search_endpoint, storage_address)
-            elastic_auth_header = load_temp_config("elastic_api_authorization", session_id)
+            elastic_auth_header = load_temp_config("elastic_api_authorization", session_id) if strict else None
             #--------------------------------------------------------------------------
             #Hive payloads
             storage_database= load_temp_config("active_storage_database",session_id)
