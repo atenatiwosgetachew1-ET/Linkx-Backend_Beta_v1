@@ -44,44 +44,54 @@ Move all heavy search and dataframe work to the worker server, keep the API thin
 - Progress: `/live_batch_files` search routes to `search` queue with job type `search`.
 - Progress: `/live_batch_files` create_DF routes to `dataframe` queue with job type `create_DF`.
 
-### 5. Move raw file handling to the worker
+### 5. Port strict/fuzzy dataframe fixes to the worker - Done
+
+- Added worker-side strict/fuzzy search column normalization.
+- Added worker-side configured column fallback for blank and `transactionid` search-column payloads.
+- Converted worker strict/hybrid flags with `_truthy_config` before search execution.
+- Applied the same column resolution to Elastic dataframe creation and Hive dataframe fallback.
+- Hardened worker dataframe workflow so `kind` and `type` are string-safe before branching.
+- Verified syntax with `python3 -m py_compile`.
+- Verified formatting with `git diff --check`.
+
+### 6. Move raw file handling to the worker
 
 - Move raw file search/listing off the API.
 - Move raw uploaded file loading off the API.
 - Keep the API from touching file contents directly.
 
-### 6. Keep pandas for Excel
+### 7. Keep pandas for Excel
 
 - Keep `.xlsx` and `.xls` on pandas first.
 - Do not force Excel into Spark unless scaling requires it later.
 - Prefer pandas for small or messy upload files.
 
-### 7. Keep Spark for heavy jobs
+### 8. Keep Spark for heavy jobs
 
 - Use Spark for HDFS.
 - Use Spark for Hive.
 - Use Spark for large Elastic fallback flows.
 - Use Spark for parquet reads and mixed-source merges when needed.
 
-### 8. Standardize dataframe output
+### 9. Standardize dataframe output
 
 - Save every final dataframe artifact as parquet.
 - Return the dataframe path, row count, columns, and source manifest.
 - Preserve the `use_spark` flag in result metadata.
 
-### 9. Make mixed merges explicit
+### 10. Make mixed merges explicit
 
 - Keep all-pandas merges in pandas.
 - Keep all-Spark merges in Spark.
 - Convert pandas inputs to Spark only when a mixed merge needs it.
 
-### 10. Add guardrail tests
+### 11. Add guardrail tests
 
 - Add API tests to prove heavy work is enqueued, not run locally.
 - Add worker tests for Excel fallback, parquet reads, mixed merges, and raw search.
 - Add tests for strict and fuzzy search column resolution.
 
-### 11. Roll out in order
+### 12. Roll out in order
 
 - First: worker Spark installation and environment wiring.
 - Second: raw file processing on the worker.

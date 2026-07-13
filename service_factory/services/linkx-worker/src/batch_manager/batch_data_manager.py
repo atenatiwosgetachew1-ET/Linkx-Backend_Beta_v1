@@ -108,6 +108,29 @@ def _normalize_raw_hdfs_paths(files, hdfs_uri):
         normalized.append(copy)
     return normalized
 
+def _normalize_search_columns(value):
+    if isinstance(value, (list, tuple, set)):
+        return [column for column in value if column]
+    if value in (None, ""):
+        return []
+    return [value]
+
+
+def _configured_search_columns(session_id, strict):
+    key = "search_columns_strict" if strict else "search_columns_fuzzy"
+    return _normalize_search_columns(load_temp_config(key, session_id) or [])
+
+
+def _resolve_search_columns(session_id, search_columns, strict):
+    normalized = _normalize_search_columns(search_columns)
+    if normalized:
+        if len(normalized) == 1 and str(normalized[0]).strip().lower() in {"", "transactionid"}:
+            configured = _configured_search_columns(session_id, strict)
+            if configured:
+                return configured
+        return normalized
+    configured = _configured_search_columns(session_id, strict)
+    return configured or normalized
 
 
 
@@ -455,11 +478,11 @@ def batch_data_manager(payload):
                 print("Consists elastic values", redact_value(elastic_categories))               
                 for file in elastic_categories:      
                     id = "fetch"
-                    search_column = file.get('column')    
                     keyword = file.get('keyword')                         
-                    strict_mood = file.get('strict')
+                    strict_mood = _truthy_config(file.get('strict'))
+                    search_column = _resolve_search_columns(session_id, file.get('column'), strict_mood)
                     print("search_column:", search_column, {"strict": bool(strict_mood), "source_type": file.get('type'), "large_result_backend": file.get('large_result_backend')}, flush=True)
-                    if file.get('strict', False): #if data is from a stict search
+                    if strict_mood: #if data is from a stict search
                         print("strictttt")
                         endpoint = es_search_endpoint_strict
                     else:
@@ -529,11 +552,9 @@ def batch_data_manager(payload):
                     try:
                         fetch_limit = load_temp_config("elastic_scroll_limit", session_id) or load_temp_config("dataframes_limit", session_id)
                         fetch_batch_size = load_temp_config("elastic_scroll_batch_size", session_id) or 10000
-                        if search_column:
-                            search_columns = [{"field": search_column}]
-                        else:
-                            configured = load_temp_config("search_columns_strict" if file.get('strict', False) else "search_columns_fuzzy", session_id) or []
-                            search_columns = [{"field": col} for col in configured]
+                        strict_mood = _truthy_config(file.get('strict', False))
+                        search_columns = _resolve_search_columns(session_id, search_column, strict_mood)
+                        search_columns = [{"field": col} for col in search_columns]
                         df = load_hive_rows(
                             storage_address,
                             hive_port,
@@ -545,8 +566,8 @@ def batch_data_manager(payload):
                             limit=limit,
                         )
                         if df is None and search_column and keyword:
-                            print("[fuzzy-df] Hive path returned no dataframe, trying Elastic scroll fallback", {"search_column": search_column, "strict": bool(file.get('strict', False)), "keyword_len": len(str(keyword or ""))}, flush=True)
-                            fallback_endpoint = es_search_endpoint_strict if file.get('strict', False) else es_search_endpoint_fuzzy
+                            print("[fuzzy-df] Hive path returned no dataframe, trying Elastic scroll fallback", {"search_column": search_column, "strict": bool(strict_mood), "keyword_len": len(str(keyword or ""))}, flush=True)
+                            fallback_endpoint = es_search_endpoint_strict if strict_mood else es_search_endpoint_fuzzy
                             fallback_api_url = _elastic_api_url(session_id, fallback_endpoint, storage_address)
                             if fallback_api_url:
                                 job_id = str(payload.get("job_id") or "no_job")
@@ -557,7 +578,7 @@ def batch_data_manager(payload):
                                     fallback_api_url,
                                     keyword,
                                     search_column,
-                                    bool(file.get('strict', False)),
+                                    bool(strict_mood),
                                     date_column,
                                     spark,
                                     chunk_dir,
@@ -614,14 +635,12 @@ def batch_data_manager(payload):
         date = payload.get("date")
         offset = payload.get("offset", 0)
         limit = payload.get("limit", 50)
-        hybrid = payload.get("hybrid")
-        strict = payload.get("strict")
+        hybrid = _truthy_config(payload.get("hybrid"))
+        strict = _truthy_config(payload.get("strict"))
         storage_ip = payload.get("storage") 
-        search_columns_elastic = payload.get("search_column") #Single column, or configured list for fuzzy search
-        search_columns_hive = "" #Multi columns
+        search_columns_elastic = _resolve_search_columns(session_id, payload.get("search_column"), strict)
+        search_columns_hive = _configured_search_columns(session_id, strict) #Multi columns
         date_column = load_temp_config("date_column",session_id)  
-        if hybrid and not strict and search_columns_elastic in (None, "", "transactionid"):
-            search_columns_elastic = load_temp_config("search_columns_fuzzy", session_id) or search_columns_elastic
         #-----------------------------------------------------------------------
         if hybrid:#Elastic search -> hive search if it exceeds 100000 results    
             storage_address = storage_ip       
