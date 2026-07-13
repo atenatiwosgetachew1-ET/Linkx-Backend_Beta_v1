@@ -51,7 +51,14 @@ def _log_es_response(label, api_url, response, *, page_size=None, collected=None
     print(f"{label}: api={_safe_api_label(api_url)} summary={summary}", flush=True)
 
 
-def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_column, date=None, fetch_columns=None, timeout=30, limit=None, offset=0, batch_size=None):
+def _elastic_request_headers(auth_header=None):
+    header_value = str(auth_header or "").strip()
+    if not header_value:
+        return None
+    return {"Authorization": header_value, "Accept": "application/json"}
+
+
+def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_column, date=None, fetch_columns=None, timeout=30, limit=None, offset=0, batch_size=None, auth_header=None):
     if not search_column:
         print(-2, "search_column1:", search_column)
         return None
@@ -71,7 +78,7 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
                 if strict_mood:
                     used_payload = {column: keyword}
                     _log_es_request("DF payload ES", API_URL, used_payload)
-                    response = requests.post(API_URL, json=used_payload, timeout=timeout)
+                    response = requests.post(API_URL, json=used_payload, headers=_elastic_request_headers(auth_header), timeout=timeout)
                     response.raise_for_status()
                     result = response.json()
                     _log_es_response("DF response ES", API_URL, result)
@@ -85,6 +92,7 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
                         offset=offset,
                         batch_size=batch_size,
                         timeout=timeout,
+                        auth_header=auth_header,
                     )
             else:
                 payload = {column: keyword}
@@ -101,7 +109,7 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
                     request_offset = max(0, request_offset)
                     payload.update({"limit": request_limit, "offset": request_offset, "size": request_limit, "from": request_offset})
                 _log_es_request("DF payload ES", API_URL, payload)
-                response = requests.post(API_URL, json=payload, timeout=timeout)
+                response = requests.post(API_URL, json=payload, headers=_elastic_request_headers(auth_header), timeout=timeout)
                 response.raise_for_status()
                 result = response.json()
                 _log_es_response("DF response ES", API_URL, result)
@@ -235,7 +243,7 @@ def _extract_results(result):
     return candidate_results or []
 
 
-def _fetch_es_pages(API_URL, column, keyword, limit=None, offset=0, batch_size=None, timeout=30):
+def _fetch_es_pages(API_URL, column, keyword, limit=None, offset=0, batch_size=None, timeout=30, auth_header=None):
     try:
         total_limit = int(limit) if limit is not None else 100000
     except (TypeError, ValueError):
@@ -270,7 +278,7 @@ def _fetch_es_pages(API_URL, column, keyword, limit=None, offset=0, batch_size=N
         if scroll_id:
             payload["scroll_id"] = scroll_id
         _log_es_request("DF payload ES", API_URL, payload)
-        response = requests.post(API_URL, json=payload, timeout=timeout)
+        response = requests.post(API_URL, json=payload, headers=_elastic_request_headers(auth_header), timeout=timeout)
         response.raise_for_status()
         result = response.json()
         _log_es_response("DF response ES page", API_URL, result, page_size=request_limit, collected=len(collected))
@@ -313,7 +321,7 @@ def _row_value(row, key):
     return str(record.get(key, ""))
 
 
-def load_elastic_rows(API_URL, keyword, search_column, fetch_columns, date=None, timeout=30):
+def load_elastic_rows(API_URL, keyword, search_column, fetch_columns, date=None, timeout=30, auth_header=None):
     print("load_elastic_rows", {"api": _safe_api_label(API_URL), "search_column": search_column, "fetch_columns_count": len(fetch_columns or []), "timeout": timeout}, flush=True)
     if not search_column:
         return {"error": "search_column must be provided"}
@@ -325,7 +333,7 @@ def load_elastic_rows(API_URL, keyword, search_column, fetch_columns, date=None,
         return {"error": "No valid search parameters"}
 
     try:
-        response = requests.post(API_URL, json=payload, timeout=timeout)
+        response = requests.post(API_URL, json=payload, headers=_elastic_request_headers(auth_header), timeout=timeout)
         response.raise_for_status()
         result = response.json()
 
@@ -396,6 +404,7 @@ def es_keyword_search_spark_chunks(
     limit=None,
     offset=0,
     batch_size=None,
+    auth_header=None,
 ):
     """Fetch Elastic rows into backend-owned parquet chunks and return a Spark DataFrame.
 
@@ -478,7 +487,7 @@ def es_keyword_search_spark_chunks(
             if strict_mood:
                 payload = {column: keyword}
                 _log_es_request("DF payload ES chunk", API_URL, payload)
-                response = requests.post(API_URL, json=payload, timeout=timeout)
+                response = requests.post(API_URL, json=payload, headers=_elastic_request_headers(auth_header), timeout=timeout)
                 response.raise_for_status()
                 last_result = response.json()
                 written = write_page(_extract_results(last_result), "overwrite")
@@ -518,7 +527,7 @@ def es_keyword_search_spark_chunks(
                 if scroll_id:
                     payload["scroll_id"] = scroll_id
                 _log_es_request("DF payload ES chunk", API_URL, payload)
-                response = requests.post(API_URL, json=payload, timeout=timeout)
+                response = requests.post(API_URL, json=payload, headers=_elastic_request_headers(auth_header), timeout=timeout)
                 response.raise_for_status()
                 last_result = response.json()
                 _log_es_response("DF response ES chunk", API_URL, last_result, page_size=request_limit, collected=total_written)

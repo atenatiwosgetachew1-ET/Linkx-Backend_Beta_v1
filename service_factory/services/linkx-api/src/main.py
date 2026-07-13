@@ -1679,6 +1679,10 @@ def live_batch_files():
     if not action_id or not session_id:
         return jsonify({'results': None, 'message': 'Missing action_id or session_id'}), 400
 
+    request_authorization = request.headers.get("Authorization")
+    if request_authorization:
+        save_temp_config("elastic_api_authorization", request_authorization, session_id)
+
     permission_by_action = {
         "search": "batch:query",
         "create_DF": "batch:upload",

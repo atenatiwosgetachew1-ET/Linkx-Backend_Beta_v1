@@ -376,7 +376,7 @@ def STR_link_analysis():
                     API_URL = f"http://{storage_address}:{api_port}/{api_search_endpoint}"
 
                                                         
-            response = es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_column, date)
+            response = es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_column, date, auth_header=load_temp_config("elastic_api_authorization", session_id))
         
             result_size = 0
             if response and isinstance(response, dict):

@@ -270,8 +270,8 @@ def batch_data_manager(payload):
     #                 Spark Dataframe
     #                       |
     #               Temporary parquet (files)
-    
-    if action_id == "load_sourceData": #Is ussually called for Dataframe creation 
+
+    if action_id == "load_sourceData": #Is ussually called for Dataframe creation
         print("kind:",payload["kind"])
         if payload["type"] == "array" and payload["kind"] == "files": #Only for uploaded files
             use_spark = payload.get("use_spark", False)
@@ -401,24 +401,24 @@ def batch_data_manager(payload):
             except Exception as e:
                 print("Error in address source handler:", e)
                 return None
-        
+
         elif payload["type"] == "array" and payload["kind"] == "hybrid": # Works with along side # CASE 2 (Fresh meat)-- #For files and keyword search
             print("Now loading hdfs files")
             files = payload.get("files") or payload.get("value") or []
-            date = payload.get("date",None)    
+            date = payload.get("date",None)
             # ---------------------------------------------------------------- Mutual payloads
-            storage_address = storage_ip       
+            storage_address = storage_ip
             if ":" in storage_address: #check the port exists
                 storage_address = storage_ip.split(":", 1)[0] #get only the ip
             api_search_endpoint = "" #To be updated below
             API_URL = ""
-            api_port = load_temp_config("api_port",session_id)   
-            fetch_columns = load_temp_config("fetch_columns", session_id)   
-            date_column = load_temp_config("date_column", session_id)   
-            hive_search_endpoint_strict = load_temp_config("search_api_endpoint_hive_strict", session_id)   
-            hive_search_endpoint_fuzzy = load_temp_config("search_api_endpoint_hive_fuzzy", session_id)   
-            es_search_endpoint_strict = load_temp_config("search_api_endpoint_es_strict", session_id)   
-            es_search_endpoint_fuzzy = load_temp_config("search_api_endpoint_es_fuzzy", session_id)   
+            api_port = load_temp_config("api_port",session_id)
+            fetch_columns = load_temp_config("fetch_columns", session_id)
+            date_column = load_temp_config("date_column", session_id)
+            hive_search_endpoint_strict = load_temp_config("search_api_endpoint_hive_strict", session_id)
+            hive_search_endpoint_fuzzy = load_temp_config("search_api_endpoint_hive_fuzzy", session_id)
+            es_search_endpoint_strict = load_temp_config("search_api_endpoint_es_strict", session_id)
+            es_search_endpoint_fuzzy = load_temp_config("search_api_endpoint_es_fuzzy", session_id)
             dfs = []
             spark = None
             failed_sources = []
@@ -426,6 +426,7 @@ def batch_data_manager(payload):
             allow_partial_dataframe = _truthy_config(load_temp_config("allow_partial_dataframe", session_id))
             large_search_backend = str(load_temp_config("large_search_backend", session_id) or "elastic_scroll").strip().lower()
             elastic_scroll_enabled = _truthy_config(load_temp_config("elastic_scroll_enabled", session_id))
+            elastic_auth_header = load_temp_config("elastic_api_authorization", session_id)
             use_elastic_for_large_search = large_search_backend in {"elastic", "elastic_scroll", "scroll"} or elastic_scroll_enabled
             print("large_search_backend:", large_search_backend, "elastic_scroll_enabled:", elastic_scroll_enabled)
             print("[fuzzy-df] session config", {"session_id": session_id, "backend": large_search_backend, "elastic_scroll_enabled": elastic_scroll_enabled, "fetch_columns_count": len(fetch_columns or []), "date_column": date_column}, flush=True)
@@ -434,9 +435,9 @@ def batch_data_manager(payload):
             elastic_categories = []
             hive_categories = []
             for file in files:
-                print("trying file type:",file['type'])           
+                print("trying file type:",file['type'])
                 if file['type'] == 'raw':
-                    hdfs_categories.append(file) 
+                    hdfs_categories.append(file)
                 elif file['type'] == 'elastic':
                     elastic_categories.append(file)
                 elif file['type'] == 'hive':
@@ -446,16 +447,16 @@ def batch_data_manager(payload):
                         elastic_file["large_result_backend"] = "elastic_scroll"
                         elastic_categories.append(elastic_file)
                     else:
-                        hive_categories.append(file) 
+                        hive_categories.append(file)
                 else:
                     print("Error on file type:",file['type'])
-                    failed_sources.append(_source_failure(file, "Unsupported source type"))           
+                    failed_sources.append(_source_failure(file, "Unsupported source type"))
             # ---------------------------------------------------------------- Raw HDFS files
             if len(hdfs_categories) > 0: #Consists an elastic datas
                 spark_port = load_temp_config("spark_port", session_id)
-                spark = get_spark_session(storage_ip, spark_port, hdfs_uri=storage_hdfs_uri, hdfs_user=storage_hdfs_user)            
+                spark = get_spark_session(storage_ip, spark_port, hdfs_uri=storage_hdfs_uri, hdfs_user=storage_hdfs_user)
                 hdfs_categories = _normalize_raw_hdfs_paths(hdfs_categories, storage_hdfs_uri)
-                print("Consists hdfs file values", redact_value(hdfs_categories))                               
+                print("Consists hdfs file values", redact_value(hdfs_categories))
                 try:
                     df = load_hdfs_files(spark,hdfs_categories)
                     if df:
@@ -472,13 +473,13 @@ def batch_data_manager(payload):
                 except Exception as e:
                     print(f"Error during hdfs raw file fetch: {e}")
                     for item in hdfs_categories:
-                        failed_sources.append(_source_failure(item, "Raw HDFS source failed", e))                    
+                        failed_sources.append(_source_failure(item, "Raw HDFS source failed", e))
             # ---------------------------------------------------------------- Elastic DFs (default limit 100,000)
             if len(elastic_categories) > 0: #Consists an elastic datas
-                print("Consists elastic values", redact_value(elastic_categories))               
-                for file in elastic_categories:      
+                print("Consists elastic values", redact_value(elastic_categories))
+                for file in elastic_categories:
                     id = "fetch"
-                    keyword = file.get('keyword')                         
+                    keyword = file.get('keyword')
                     strict_mood = _truthy_config(file.get('strict'))
                     search_column = _resolve_search_columns(session_id, file.get('column'), strict_mood)
                     print("search_column:", search_column, {"strict": bool(strict_mood), "source_type": file.get('type'), "large_result_backend": file.get('large_result_backend')}, flush=True)
@@ -487,8 +488,8 @@ def batch_data_manager(payload):
                         endpoint = es_search_endpoint_strict
                     else:
                         print("not strictttt")
-                        endpoint = es_search_endpoint_fuzzy   
-                    #trigger a fetching logic (call a function that returns the df)                                 
+                        endpoint = es_search_endpoint_fuzzy
+                    #trigger a fetching logic (call a function that returns the df)
                     API_URL = _elastic_api_url(session_id, endpoint, storage_address)
                     try:
                         fetch_limit = None
@@ -516,6 +517,7 @@ def batch_data_manager(payload):
                                 fetch_columns=fetch_columns,
                                 limit=fetch_limit,
                                 batch_size=fetch_batch_size,
+                                auth_header=elastic_auth_header,
                             )
                         else:
                             df = es_keyword_search(
@@ -529,6 +531,7 @@ def batch_data_manager(payload):
                                 fetch_columns,
                                 limit=fetch_limit,
                                 batch_size=fetch_batch_size,
+                                auth_header=elastic_auth_header,
                             )
                         if df is not None:
                             dfs.append(df)
@@ -539,19 +542,19 @@ def batch_data_manager(payload):
                         print(f"Error during es fetch: {e}")
                         failed_sources.append(_source_failure(file, "Elastic source failed", e))
             # ---------------------------------------------------------------- Hive DFs (Results above the limit 100,000)
-            if len(hive_categories) > 0: #Consists an hive datas 
+            if len(hive_categories) > 0: #Consists an hive datas
                 hive_port = load_temp_config("hive_port", session_id)
                 spark_port = load_temp_config("spark_port", session_id)
                 thrift_port = load_temp_config("thrift_port",session_id)
-                spark = get_spark_session(storage_ip, spark_port, thrift_port, hdfs_uri=storage_hdfs_uri, hive_metastore_uri=hive_metastore_uri, hdfs_user=storage_hdfs_user)            
+                spark = get_spark_session(storage_ip, spark_port, thrift_port, hdfs_uri=storage_hdfs_uri, hive_metastore_uri=hive_metastore_uri, hdfs_user=storage_hdfs_user)
                 storage_database= load_temp_config("active_storage_database",session_id)
                 storage_tables = load_temp_config("active_storage_tables",session_id) or []
                 limit = load_temp_config("dataframes_limit",session_id)
                 tables = [f"{storage_database}.{t}" for t in storage_tables]
-                print("Consists Hive values")               
-                for file in hive_categories:     
-                    search_column = file.get('column')    
-                    keyword = file.get('keyword')                         
+                print("Consists Hive values")
+                for file in hive_categories:
+                    search_column = file.get('column')
+                    keyword = file.get('keyword')
                     try:
                         fetch_limit = load_temp_config("elastic_scroll_limit", session_id) or load_temp_config("dataframes_limit", session_id)
                         fetch_batch_size = load_temp_config("elastic_scroll_batch_size", session_id) or 10000
@@ -609,9 +612,9 @@ def batch_data_manager(payload):
                     "loaded_dataframes": len(dfs),
                 }
 
-            #---------------------------------------------------------------------- Returning collective Dataframes                        
+            #---------------------------------------------------------------------- Returning collective Dataframes
             return dfs
-        else: 
+        else:
             print("here1:",payload["type"],payload["kind"])
             return False
 
@@ -628,7 +631,7 @@ def batch_data_manager(payload):
             return merge_spark_and_save(dfs,path,session_id)
         else:
             return merge_pandas_and_save(dfs,path,session_id)
-  
+
 
     # -----------------------------
     # SEARCH (HDFS / HIVE) (2 layer searching)
@@ -640,27 +643,28 @@ def batch_data_manager(payload):
         limit = payload.get("limit", 50)
         hybrid = _truthy_config(payload.get("hybrid"))
         strict = _truthy_config(payload.get("strict"))
-        storage_ip = payload.get("storage") 
+        storage_ip = payload.get("storage")
         search_columns_elastic = _resolve_search_columns(session_id, payload.get("search_column"), strict)
         search_columns_hive = _configured_search_columns(session_id, strict) #Multi columns
-        date_column = load_temp_config("date_column",session_id)  
+        date_column = load_temp_config("date_column",session_id)
         #-----------------------------------------------------------------------
-        if hybrid:#Elastic search -> hive search if it exceeds 100000 results    
-            storage_address = storage_ip       
+        if hybrid:#Elastic search -> hive search if it exceeds 100000 results
+            storage_address = storage_ip
             if ":" in storage_address: #check the port exists
-                storage_address = storage_ip.split(":", 1)[0] #get only the ip  
-            api_port = load_temp_config("api_port",session_id)     
-            api_search_endpoint = ""    
-            #--------------------------------------------------------------------------            
+                storage_address = storage_ip.split(":", 1)[0] #get only the ip
+            api_port = load_temp_config("api_port",session_id)
+            api_search_endpoint = ""
+            #--------------------------------------------------------------------------
             if strict: #Strict condition
-                api_search_endpoint = load_temp_config("search_api_endpoint_es_strict",session_id)  
+                api_search_endpoint = load_temp_config("search_api_endpoint_es_strict",session_id)
                 search_columns_hive = load_temp_config("search_columns_strict",session_id)
             else: #Fuzzy condition
-                api_search_endpoint = load_temp_config("search_api_endpoint_es_fuzzy",session_id) 
-                search_columns_hive = load_temp_config("search_columns_fuzzy",session_id) 
-            #--------------------------------------------------------------------------            
+                api_search_endpoint = load_temp_config("search_api_endpoint_es_fuzzy",session_id)
+                search_columns_hive = load_temp_config("search_columns_fuzzy",session_id)
+            #--------------------------------------------------------------------------
             API_URL = _elastic_api_url(session_id, api_search_endpoint, storage_address)
-            #--------------------------------------------------------------------------            
+            elastic_auth_header = load_temp_config("elastic_api_authorization", session_id)
+            #--------------------------------------------------------------------------
             #Hive payloads
             storage_database= load_temp_config("active_storage_database",session_id)
             storage_tables = load_temp_config("active_storage_tables",session_id)
@@ -669,7 +673,7 @@ def batch_data_manager(payload):
             for t in storage_tables:
                 tables.append(f"{storage_database}.{t}")
             hive_payload=[storage_address, keyword, search_columns_hive, strict, hive_port, tables, date_column, date] #For further hive searchings
-            #--------------------------------------------------------------------------            
+            #--------------------------------------------------------------------------
             #print("search params:","keyword:",keyword,"date:",date,"offset:",offset,"limit:",limit,"hybrid:",hybrid,"strict:",strict,"api_search_endpoint:",api_search_endpoint,"search_columns_elastic:",search_columns_elastic,"search_columns_hive:",search_columns_hive)
             if _search_diagnostic_logs_enabled():
                 print("[worker-search-exec] endpoint", {
@@ -682,7 +686,7 @@ def batch_data_manager(payload):
                     "limit": limit,
                     "offset": offset,
                 }, flush=True)
-            response = es_keyword_search(action_id, API_URL, keyword, search_columns_elastic, strict, date_column, date, limit=limit, offset=offset) #Overrides to hive (Result out of bound)        
+            response = es_keyword_search(action_id, API_URL, keyword, search_columns_elastic, strict, date_column, date, limit=limit, offset=offset, auth_header=elastic_auth_header) #Overrides to hive (Result out of bound)
             if _search_diagnostic_logs_enabled():
                 response_results = response.get("results") if isinstance(response, dict) else None
                 print("[worker-search-exec] response", {

@@ -279,7 +279,7 @@ def run_str_link_analysis(data):
             api_url = f"http://{storage_address}:{api_port}/{api_search_endpoint}"
 
     print("STR link analysis worker request", {"session_id": session_id, "entity": entity, "type": type_value, "elastic_api_url": api_url})
-    response = es_keyword_search("search", api_url, keyword, search_column, strict_mood, date_column, date)
+    response = es_keyword_search("search", api_url, keyword, search_column, strict_mood, date_column, date, auth_header=load_temp_config("elastic_api_authorization", session_id))
     result_size = 0
     if response and isinstance(response, dict):
         results = response.get("results") or []
