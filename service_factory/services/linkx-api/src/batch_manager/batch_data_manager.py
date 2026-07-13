@@ -74,11 +74,6 @@ def _truthy_config(value):
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _log_api_target(session_id, category, **details):
-    payload = {"session_id": session_id, "category": category}
-    payload.update(details)
-    print("[api-target]", redact_value(payload), flush=True)
-
 
 def _search_diagnostic_logs_enabled():
     return str(os.getenv("LINKX_SEARCH_DIAGNOSTIC_LOGS", "false")).lower() in {"1", "true", "yes", "on"}
@@ -459,15 +454,6 @@ def batch_data_manager(payload):
             # ---------------------------------------------------------------- Raw HDFS files
             if len(hdfs_categories) > 0: #Consists an elastic datas
                 spark_port = load_temp_config("spark_port", session_id)
-                _log_api_target(
-                    session_id,
-                    "raw_hdfs_dataframe",
-                    storage_address=storage_ip,
-                    storage_hdfs_uri=storage_hdfs_uri,
-                    spark_port=spark_port,
-                    hdfs_user=storage_hdfs_user,
-                    file_count=len(hdfs_categories),
-                )
                 spark = get_spark_session(storage_ip, spark_port, hdfs_uri=storage_hdfs_uri, hdfs_user=storage_hdfs_user)
                 hdfs_categories = _normalize_raw_hdfs_paths(hdfs_categories, storage_hdfs_uri)
                 print("Consists hdfs file values", redact_value(hdfs_categories))
@@ -506,15 +492,6 @@ def batch_data_manager(payload):
                     #trigger a fetching logic (call a function that returns the df)
                     API_URL = _elastic_api_url(session_id, endpoint, storage_address)
                     elastic_auth_header = load_temp_config("elastic_api_authorization", session_id) if strict_mood else None
-                    _log_api_target(
-                        session_id,
-                        "elastic_dataframe_fetch",
-                        strict=bool(strict_mood),
-                        endpoint=endpoint,
-                        api_url=API_URL,
-                        backend=file.get("large_result_backend") or "elastic",
-                        search_column=search_column,
-                    )
                     try:
                         fetch_limit = None
                         fetch_batch_size = None
@@ -570,17 +547,6 @@ def batch_data_manager(payload):
                 hive_port = load_temp_config("hive_port", session_id)
                 spark_port = load_temp_config("spark_port", session_id)
                 thrift_port = load_temp_config("thrift_port",session_id)
-                _log_api_target(
-                    session_id,
-                    "hive_dataframe_fetch",
-                    storage_address=storage_ip,
-                    storage_hdfs_uri=storage_hdfs_uri,
-                    hive_metastore_uri=hive_metastore_uri,
-                    spark_port=spark_port,
-                    thrift_port=thrift_port,
-                    hive_port=hive_port,
-                    table_count=len(load_temp_config("active_storage_tables", session_id) or []),
-                )
                 spark = get_spark_session(storage_ip, spark_port, thrift_port, hdfs_uri=storage_hdfs_uri, hive_metastore_uri=hive_metastore_uri, hdfs_user=storage_hdfs_user)
                 storage_database= load_temp_config("active_storage_database",session_id)
                 storage_tables = load_temp_config("active_storage_tables",session_id) or []
@@ -609,14 +575,6 @@ def batch_data_manager(payload):
                             print("[fuzzy-df] Hive path returned no dataframe, trying Elastic scroll fallback", {"search_column": search_column, "strict": bool(strict_mood), "keyword_len": len(str(keyword or ""))}, flush=True)
                             fallback_endpoint = es_search_endpoint_strict if strict_mood else es_search_endpoint_fuzzy
                             fallback_api_url = _elastic_api_url(session_id, fallback_endpoint, storage_address)
-                            _log_api_target(
-                                session_id,
-                                "elastic_dataframe_fallback",
-                                strict=bool(strict_mood),
-                                endpoint=fallback_endpoint,
-                                api_url=fallback_api_url,
-                                search_column=search_column,
-                            )
                             if fallback_api_url:
                                 job_id = str(payload.get("job_id") or "no_job")
                                 safe_job_id = re.sub(r"[^0-9A-Za-z_.-]", "_", job_id)
@@ -706,15 +664,6 @@ def batch_data_manager(payload):
             #--------------------------------------------------------------------------
             API_URL = _elastic_api_url(session_id, api_search_endpoint, storage_address)
             elastic_auth_header = load_temp_config("elastic_api_authorization", session_id) if strict else None
-            _log_api_target(
-                session_id,
-                "elastic_search",
-                strict=bool(strict),
-                hybrid=bool(hybrid),
-                endpoint=api_search_endpoint,
-                api_url=API_URL,
-                search_columns=search_columns_elastic,
-            )
             #--------------------------------------------------------------------------
             #Hive payloads
             storage_database= load_temp_config("active_storage_database",session_id)
@@ -762,17 +711,6 @@ def batch_data_manager(payload):
                 }
             storage_path = load_temp_config("storage_path",session_id)
             base_path = f"/{storage_path}"
-            webhdfs_url = load_temp_config("storage_webhdfs_url", session_id)
-            _log_api_target(
-                session_id,
-                "raw_hdfs_search",
-                storage_address=storage_ip,
-                storage_hdfs_uri=storage_hdfs_uri,
-                storage_webhdfs_url=webhdfs_url,
-                base_path=base_path,
-                offset=offset,
-                limit=limit,
-            )
             response = stream_hdfs_metadata(storage_ip, base_path, keyword, date, offset, limit, hdfs_uri=storage_hdfs_uri)
 
         return response
