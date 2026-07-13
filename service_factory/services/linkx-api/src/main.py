@@ -643,6 +643,15 @@ def _graph_accessible_source(source_id, actor):
     return _analysis_session_exists(source_id) and can_access_analysis_session_actor(source_id, actor)
 
 
+def _config_session_accessible(session_id, actor):
+    if not session_id or not actor:
+        return False
+    parent_id = _parent_session_id(session_id)
+    if parent_id:
+        return can_access_analysis_session_actor(session_id, actor) or can_access_analysis_session_actor(parent_id, actor)
+    return can_access_analysis_session_actor(session_id, actor)
+
+
 
 @app.route('/jobs/<job_id>', methods=['GET'])
 @auth_required
@@ -999,6 +1008,11 @@ def configuration():
     denied = _require_permission(required_permission)
     if denied:
         return denied
+
+    if session_id:
+        actor = current_actor_from_request()
+        if not _config_session_accessible(session_id, actor):
+            return jsonify({"message": "forbidden"}), 403
 
     if action == "load":
         try:

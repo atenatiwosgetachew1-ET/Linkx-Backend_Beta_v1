@@ -163,6 +163,86 @@ def _merge_config(current, incoming):
     return merged
 
 
+PARENT_SCOPED_CONFIG_KEYS = {
+    "kafka_addresses",
+    "REST APIs",
+    "storage_addresses",
+    "storage_path",
+    "storage_databases",
+    "storage_tables",
+    "active_storage_address",
+    "active_storage_host",
+    "storage_hdfs_user",
+    "active_storage_database",
+    "active_storage_tables",
+    "storage_webhdfs_port",
+    "storage_webhdfs_url",
+    "storage_hdfs_uri",
+    "hdfs_rpc_port",
+    "hadoop_rcp_port",
+    "hadoop_web_port",
+    "spark_port",
+    "thrift_port",
+    "hive_metastore_uri",
+    "hive_server_host",
+    "hive_port",
+    "elastic_api_base_url",
+    "api_port",
+    "search_api_endpoint_es_fuzzy",
+    "search_api_endpoint_es_strict",
+    "search_api_endpoint_hive_fuzzy",
+    "search_api_endpoint_hive_strict",
+    "search_columns_strict",
+    "search_columns_fuzzy",
+    "fetch_columns",
+    "date_column",
+    "default_source_col",
+    "default_target_col",
+    "default_relationship",
+    "dataframes_limit",
+    "large_search_backend",
+    "elastic_scroll_enabled",
+    "elastic_scroll_limit",
+    "elastic_scroll_batch_size",
+    "tools",
+    "active_tool",
+    "active_tool_protocol",
+    "active_tool_username",
+    "active_tool_password",
+    "active_tool_password_ref",
+    "active_tool_database",
+    "active_tool_tables",
+    "tool_protocol_port",
+    "tool_web_port",
+    "tool_credentials",
+    "rule_names",
+    "rule_file_names",
+    "active_rule",
+    "trusted_entities",
+    "risk_entities",
+    "automation",
+    "remote",
+}
+
+
+def _split_parent_scoped_config(config):
+    parent_config = {}
+    window_config = {}
+    for key, value in dict(config or {}).items():
+        if key in PARENT_SCOPED_CONFIG_KEYS:
+            parent_config[key] = value
+        else:
+            window_config[key] = value
+    return parent_config, window_config
+
+
+def _merge_window_config(base_config, window_config):
+    merged = _merge_config(base_config or {}, window_config or {})
+    for key in PARENT_SCOPED_CONFIG_KEYS:
+        if isinstance(base_config, dict) and key in base_config:
+            merged[key] = base_config[key]
+    return merged
+
 
 def _resolve_config_secrets(value, cur):
     if isinstance(value, dict):
@@ -303,7 +383,7 @@ def duplicate_window_config(session_id, window_id):
                 SET updated_at = NOW()
                 RETURNING config
                 """,
-                (str(session_id), user_id, service_id, str(window_id), json.dumps(config or {}), source_id),
+                (str(session_id), user_id, service_id, str(window_id), json.dumps({}), source_id),
             )
             row = cur.fetchone()
         conn.commit()
@@ -344,7 +424,7 @@ def load_session_config(session_id, window_id=None):
             row = cur.fetchone()
             if row:
                 if target_window and base_config is not None:
-                    return _resolve_config_secrets(_merge_config(base_config or {}, row[0] or {}), cur)
+                    return _resolve_config_secrets(_merge_window_config(base_config or {}, row[0] or {}), cur)
                 return _resolve_config_secrets(row[0] or {}, cur)
             if target_window:
                 return _resolve_config_secrets(base_config, cur)
@@ -360,6 +440,42 @@ def save_session_config(session_id, config, window_id=None, merge=True):
     incoming = dict(config or {})
     with _connect() as conn:
         with conn.cursor() as cur:
+            if target_window:
+                parent_incoming, incoming = _split_parent_scoped_config(incoming)
+                if parent_incoming:
+                    cur.execute(
+                        "SELECT config FROM session_configs WHERE session_id = %s AND window_id = ''",
+                        (str(base_session),),
+                    )
+                    parent_row = cur.fetchone()
+                    parent_current = parent_row[0] if parent_row else {}
+                    parent_config = _merge_config(parent_current or {}, parent_incoming) if merge else parent_incoming
+                    parent_config = _protect_config_secrets(parent_config, cur, "session", f"{base_session}:")
+                    if parent_row:
+                        cur.execute(
+                            """
+                            UPDATE session_configs
+                            SET config = %s::jsonb, updated_at = NOW()
+                            WHERE session_id = %s AND window_id = ''
+                            """,
+                            (json.dumps(parent_config), str(base_session)),
+                        )
+                    else:
+                        cur.execute(
+                            "SELECT owner_user_id, owner_service_id FROM analysis_sessions WHERE session_id = %s",
+                            (str(base_session),),
+                        )
+                        owner = cur.fetchone() or (None, None)
+                        cur.execute(
+                            """
+                            INSERT INTO session_configs (session_id, user_id, service_account_id, window_id, config)
+                            VALUES (%s, %s, %s, '', %s::jsonb)
+                            """,
+                            (str(base_session), owner[0], owner[1], json.dumps(parent_config)),
+                        )
+                if not incoming:
+                    conn.commit()
+                    return True
             cur.execute(
                 "SELECT config FROM session_configs WHERE session_id = %s AND window_id = %s",
                 (str(base_session), target_window),
