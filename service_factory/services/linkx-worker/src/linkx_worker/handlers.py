@@ -40,7 +40,16 @@ def run_job(job_type, payload):
     }:
         if "id" not in payload and job_type != "batch_data_manager":
             payload["id"] = job_type
-        return batch_data_manager(payload)
+        result = batch_data_manager(payload)
+        if str(payload.get("id") or job_type) == "search" and result is None:
+            return {
+                "results": [],
+                "has_more": False,
+                "offset": 0,
+                "limit": 0,
+                "message": "No results!",
+            }
+        return result
 
     if job_type in {"create_DF", "create_dataframe", "dataframe"}:
         result, status = create_dataframe_result(payload, session_id)

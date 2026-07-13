@@ -437,7 +437,7 @@ def run_loop(queues, poll_interval, once=False, concurrency=1):
 
 def main():
     parser = argparse.ArgumentParser(description="LinkX DB-backed worker runner.")
-    parser.add_argument("--queues", default=os.getenv("WORKER_QUEUES", "ingestion,dataframe,analysis,graph"))
+    parser.add_argument("--queues", default=os.getenv("WORKER_QUEUES", "ingestion,search,dataframe,analysis,graph"))
     parser.add_argument("--poll-interval", type=float, default=float(os.getenv("WORKER_POLL_INTERVAL", "2")))
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--concurrency", type=int, default=int(os.getenv("WORKER_CONCURRENCY", "1")))
