@@ -194,6 +194,16 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
     except requests.exceptions.HTTPError as e:
         status_code = e.response.status_code if e.response is not None else None
         print("Elastic error:", type(e).__name__, {"status_code": status_code, "api": _safe_api_label(API_URL)}, flush=True)
+        if id == "search" and status_code in {401, 403}:
+            return {
+                "status": "failed",
+                "error": "elastic_auth_failed",
+                "message": f"Elastic search API returned {status_code}",
+                "results": [],
+                "has_more": False,
+                "offset": int(offset or 0) if offset is not None else 0,
+                "limit": int(limit or 0) if limit is not None else 0,
+            }
         if id == "search" and not strict_mood and status_code and status_code >= 500:
             column = search_columns[0] if search_columns else search_column
             return {
