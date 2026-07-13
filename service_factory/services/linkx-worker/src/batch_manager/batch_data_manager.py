@@ -496,6 +496,9 @@ def batch_data_manager(payload):
                         if file.get("large_result_backend") == "elastic_scroll":
                             fetch_limit = load_temp_config("elastic_scroll_limit", session_id) or load_temp_config("dataframes_limit", session_id)
                             fetch_batch_size = load_temp_config("elastic_scroll_batch_size", session_id) or 10000
+                            if spark is None:
+                                spark_port = load_temp_config("spark_port", session_id)
+                                spark = get_spark_session(storage_ip, spark_port, hdfs_uri=storage_hdfs_uri, hdfs_user=storage_hdfs_user)
                         if spark is not None:
                             job_id = str(payload.get("job_id") or "no_job")
                             safe_job_id = re.sub(r"[^0-9A-Za-z_.-]", "_", job_id)
