@@ -375,7 +375,15 @@ def STR_link_analysis():
                 else:
                     API_URL = f"http://{storage_address}:{api_port}/{api_search_endpoint}"
 
-                                                        
+            print("[api-target]", {
+                "session_id": session_id,
+                "category": "str_strict_search",
+                "api_url": API_URL,
+                "endpoint": api_search_endpoint,
+                "storage_address": storage_address,
+                "api_port": api_port,
+            }, flush=True)
+
             response = es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_column, date, auth_header=load_temp_config("elastic_api_authorization", session_id))
         
             result_size = 0
