@@ -222,6 +222,10 @@ PARENT_SCOPED_CONFIG_KEYS = {
     "risk_entities",
     "automation",
     "remote",
+    "idle_warning_ms",
+    "idle_lock_ms",
+    "max_idle_timeout_ms",
+    "lock_requires_reauth",
 }
 
 

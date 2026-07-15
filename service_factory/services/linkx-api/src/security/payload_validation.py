@@ -209,6 +209,29 @@ COMMON_SCHEMAS = {
             "reason": {"type": "string", "enum": ["user_logout", "unlock_failed", "idle_timeout"]},
         },
     },
+    "session_policy_update": {
+        "type": "object",
+        "required": ["id", "session_id"],
+        "additionalProperties": False,
+        "properties": {
+            "id": {"type": "string", "enum": ["session_policy_update"]},
+            "session_id": {"type": "string", "maxLength": 128},
+            "policy": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "idle_warning_ms": {"type": ["integer", "number", "null"], "minimum": 0},
+                    "idle_lock_ms": {"type": ["integer", "number", "null"], "minimum": 1},
+                    "max_idle_timeout_ms": {"type": ["integer", "number", "null"], "minimum": 1},
+                    "lock_requires_reauth": {"type": ["boolean", "null"]}
+                }
+            },
+            "idle_warning_ms": {"type": ["integer", "number", "null"], "minimum": 0},
+            "idle_lock_ms": {"type": ["integer", "number", "null"], "minimum": 1},
+            "max_idle_timeout_ms": {"type": ["integer", "number", "null"], "minimum": 1},
+            "lock_requires_reauth": {"type": ["boolean", "null"]}
+        }
+    },
     "idle_timeout": {
         "type": "object",
         "required": ["id"],

@@ -10,6 +10,7 @@ from flask import Blueprint, jsonify, request
 from .decorators import auth_required, current_actor_from_request, permission_required
 from .repository import (
     authenticate_service_account,
+    can_access_analysis_session_actor,
     actor_can_manage_roles,
     authenticate_user,
     create_or_update_service_account,
@@ -35,9 +36,9 @@ from .tokens import create_access_token, create_service_token, extract_bearer_to
 from .parent_jwt import ParentJwtError, verify_parent_access_token
 from .parent_oauth import ParentOAuthError, exchange_authorization_code, fetch_userinfo, refresh_access_token, revoke_token
 from security.payload_validation import COMMON_SCHEMAS, validate_json_payload, validated_json
-from globals import _session_store
+from globals import _session_store, load_temp_config, save_temp_config
 from batch_manager.processing.session_manager import end_session
-from service_orchestration import get_actor_active_session_ids, lock_actor_session, public_lock_state, request_session_cancellation, unlock_actor_locks
+from service_orchestration import get_actor_active_session_ids, get_active_session_lock, get_any_active_actor_lock, lock_actor_session, public_lock_state, request_session_cancellation, unlock_actor_locks
 from session_config_store import get_user_preferences, save_user_preferences
 
 
@@ -122,7 +123,60 @@ def _revoke_current_bearer_token(actor, reason):
     return revoked, "revoked" if revoked else "revoke_failed"
 
 
-def _idle_policy():
+SESSION_POLICY_FIELDS = (
+    "idle_warning_ms",
+    "idle_lock_ms",
+    "max_idle_timeout_ms",
+    "lock_requires_reauth",
+)
+
+
+def _parent_session_id(session_id):
+    raw = str(session_id or "").strip()
+    if "_" not in raw:
+        return None
+    _window, parent_id = raw.split("_", 1)
+    return parent_id or None
+
+
+def _session_policy_accessible(session_id, actor):
+    if not session_id or not actor:
+        return False
+    parent_id = _parent_session_id(session_id)
+    if parent_id:
+        return can_access_analysis_session_actor(session_id, actor) or can_access_analysis_session_actor(parent_id, actor)
+    return can_access_analysis_session_actor(session_id, actor)
+
+
+def _coerce_policy_int(value, field, *, minimum=None, maximum=None):
+    if value is None:
+        return None
+    try:
+        coerced = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{field} must be an integer")
+    if minimum is not None and coerced < minimum:
+        raise ValueError(f"{field} must be >= {minimum}")
+    if maximum is not None and coerced > maximum:
+        raise ValueError(f"{field} must be <= {maximum}")
+    return coerced
+
+
+def _coerce_policy_bool(value, field):
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    raise ValueError(f"{field} must be a boolean")
+
+
+def _env_idle_policy():
     idle_lock_ms = _env_int("LINKX_IDLE_LOCK_MS", _env_int("LINKX_IDLE_TIMEOUT_MS", 900000))
     idle_warning_ms = _env_int("LINKX_IDLE_WARNING_MS", max(0, idle_lock_ms - 60000))
     max_idle_timeout_ms = _env_int("LINKX_MAX_IDLE_TIMEOUT_MS", 3600000)
@@ -132,7 +186,63 @@ def _idle_policy():
         "idle_lock_ms": idle_lock_ms,
         "max_idle_timeout_ms": max_idle_timeout_ms,
         "lock_requires_reauth": lock_requires_reauth,
+        "auth_token_seconds": _env_int("LINKX_AUTH_TOKEN_SECONDS", 3600),
     }
+
+
+def _extract_session_policy_updates(data):
+    payload = data.get("policy") if isinstance(data.get("policy"), dict) else data
+    allowed = set(SESSION_POLICY_FIELDS)
+    unknown = sorted(set(payload.keys()) - (allowed | {"id", "session_id"}))
+    if unknown:
+        raise ValueError(f"unknown policy fields: {', '.join(unknown)}")
+    updates = {}
+    if "idle_warning_ms" in payload:
+        updates["idle_warning_ms"] = _coerce_policy_int(payload.get("idle_warning_ms"), "idle_warning_ms", minimum=0, maximum=604800000)
+    if "idle_lock_ms" in payload:
+        updates["idle_lock_ms"] = _coerce_policy_int(payload.get("idle_lock_ms"), "idle_lock_ms", minimum=1, maximum=604800000)
+    if "max_idle_timeout_ms" in payload:
+        updates["max_idle_timeout_ms"] = _coerce_policy_int(payload.get("max_idle_timeout_ms"), "max_idle_timeout_ms", minimum=1, maximum=604800000)
+    if "lock_requires_reauth" in payload:
+        updates["lock_requires_reauth"] = _coerce_policy_bool(payload.get("lock_requires_reauth"), "lock_requires_reauth")
+    return updates
+
+
+def _effective_session_policy(session_id=None):
+    policy = _env_idle_policy()
+    source = "default"
+    if session_id:
+        config = load_temp_config("data", session_id) or {}
+        for key in SESSION_POLICY_FIELDS:
+            if config.get(key) is not None:
+                policy[key] = config.get(key)
+                source = "session"
+    try:
+        policy["idle_warning_ms"] = int(policy.get("idle_warning_ms") or 0)
+        policy["idle_lock_ms"] = int(policy.get("idle_lock_ms") or 1)
+        policy["max_idle_timeout_ms"] = int(policy.get("max_idle_timeout_ms") or policy["idle_lock_ms"])
+    except (TypeError, ValueError):
+        policy.update(_env_idle_policy())
+        source = "default"
+    policy["lock_requires_reauth"] = bool(policy.get("lock_requires_reauth"))
+    if policy["idle_warning_ms"] > policy["idle_lock_ms"]:
+        policy["idle_warning_ms"] = max(0, policy["idle_lock_ms"] - 60000)
+    if policy["max_idle_timeout_ms"] < policy["idle_lock_ms"]:
+        policy["max_idle_timeout_ms"] = policy["idle_lock_ms"]
+    return policy, source
+
+
+def _locked_policy_update_response(actor, session_id=None):
+    lock = get_active_session_lock(session_id, actor=actor) if session_id else None
+    if not lock:
+        lock = get_any_active_actor_lock(actor=actor)
+    if not lock:
+        return None
+    return jsonify({
+        "message": "session_locked",
+        "error": "Session is locked. Unlock required.",
+        "lock": public_lock_state(lock),
+    }), 423
 
 
 def _session_tree_keys(session_id):
@@ -196,7 +306,45 @@ def _parent_revoke_access_token(actor, parent_session):
 @auth_api.route("/session-policy", methods=["GET"])
 @auth_required
 def session_policy():
-    return jsonify({"message": "success", "results": _idle_policy()}), 200
+    actor = current_actor_from_request()
+    session_id = str(request.args.get("session_id") or "").strip()
+    if session_id and not _session_policy_accessible(session_id, actor):
+        return jsonify({"message": "forbidden"}), 403
+    policy, source = _effective_session_policy(session_id or None)
+    return jsonify({"message": "success", "results": {"session_id": session_id or None, "policy": policy, "source": source, "editable_fields": list(SESSION_POLICY_FIELDS)}}), 200
+
+
+@auth_api.route("/session-policy", methods=["PATCH"])
+@auth_required
+@validate_json_payload(COMMON_SCHEMAS["session_policy_update"])
+def patch_session_policy():
+    actor = current_actor_from_request()
+    data = validated_json() or {}
+    session_id = str(data.get("session_id") or "").strip()
+    if not session_id:
+        return jsonify({"message": "validation_error", "detail": "session_id_required"}), 400
+    if not _session_policy_accessible(session_id, actor):
+        return jsonify({"message": "forbidden"}), 403
+    locked = _locked_policy_update_response(actor, session_id=session_id)
+    if locked:
+        return locked
+    try:
+        updates = _extract_session_policy_updates(data)
+    except ValueError as exc:
+        return jsonify({"message": "validation_error", "detail": str(exc)}), 400
+    if not updates:
+        return jsonify({"message": "validation_error", "detail": "no_policy_fields_provided"}), 400
+    effective, _source = _effective_session_policy(session_id)
+    merged = dict(effective)
+    merged.update({k: v for k, v in updates.items() if v is not None})
+    if merged["idle_warning_ms"] > merged["idle_lock_ms"]:
+        return jsonify({"message": "validation_error", "detail": "idle_warning_ms_must_not_exceed_idle_lock_ms"}), 400
+    if merged["max_idle_timeout_ms"] < merged["idle_lock_ms"]:
+        return jsonify({"message": "validation_error", "detail": "max_idle_timeout_ms_must_be_greater_than_or_equal_to_idle_lock_ms"}), 400
+    save_temp_config("all", updates, session_id)
+    saved_policy, source = _effective_session_policy(session_id)
+    _record_security_event_safe("auth.session_policy.update", actor=actor, target_type="analysis_session", target_id=session_id, success=True, metadata={"fields": sorted(updates.keys())})
+    return jsonify({"message": "success", "results": {"session_id": session_id, "policy": saved_policy, "source": source, "updated_fields": sorted(updates.keys())}}), 200
 
 
 @auth_api.route("/lock", methods=["POST"])

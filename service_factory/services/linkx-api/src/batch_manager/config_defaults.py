@@ -79,4 +79,8 @@ def get_default_session_config(session_id):
         "risk_entities": [],
         "automation": os.getenv("LINKX_AUTOMATION", "true"),
         "remote": os.getenv("LINKX_REMOTE", "false"),
+        "idle_warning_ms": int(os.getenv("LINKX_IDLE_WARNING_MS", str(max(0, int(os.getenv("LINKX_IDLE_LOCK_MS", os.getenv("LINKX_IDLE_TIMEOUT_MS", "900000"))) - 60000)))),
+        "idle_lock_ms": int(os.getenv("LINKX_IDLE_LOCK_MS", os.getenv("LINKX_IDLE_TIMEOUT_MS", "900000"))),
+        "max_idle_timeout_ms": int(os.getenv("LINKX_MAX_IDLE_TIMEOUT_MS", "3600000")),
+        "lock_requires_reauth": os.getenv("LINKX_LOCK_REQUIRES_REAUTH", "true").lower() not in {"0", "false", "no"},
     }

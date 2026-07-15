@@ -251,7 +251,6 @@ _LOCK_EXEMPT_PATHS = {
     "/auth/unlock",
     "/auth/idle-timeout",
     "/auth/logout",
-    "/auth/session-policy",
     "/auth/login",
     "/auth/me",
     "/auth/verify",
@@ -273,14 +272,19 @@ _LOCK_PROTECTED_PATHS = {
     "/connect_to_tool",
     "/disconnect_tool",
     "/close_source_window",
-    "/live_batch_files",
-    "/upload_batch_files",
     "/graph_link",
     "/get_graph",
     "/admin/audit/cleanup",
     "/auth/preferences",
+    "/auth/session-policy",
     "/workspace/layout",
 }
+
+
+def _is_lock_exempt_request(path, method):
+    if path == "/auth/session-policy":
+        return method == "GET"
+    return path in _LOCK_EXEMPT_PATHS
 
 
 def _is_lock_protected_request(path):
@@ -323,7 +327,7 @@ def enforce_locked_session():
         return None
 
     path = request.path.rstrip("/") or "/"
-    if path in _LOCK_EXEMPT_PATHS or not _is_lock_protected_request(path):
+    if _is_lock_exempt_request(path, request.method) or not _is_lock_protected_request(path):
         return None
 
     actor = current_actor_from_request()
