@@ -16,7 +16,7 @@ def get_default_session_config(session_id):
         "REST APIs": [],
         "active_kafka_adress": "",
         "active_REST_API": "",
-        "storage_addresses": _env_list("LINKX_STORAGE_ADDRESSES", ["172.20.137.129"]),
+        "storage_addresses": _env_list("LINKX_STORAGE_ADDRESSES", ["172.27.23.43"]),
         "storage_path": os.getenv("LINKX_STORAGE_PATH", "user/bank/cleaned_partitioned"),
         "storage_databases": _env_list("LINKX_STORAGE_DATABASES", ["bankdb", "bank_db"]),
         "storage_tables": _env_list("LINKX_STORAGE_TABLES", ["individual_transactions", "entity_transactions"]),
