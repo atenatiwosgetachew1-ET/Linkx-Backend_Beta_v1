@@ -51,6 +51,15 @@ def _log_es_response(label, api_url, response, *, page_size=None, collected=None
     print(f"{label}: api={_safe_api_label(api_url)} summary={summary}", flush=True)
 
 
+def _log_es_info(message, details=None):
+    if not _elastic_diagnostic_logs_enabled():
+        return
+    if details is None:
+        print(message, flush=True)
+    else:
+        print(message, redact_value(details), flush=True)
+
+
 def _elastic_request_headers(auth_header=None):
     header_value = str(auth_header or "").strip()
     if not header_value:
@@ -134,11 +143,11 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
             ]
 
         if not results:
-            print("Elastic result not found", {"api": _safe_api_label(API_URL), "timeout": timeout, "result_keys": list(result.keys()) if isinstance(result, dict) else type(result).__name__}, flush=True)
+            _log_es_info("Elastic result not found", {"api": _safe_api_label(API_URL), "timeout": timeout, "result_keys": list(result.keys()) if isinstance(result, dict) else type(result).__name__})
             return None
 
         if len(results) >= 100000:
-            print("Elastic result overflow -> require hive fallback")
+            _log_es_info("Elastic result overflow -> require hive fallback")
             if id == "search":
                 return {
                     "results": [{
@@ -174,11 +183,11 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
             }
 
         if id == "fetch":
-            print("fetching...")
+            _log_es_info("Elastic fetch dataframe conversion started")
             records = [_record_from_result(r) for r in results]
             records = [record for record in records if record]
             if not records:
-                print("Elastic fetch returned no row dictionaries")
+                _log_es_info("Elastic fetch returned no row dictionaries")
                 return None
 
             df = pd.DataFrame(records)
@@ -189,9 +198,7 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
                 existing = [c for c in normalized_fetch if c in df.columns]
 
                 if not existing:
-                    print("No matching columns found")
-                    print("DF columns:", df.columns.tolist())
-                    print("fetch_columns:", normalized_fetch)
+                    _log_es_info("No matching columns found", {"df_columns": df.columns.tolist(), "fetch_columns": normalized_fetch})
                     return None
 
                 df = df[existing]
@@ -201,7 +208,7 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
 
     except requests.exceptions.HTTPError as e:
         status_code = e.response.status_code if e.response is not None else None
-        print("Elastic error:", type(e).__name__, {"status_code": status_code, "api": _safe_api_label(API_URL)}, flush=True)
+        _log_es_info("Elastic error:", {"type": type(e).__name__, "status_code": status_code, "api": _safe_api_label(API_URL)})
         if id == "search" and status_code in {401, 403}:
             return {
                 "status": "failed",
@@ -230,7 +237,7 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
             }
         return None
     except Exception as e:
-        print("Elastic error:", type(e).__name__, {"api": _safe_api_label(API_URL)}, flush=True)
+        _log_es_info("Elastic error:", {"type": type(e).__name__, "api": _safe_api_label(API_URL)})
         return None
 
 
@@ -304,7 +311,7 @@ def _fetch_es_pages(API_URL, column, keyword, limit=None, offset=0, batch_size=N
             except (TypeError, ValueError):
                 pass
 
-    print(f"Elastic fetch collected {len(collected)} rows")
+    _log_es_info("Elastic fetch collected rows", {"count": len(collected)})
     return collected, last_payload, result
 
 
@@ -322,7 +329,7 @@ def _row_value(row, key):
 
 
 def load_elastic_rows(API_URL, keyword, search_column, fetch_columns, date=None, timeout=30, auth_header=None):
-    print("load_elastic_rows", {"api": _safe_api_label(API_URL), "search_column": search_column, "fetch_columns_count": len(fetch_columns or []), "timeout": timeout}, flush=True)
+    _log_es_info("load_elastic_rows", {"api": _safe_api_label(API_URL), "search_column": search_column, "fetch_columns_count": len(fetch_columns or []), "timeout": timeout})
     if not search_column:
         return {"error": "search_column must be provided"}
 
@@ -380,13 +387,13 @@ def load_elastic_rows(API_URL, keyword, search_column, fetch_columns, date=None,
         }
 
     except requests.exceptions.Timeout:
-        print("error:","Request timed out")
+        _log_es_info("Elastic request timed out")
         return None
     except requests.exceptions.ConnectionError:
-        print("error:","API server not reachable")
+        _log_es_info("Elastic API server not reachable")
         return None
     except requests.exceptions.HTTPError:
-        print("error:", "API returned an error", {"api": _safe_api_label(API_URL), "status_code": response.status_code}, flush=True)
+        _log_es_info("Elastic API returned an error", {"api": _safe_api_label(API_URL), "status_code": response.status_code})
         return None
 
 
@@ -415,7 +422,7 @@ def es_keyword_search_spark_chunks(
     if not search_column or spark is None or not chunk_dir:
         return None
 
-    print(
+    _log_es_info(
         "Elastic chunk fetch start:",
         {
             "api": _safe_api_label(API_URL),
@@ -427,7 +434,6 @@ def es_keyword_search_spark_chunks(
             "batch_size": batch_size,
             "fetch_columns_count": len(fetch_columns or []),
         },
-        flush=True,
     )
 
     if isinstance(search_column, (list, tuple, set)):
@@ -440,7 +446,7 @@ def es_keyword_search_spark_chunks(
             shutil.rmtree(chunk_dir)
         os.makedirs(chunk_dir, exist_ok=True)
     except Exception as exc:
-        print("Elastic chunk directory error:", exc)
+        _log_es_info("Elastic chunk directory error:", {"error": str(exc)})
         return None
 
     normalized_fetch = [c.lower() for c in (fetch_columns or [])]
@@ -459,9 +465,7 @@ def es_keyword_search_spark_chunks(
         if normalized_fetch:
             existing = [c for c in normalized_fetch if c in df.columns]
             if not existing:
-                print("No matching columns found for Elastic chunk page")
-                print("DF columns:", df.columns.tolist())
-                print("fetch_columns:", normalized_fetch)
+                _log_es_info("No matching columns found for Elastic chunk page", {"df_columns": df.columns.tolist(), "fetch_columns": normalized_fetch})
                 return None
             df = df[existing]
         if df.empty:
@@ -555,12 +559,12 @@ def es_keyword_search_spark_chunks(
             if total_written:
                 break
         except requests.exceptions.HTTPError as exc:
-            print("Elastic chunk fetch HTTP error:", type(exc).__name__, {"api": _safe_api_label(API_URL), "status_code": exc.response.status_code if exc.response is not None else None}, flush=True)
+            _log_es_info("Elastic chunk fetch HTTP error:", {"type": type(exc).__name__, "api": _safe_api_label(API_URL), "status_code": exc.response.status_code if exc.response is not None else None})
         except Exception as exc:
-            print("Elastic chunk fetch error:", exc)
+            _log_es_info("Elastic chunk fetch error:", {"error": str(exc)})
 
     if total_written <= 0 or not page_spark_dfs:
-        print("Elastic chunk fetch produced no rows", {"api": _safe_api_label(API_URL), "search_column": search_column, "result_keys": list(last_result.keys()) if isinstance(last_result, dict) else type(last_result).__name__}, flush=True)
+        _log_es_info("Elastic chunk fetch produced no rows", {"api": _safe_api_label(API_URL), "search_column": search_column, "result_keys": list(last_result.keys()) if isinstance(last_result, dict) else type(last_result).__name__})
         return None
 
     try:
@@ -571,8 +575,8 @@ def es_keyword_search_spark_chunks(
         for page_df in page_spark_dfs[1:]:
             merged = merged.unionByName(page_df, allowMissingColumns=True)
         merged.write.mode("overwrite").parquet(spark_chunk_uri)
-        print(f"Elastic chunk fetch wrote {total_written} rows to {local_chunk_dir}")
+        _log_es_info("Elastic chunk fetch wrote rows", {"rows": total_written, "path": local_chunk_dir})
         return spark.read.parquet(spark_chunk_uri)
     except Exception as exc:
-        print("Elastic chunk final write/read error:", exc)
+        _log_es_info("Elastic chunk final write/read error:", {"error": str(exc)})
         return None

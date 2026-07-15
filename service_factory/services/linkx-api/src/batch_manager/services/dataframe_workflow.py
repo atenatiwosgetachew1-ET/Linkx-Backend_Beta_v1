@@ -12,6 +12,7 @@ from batch_manager.utils.spark_utils import get_spark_session
 from pyspark.sql.functions import col as spark_col
 from batch_manager.utils.artifact_utils import ensure_artifact_dir, register_artifact_dir
 from globals import load_temp_config, save_temp_config
+from security.redaction import redact_value
 
 
 def _is_spark_df(df):
@@ -109,7 +110,7 @@ def load_dataframes_for_create_df(data, session_id):
                 "type": df_type,
                 "kind": kind,
             }
-            print("create_df_payload", payload)
+            print("create_df_payload", redact_value(payload))
             try:
                 _append_dataframe(dfs, batch_data_manager(payload), f"file {file_value}")
             except Exception as e:
@@ -131,7 +132,7 @@ def load_dataframes_for_create_df(data, session_id):
             "type": df_type,
             "kind": kind,
         }
-        print("create_df_payload:", payload)
+        print("create_df_payload:", redact_value(payload))
         try:
             _append_dataframe(dfs, batch_data_manager(payload), "address")
         except Exception as e:
@@ -147,7 +148,7 @@ def load_dataframes_for_create_df(data, session_id):
         "type": df_type,
         "kind": kind,
     }
-    print("create_df_payload:", payload)
+    print("create_df_payload:", redact_value(payload))
     df = batch_data_manager(payload)
     if isinstance(df, dict) and df.get("status") == "failed":
         return df

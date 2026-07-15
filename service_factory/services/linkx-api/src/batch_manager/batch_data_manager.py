@@ -276,7 +276,7 @@ def batch_data_manager(payload):
         print("kind:",payload["kind"])
         if payload["type"] == "array" and payload["kind"] == "files": #Only for uploaded files
             use_spark = payload.get("use_spark", False)
-            print("Now loading files", payload["path"], use_spark)
+            print("Now loading files", redact_value(payload["path"]), use_spark)
             # File info is a dict
             file_info = payload["path"]
             session_id = payload["session_id"]
