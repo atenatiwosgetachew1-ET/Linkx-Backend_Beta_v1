@@ -201,6 +201,14 @@ def check_nginx_gateway(reporter: Reporter) -> None:
     check_http_status(reporter, "http://127.0.0.1/auth/me", {401}, host="linkx-api.local")
 
 
+def check_otel_metrics_port(reporter: Reporter, port: int = 8889) -> None:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=2):
+            reporter.pass_(f"OpenTelemetry metrics port {port} is active and listening locally")
+    except OSError:
+        reporter.warn(f"OpenTelemetry metrics port {port} is not listening locally yet (Phase 2 instrumentation pending)")
+
+
 def verify_api(reporter: Reporter) -> None:
     root = Path("/opt/linkx-backend-api")
     env_path = root / ".env"
@@ -220,6 +228,7 @@ def verify_api(reporter: Reporter) -> None:
     check_http_status(reporter, "http://127.0.0.1:8000/db/health", {200})
     check_http_status(reporter, "http://127.0.0.1:8000/auth/me", {401})
     check_nginx_gateway(reporter)
+    check_otel_metrics_port(reporter)
 
 
 def verify_control_data(reporter: Reporter) -> None:
@@ -252,6 +261,7 @@ def verify_control_data(reporter: Reporter) -> None:
         reporter.pass_("docker compose ps shows linkx-redis")
     else:
         reporter.warn("docker compose ps did not confirm linkx-redis; check Docker manually")
+    check_otel_metrics_port(reporter)
 
 
 def verify_worker(reporter: Reporter) -> None:
@@ -261,6 +271,7 @@ def verify_worker(reporter: Reporter) -> None:
     check_path(reporter, env_path, "Worker env file")
     check_systemd_active(reporter, "linkx-worker")
     check_env_redis_url(reporter, read_env(env_path), env_path)
+    check_otel_metrics_port(reporter)
 
 
 def verify_graph_maintenance(reporter: Reporter) -> None:
@@ -280,6 +291,7 @@ def verify_graph_maintenance(reporter: Reporter) -> None:
             reporter.pass_("Cleanup Neo4j credential-source logging is metadata-only")
         else:
             reporter.fail("Cleanup Neo4j credential-source logging may expose credential-shaped payloads")
+    check_otel_metrics_port(reporter)
 
 
 def main() -> int:
