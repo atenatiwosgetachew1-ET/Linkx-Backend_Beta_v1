@@ -9,6 +9,7 @@ This handoff summarizes the current security posture of the LinkX backend split 
 This document is based on repository evidence from:
 
 - `docs/service_split_handoff_and_load_audit.md`
+- `docs/server_communication_and_update_protocol.md`
 - `service_factory/services/linkx-api/**`
 - `service_factory/services/linkx-worker/**`
 - `service_factory/services/linkx-control-data/**`

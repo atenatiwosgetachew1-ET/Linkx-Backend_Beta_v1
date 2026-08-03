@@ -2,7 +2,7 @@
 
 Last updated: 2026-07-03
 
-This document is a handoff summary for a new chat/session. It captures the current four-server LinkX backend split, how the services communicate, how deployments are updated, and what work is still running on each server. The goal of the split is to keep the current working system stable while gradually moving heavy analysis and ingestion work out of the API server and into worker/maintenance services.
+This document is a handoff summary for a new chat/session. It captures the current four-server LinkX backend split, how the services communicate, how deployments are updated, and what work is still running on each server. For detailed server communication diagrams, firewall rules, and standardized command delivery protocols, refer to [docs/server_communication_and_update_protocol.md](file:///var/www/linkx-backend/docs/server_communication_and_update_protocol.md). The goal of the split is to keep the current working system stable while gradually moving heavy analysis and ingestion work out of the API server and into worker/maintenance services.
 
 ## Latest Status Snapshot
 
