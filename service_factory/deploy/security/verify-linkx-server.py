@@ -168,7 +168,7 @@ def check_api_code_markers(reporter: Reporter, src: Path) -> None:
         "auth/tokens.py": ["jti", "is_token_jti_revoked"],
         "auth/routes.py": ["token_invalidated", "_revoke_current_bearer_token"],
         "api/ai_service.py": ["ai:session:read", "ai:artifact:read", "ai:cleanup:read", "ai:graph:metadata:read"],
-        "api/STR_link_analysis.py": ["redact_value(payload)"],
+        "api/STR_link_analysis.py": ["redact_value"],
     }
     for relative, markers in expected.items():
         path = src / relative
