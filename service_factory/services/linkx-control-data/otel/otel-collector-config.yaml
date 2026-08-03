@@ -1,0 +1,19 @@
+receivers:
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: 'linkx-control-data'
+          scrape_interval: 15s
+          static_configs:
+            - targets: ['localhost:8889']
+
+exporters:
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    namespace: "linkx_control_data"
+
+service:
+  pipelines:
+    metrics:
+      receivers: [prometheus]
+      exporters: [prometheus]
