@@ -72,6 +72,13 @@ import globals #Globally used by multible pages (functions and variables) #Conta
 
 
 app = Flask(__name__)
+
+try:
+    from observability.metrics import start_otel_metrics_server
+    start_otel_metrics_server(8889)
+except Exception as exc:
+    print(f"API OTel metrics notice: {exc}", flush=True)
+
 allowed_origins = os.getenv("LINKX_CORS_ORIGINS", "")
 cors_origins = [origin.strip() for origin in allowed_origins.split(",") if origin.strip()]
 if not cors_origins:
