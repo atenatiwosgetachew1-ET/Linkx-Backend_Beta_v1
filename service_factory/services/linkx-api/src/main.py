@@ -161,6 +161,8 @@ def internal_server_error(exc):
 
 @app.before_request
 def begin_request_metrics():
+    if metrics_enabled():
+        start_otel_metrics_server(8889)
     g._metrics_track_request = False
     if not should_track_request(request):
         return None

@@ -97,6 +97,13 @@ def main():
     parser.add_argument("--poll-interval", type=float, default=float(os.getenv("CLEANUP_POLL_INTERVAL", "5")))
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
+
+    try:
+        from observability.metrics import start_otel_metrics_server
+        start_otel_metrics_server(8889)
+    except Exception as exc:
+        print(f"[cleanup] metrics server notice: {exc}", flush=True)
+
     run_loop(args.poll_interval, once=args.once)
 
 

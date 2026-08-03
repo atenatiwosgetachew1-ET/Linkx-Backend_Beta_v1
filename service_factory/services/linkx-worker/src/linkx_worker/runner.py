@@ -445,6 +445,13 @@ def main():
     queues = [q.strip() for q in args.queues.split(",") if q.strip()]
     if not queues:
         raise SystemExit("at least one queue is required")
+
+    try:
+        from observability.metrics import start_otel_metrics_server
+        start_otel_metrics_server(8889)
+    except Exception as exc:
+        print(f"[worker] metrics server notice: {exc}", flush=True)
+
     run_loop(queues, args.poll_interval, once=args.once, concurrency=args.concurrency)
 
 
