@@ -62,6 +62,25 @@ class STRLinkAnalysisApiTest(unittest.TestCase):
         enqueue_mock.assert_called_once()
         self.assertEqual(enqueue_mock.call_args.args[:2], ("search", "search"))
 
+    def test_ML_link_analysis_uses_ml_service_session_prefix(self):
+        with patch("api.ML_link_analysis.enqueue_worker_job", return_value={"job_id": "ml-job-1", "status": "queued"}) as enqueue_mock, \
+             patch("api.ML_link_analysis._prepare_session", return_value=True):
+            response = self.client.post(
+                "/api/ML_link_analysis",
+                json={
+                    "entity": "bank",
+                    "type": "account_number",
+                    "value": "ACC10099",
+                    "ml_id": "test_request_123",
+                },
+            )
+            self.assertEqual(response.status_code, 202)
+            payload = response.get_json()
+            self.assertEqual(payload["message"], "accepted")
+            self.assertEqual(payload["session_id"], "ml_service_test_request_123")
+            enqueue_mock.assert_called_once()
+            self.assertEqual(enqueue_mock.call_args.kwargs["session_id"], "ml_service_test_request_123")
+
     def test_STR_link_analysis_creates_dataframe_when_elastic_has_results(self):
         elastic_response = {
             "results": [

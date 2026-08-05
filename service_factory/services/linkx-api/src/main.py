@@ -41,6 +41,7 @@ from batch_manager.utils.Classified_entities import TrustedEntitiesValidationErr
 from logger import log_writer,log_stream_background
 from io_sockets import register_socket_handlers
 from api.STR_link_analysis import STR_link_analysis_api
+from api.ML_link_analysis import ML_link_analysis_api
 from api.ai_service import ai_service_api
 from session_config_store import create_session_config, duplicate_window_config, get_user_config, get_workspace_layout, load_session_config, save_session_config, save_user_config, save_workspace_layout
 from service_orchestration import enqueue_cleanup_run, enqueue_worker_job, get_active_session_lock, get_actor_main_session_info, get_any_active_actor_lock, get_worker_job, list_cleanup_audit, public_lock_state, reactivate_analysis_session, request_session_cancellation
@@ -102,6 +103,7 @@ app.register_blueprint(auth_api, url_prefix="/auth")
 app.add_url_rule("/api/auth/exchange", view_func=exchange_parent_oauth_code, methods=["POST"])
 # Register external API blueprint
 app.register_blueprint(STR_link_analysis_api, url_prefix="/api")
+app.register_blueprint(ML_link_analysis_api, url_prefix="/api")
 app.register_blueprint(ai_service_api, url_prefix="/ai")
 
 

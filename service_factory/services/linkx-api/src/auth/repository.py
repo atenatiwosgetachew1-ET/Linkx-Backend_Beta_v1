@@ -120,6 +120,16 @@ DEFAULT_SERVICE_PERMISSIONS = {
         "graph:read",
         "reports:read",
     ],
+    "ml": [
+        "ml:read",
+        "ml:link_analysis",
+        "ml:session:read",
+        "ml:artifact:read",
+        "ml:graph:metadata:read",
+        "session:read",
+        "graph:read",
+        "reports:read",
+    ],
 }
 
 _AUTH_SCHEMA_READY = False
