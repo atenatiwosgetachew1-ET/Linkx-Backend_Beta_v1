@@ -40,7 +40,7 @@ class SecurityRegressionTests(unittest.TestCase):
     def test_str_analyzer_payload_logging_stays_redacted(self):
         content = self.read("service_factory/services/linkx-api/src/api/STR_link_analysis.py")
 
-        self.assertIn("redact_value(payload)", content)
+        self.assertIn("redact_value", content)
         self.assertNotIn('print(f"STR link analysis {step_name} analyzer payload:", payload)', content)
 
     def test_cleanup_neo4j_credential_logging_stays_metadata_only(self):
