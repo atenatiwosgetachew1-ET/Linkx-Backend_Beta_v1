@@ -202,10 +202,18 @@ def check_nginx_gateway(reporter: Reporter) -> None:
 
 
 def check_otel_metrics_port(reporter: Reporter, port: int = 8889) -> None:
-    try:
-        with socket.create_connection(("127.0.0.1", port), timeout=2):
-            reporter.pass_(f"OpenTelemetry metrics port {port} is active and listening locally")
-    except OSError:
+    success = False
+    for host in ("127.0.0.1", "0.0.0.0"):
+        try:
+            with socket.create_connection((host, port), timeout=2):
+                success = True
+                break
+        except OSError:
+            continue
+
+    if success:
+        reporter.pass_(f"OpenTelemetry metrics port {port} is active and listening")
+    else:
         reporter.warn(f"OpenTelemetry metrics port {port} is not listening locally yet (Phase 2 instrumentation pending)")
 
 

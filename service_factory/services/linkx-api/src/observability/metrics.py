@@ -86,6 +86,7 @@ def start_otel_metrics_server(default_port=8889):
         return True
 
     port_str = os.getenv("LINKX_OTEL_METRICS_PORT", os.getenv("LINKX_METRICS_PORT", str(default_port)))
+    host = os.getenv("LINKX_OTEL_METRICS_HOST", os.getenv("LINKX_METRICS_HOST", "0.0.0.0"))
     try:
         port = int(port_str)
     except (ValueError, TypeError):
@@ -94,11 +95,11 @@ def start_otel_metrics_server(default_port=8889):
     try:
         from prometheus_client import start_http_server
 
-        start_http_server(port)
+        start_http_server(port, addr=host)
         _metrics_server_started = True
-        print(f"OpenTelemetry metrics server listening on port {port}", flush=True)
+        print(f"OpenTelemetry metrics server listening on {host}:{port}", flush=True)
         return True
     except Exception as exc:
-        print(f"Failed to start OpenTelemetry metrics server on port {port}: {exc}", flush=True)
+        print(f"Failed to start OpenTelemetry metrics server on {host}:{port}: {exc}", flush=True)
         return False
 
