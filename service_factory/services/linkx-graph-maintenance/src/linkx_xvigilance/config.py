@@ -18,10 +18,11 @@ def get_xvigilance_config():
     return {
         "elastic_base_url": elastic_base.rstrip("/"),
         "search_endpoint": os.getenv(
-            "LINKX_ES_FUZZY_ENDPOINT",
-            defaults.get("search_api_endpoint_es_fuzzy", "api/search/individual"),
+            "LINKX_ES_STRICT_ENDPOINT",
+            defaults.get("search_api_endpoint_es_strict", "api/search/uii"),
         ),
         "date_column": os.getenv("LINKX_DATE_COLUMN", defaults.get("date_column", "transactiondate")),
+        "time_column": os.getenv("LINKX_TIME_COLUMN", "transactiontime"),
         "fetch_columns": defaults.get("fetch_columns", [
             "TRANSACTIONID",
             "BRANCHNAME",
@@ -39,4 +40,5 @@ def get_xvigilance_config():
         ]),
         "page_size": int(os.getenv("XVIGILANCE_PAGE_SIZE", "50000")),
         "request_timeout_seconds": int(os.getenv("XVIGILANCE_REQUEST_TIMEOUT", "60")),
+        "auth_header": os.getenv("LINKX_ELASTIC_API_AUTHORIZATION"),
     }
