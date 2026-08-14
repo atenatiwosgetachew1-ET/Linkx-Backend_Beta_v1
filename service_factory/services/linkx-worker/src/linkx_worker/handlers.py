@@ -5,6 +5,7 @@ from batch_manager.services.dataframe_workflow import create_dataframe_result
 from batch_manager.services.graph_workflow import fetch_graph_result
 from batch_manager.services.str_link_analysis_workflow import run_str_link_analysis
 from batch_manager.services.ml_link_analysis_workflow import run_ml_link_analysis
+from batch_manager.services.rule_engine_workflow import run_rule_engine_analysis
 from linkx_worker.cancellation import DatabaseCancellationEvent
 from security.redaction import public_error, redact_value
 
@@ -64,6 +65,9 @@ def run_job(job_type, payload):
 
     if job_type in {"ml_link_analysis", "ML_link_analysis"}:
         return run_ml_link_analysis(payload)
+
+    if job_type in {"rule_engine_analysis", "RULE_link_analysis", "rule_link_analysis"}:
+        return run_rule_engine_analysis(payload)
 
     if job_type in {"graph_fetch", "get_graph"}:
         return fetch_graph_result(payload)

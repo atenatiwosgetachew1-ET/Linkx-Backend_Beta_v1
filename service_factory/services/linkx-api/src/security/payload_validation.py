@@ -344,6 +344,22 @@ COMMON_SCHEMAS = {
             "date": {"type": ["string", "null"], "maxLength": 64},
         },
     },
+    "rule_engine_analysis": {
+        "type": "object",
+        "required": ["entity", "type", "value"],
+        "additionalProperties": False,
+        "properties": {
+            "entity": {"type": "string", "enum": ["bank"]},
+            "type": {"type": "string", "enum": ["account_number"]},
+            "value": {"type": "string", "minLength": 1, "maxLength": 255},
+            "session_id": {"type": "string", "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+            "rule_id": {"type": "string", "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+            "frontend_session_id": {"type": "string", "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
+            "date": {"type": ["string", "null"], "maxLength": 64},
+            "suspicious_reason": {"type": ["string", "null"], "maxLength": 255},
+            "rule_name": {"type": ["string", "null"], "maxLength": 255},
+        },
+    },
     "configuration": {
         "type": "object",
         "required": ["id", "session_id"],

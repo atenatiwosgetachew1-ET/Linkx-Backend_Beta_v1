@@ -81,6 +81,26 @@ class STRLinkAnalysisApiTest(unittest.TestCase):
             enqueue_mock.assert_called_once()
             self.assertEqual(enqueue_mock.call_args.kwargs["session_id"], "ml_service_test_request_123")
 
+    def test_RULE_link_analysis_uses_rule_engine_session_prefix(self):
+        with patch("api.rule_engine_analysis.enqueue_worker_job", return_value={"job_id": "rule-job-1", "status": "queued"}) as enqueue_mock, \
+             patch("api.rule_engine_analysis._prepare_session", return_value=True):
+            response = self.client.post(
+                "/api/RULE_link_analysis",
+                json={
+                    "entity": "bank",
+                    "type": "account_number",
+                    "value": "ACC20088",
+                    "rule_id": "suspicious_tx_999",
+                    "suspicious_reason": "High frequency smurfing",
+                },
+            )
+            self.assertEqual(response.status_code, 202)
+            payload = response.get_json()
+            self.assertEqual(payload["message"], "accepted")
+            self.assertEqual(payload["session_id"], "rule_engine_suspicious_tx_999")
+            enqueue_mock.assert_called_once()
+            self.assertEqual(enqueue_mock.call_args.kwargs["session_id"], "rule_engine_suspicious_tx_999")
+
     def test_STR_link_analysis_creates_dataframe_when_elastic_has_results(self):
         elastic_response = {
             "results": [

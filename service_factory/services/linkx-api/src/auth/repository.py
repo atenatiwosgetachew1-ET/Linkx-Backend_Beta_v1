@@ -130,6 +130,16 @@ DEFAULT_SERVICE_PERMISSIONS = {
         "graph:read",
         "reports:read",
     ],
+    "rule_engine": [
+        "rule_engine:read",
+        "rule_engine:link_analysis",
+        "rule_engine:session:read",
+        "rule_engine:artifact:read",
+        "rule_engine:graph:metadata:read",
+        "session:read",
+        "graph:read",
+        "reports:read",
+    ],
 }
 
 _AUTH_SCHEMA_READY = False
