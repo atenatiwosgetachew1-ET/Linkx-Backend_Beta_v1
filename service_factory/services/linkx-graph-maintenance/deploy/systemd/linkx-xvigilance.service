@@ -1,0 +1,16 @@
+[Unit]
+Description=LinkX Xvigilance Autonomous Hourly Detective Daemon
+After=network.target linkx-neo4j-compose.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/linkx-graph-maintenance/src
+EnvironmentFile=/opt/linkx-graph-maintenance/.env
+ExecStart=/opt/linkx-graph-maintenance/.venv/bin/python -m linkx_xvigilance.runner
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target
