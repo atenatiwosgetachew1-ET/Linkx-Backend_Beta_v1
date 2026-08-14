@@ -152,3 +152,23 @@ All verification runs using `verify-linkx-server.py` across all four servers mus
 PASS: OpenTelemetry metrics port 8889 is active and listening locally
 summary: failures=0 warnings=0
 ```
+
+---
+
+## 6. External Service Integration & Analysis Endpoints Matrix
+
+LinkX supports external partner service accounts with granular RBAC permissions. Each service account interacts through dedicated API endpoints and uses standardized session ID prefixes for tracing and isolation:
+
+| External Service | Dedicated Endpoint | Session Prefix | Service Account Role | Default Permissions |
+| :--- | :--- | :--- | :--- | :--- |
+| **STR Analysis** | `POST /api/STR_link_analysis` | `str_report_<id>` | `str` / API Key | Base transaction link analysis |
+| **ML Service** | `POST /api/ML_link_analysis` | `ml_service_<id>` | `ml` | `ml:read`, `ml:link_analysis`, `ml:session:read` |
+| **Rule Engine** | `POST /api/RULE_link_analysis`<br>`POST /api/rule_engine_analysis` | `rule_engine_<id>` | `rule_engine` | `rule_engine:read`, `rule_engine:link_analysis`, `rule_engine:session:read` |
+| **AI Co-Analyst** | `GET /ai/sessions`<br>`GET /ai/sessions/:id/graph/metadata` | Scoped whitelist / owned | `ai` | `ai:read`, `ai:session:read`, `ai:artifact:read`, `ai:graph:metadata:read` |
+
+### Authentication Protocol for Service Accounts
+
+External services obtain a short-lived Bearer JWT via:
+- **`POST /auth/service-token`** with `{"client_id": "<service_client_id>", "client_secret": "<password>"}`.
+- Alternatively, endpoints accept direct API Key authentication via `X-API-Key` headers (`LINKX_PUBLIC_API_KEY`, `LINKX_ML_SERVICE_API_KEY`, `LINKX_RULE_ENGINE_API_KEY`).
+
