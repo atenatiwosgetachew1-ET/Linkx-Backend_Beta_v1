@@ -4,12 +4,13 @@ After=network.target
 
 [Service]
 Type=simple
-User=linkx
-WorkingDirectory=/opt/linkx-worker
+WorkingDirectory=/opt/linkx-worker/src
 EnvironmentFile=/opt/linkx-worker/.env
-ExecStart=/opt/linkx-worker/.venv/bin/python src/linkx_worker/risk_scoring_consumer.py
+ExecStart=/opt/linkx-worker/.venv/bin/python -m linkx_worker.risk_scoring_consumer
 Restart=always
 RestartSec=5s
+KillSignal=SIGTERM
+TimeoutStopSec=15
 StandardOutput=journal
 StandardError=journal
 
