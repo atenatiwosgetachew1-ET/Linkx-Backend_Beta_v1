@@ -510,15 +510,31 @@ def publish_risk_scoring_response(response_event, brokers=None, topic=None, sess
     default_topic = _kafka_flagged_topic(session_id) if is_flagged else _kafka_mapped_topic(session_id)
     target_topic = topic or default_topic
 
+    key = str((response_event.get("data") or {}).get("accountno") or "").encode("utf-8")
+    val = json.dumps(response_event).encode("utf-8")
+
+    # 1. Try confluent-kafka
     try:
         from confluent_kafka import Producer
         conf = {"bootstrap.servers": brokers, "client.id": "linkx-link-analysis-producer"}
         p = Producer(conf)
-        key = str((response_event.get("data") or {}).get("accountno") or "").encode("utf-8")
-        val = json.dumps(response_event).encode("utf-8")
         p.produce(target_topic, key=key, value=val)
         p.flush(timeout=5.0)
         return True
+    except ImportError:
+        pass
     except Exception as exc:
-        print(f"[RiskScoring] Error publishing Kafka event to {target_topic}: {exc}")
+        print(f"[RiskScoring] confluent_kafka publish error to {target_topic}: {exc}")
+
+    # 2. Fallback to kafka-python
+    try:
+        from kafka import KafkaProducer
+        server_list = [b.strip() for b in brokers.split(",") if b.strip()]
+        kp = KafkaProducer(bootstrap_servers=server_list, client_id="linkx-link-analysis-producer")
+        future = kp.send(target_topic, key=key, value=val)
+        future.get(timeout=5.0)
+        kp.flush()
+        return True
+    except Exception as exc:
+        print(f"[RiskScoring] kafka-python publish error to {target_topic}: {exc}")
         return False
