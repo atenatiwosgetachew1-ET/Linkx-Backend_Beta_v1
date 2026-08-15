@@ -61,8 +61,8 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
                 secs = int(remaining_seconds % 60)
 
                 print(
-                    f"[xvigilance] Target window [{window_start.strftime('%Y-%m-%d %H:%M')} ──► {window_end.strftime('%H:%M')} UTC] "
-                    f"is not yet complete. 💤 Resting for {mins}m {secs}s on time difference...",
+                    f"[xvigilance] Target window [{window_start.strftime('%Y-%m-%d %H:%M')} -> {window_end.strftime('%H:%M')} UTC] "
+                    f"is not yet complete. Resting for {mins}m {secs}s on time difference...",
                     flush=True,
                 )
 
@@ -82,7 +82,7 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
             start_str = window_start.strftime("%Y-%m-%d %H:%M:%S UTC")
             end_str = window_end.strftime("%Y-%m-%d %H:%M:%S UTC")
 
-            print(f"[xvigilance] ⏰ Waking up! Phase starting for window [{start_str} ──► {end_str}]", flush=True)
+            print(f"[xvigilance] Phase starting for window [{start_str} -> {end_str}]", flush=True)
 
             run_id = log_slice_start(feed_name, window_start, window_end)
             total_records = 0
@@ -123,15 +123,15 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
                 )
 
                 print(
-                    f"[xvigilance]  Phase complete! Examined {total_records:,} records in {phase_duration_seconds:.2f}s. "
+                    f"[xvigilance] Phase complete: examined {total_records:,} records in {phase_duration_seconds:.2f}s. "
                     f"Advanced checkpoint to {end_str}.",
                     flush=True,
                 )
 
                 if overrun:
                     print(
-                        f"[xvigilance] ⚡ OVERRUN DETECTED: Analysis took {phase_duration_seconds:.2f}s (> 1hr). "
-                        f"Skipping rest and immediately continuing next phase!",
+                        f"[xvigilance] OVERRUN DETECTED: Analysis took {phase_duration_seconds:.2f}s (> 1hr). "
+                        f"Skipping rest and continuing next phase immediately.",
                         flush=True,
                     )
 
