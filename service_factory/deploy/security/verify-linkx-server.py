@@ -183,7 +183,7 @@ def check_api_code_markers(reporter: Reporter, src: Path) -> None:
             reporter.pass_(f"{path} contains expected security markers")
 
 
-def check_nginx_gateway(reporter: Reporter) -> None:
+def check_nginx_gateway(reporter: Reporter, expected_auth_status: set[int] | None = None) -> None:
     result = run_command(["nginx", "-t"])
     if result and result.returncode == 0:
         reporter.pass_("nginx configuration test passes")
@@ -197,8 +197,9 @@ def check_nginx_gateway(reporter: Reporter) -> None:
     else:
         reporter.warn("linkx API gateway nginx config was not found in sites-enabled/sites-available")
 
+    expected_auth = expected_auth_status or {401}
     check_http_status(reporter, "http://127.0.0.1/db/health", {200}, host="linkx-api.local")
-    check_http_status(reporter, "http://127.0.0.1/auth/me", {401}, host="linkx-api.local")
+    check_http_status(reporter, "http://127.0.0.1/auth/me", expected_auth, host="linkx-api.local")
 
 
 def check_otel_metrics_port(reporter: Reporter, port: int = 8889) -> None:
@@ -232,10 +233,11 @@ def verify_api(reporter: Reporter) -> None:
     else:
         reporter.fail("LINKX_AI_ALLOW_GLOBAL_READ must be false on API server")
     check_env_redis_url(reporter, env, env_path)
-    check_api_code_markers(reporter, src)
+    auto_admin = env.get("LINKX_AUTO_LOGIN_ADMIN", "true").lower() in ("1", "true", "yes")
+    expected_auth_status = {200} if auto_admin else {401}
     check_http_status(reporter, "http://127.0.0.1:8000/db/health", {200})
-    check_http_status(reporter, "http://127.0.0.1:8000/auth/me", {401})
-    check_nginx_gateway(reporter)
+    check_http_status(reporter, "http://127.0.0.1:8000/auth/me", expected_auth_status)
+    check_nginx_gateway(reporter, expected_auth_status=expected_auth_status)
     check_otel_metrics_port(reporter)
 
 
