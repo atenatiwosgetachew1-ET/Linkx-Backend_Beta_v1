@@ -140,6 +140,18 @@ DEFAULT_SERVICE_PERMISSIONS = {
         "graph:read",
         "reports:read",
     ],
+    "risk_scoring": [
+        "risk_scoring:read",
+        "risk_scoring:link_analysis",
+        "risk_scoring:kafka:consume",
+        "risk_scoring:kafka:produce",
+        "risk_scoring:session:read",
+        "risk_scoring:artifact:read",
+        "risk_scoring:graph:metadata:read",
+        "session:read",
+        "graph:read",
+        "reports:read",
+    ],
 }
 
 _AUTH_SCHEMA_READY = False

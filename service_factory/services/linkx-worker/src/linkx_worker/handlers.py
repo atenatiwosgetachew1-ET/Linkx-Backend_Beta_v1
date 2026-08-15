@@ -69,6 +69,10 @@ def run_job(job_type, payload):
     if job_type in {"rule_engine_analysis", "RULE_link_analysis", "rule_link_analysis"}:
         return run_rule_engine_analysis(payload)
 
+    if job_type in {"risk_scoring", "risk_scoring_analysis", "risk_scoring_event", "score.calculated"}:
+        from batch_manager.services.risk_scoring_kafka_service import process_risk_scoring_event
+        return process_risk_scoring_event(payload, publish=bool(payload.get("publish", False)))
+
     if job_type in {"graph_fetch", "get_graph"}:
         return fetch_graph_result(payload)
 

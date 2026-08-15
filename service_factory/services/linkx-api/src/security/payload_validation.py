@@ -360,6 +360,68 @@ COMMON_SCHEMAS = {
             "rule_name": {"type": ["string", "null"], "maxLength": 255},
         },
     },
+    "risk_scoring_calculated_event": {
+        "type": "object",
+        "required": ["schema_version", "event_type", "data", "meta"],
+        "properties": {
+            "schema_version": {"type": "string"},
+            "success": {"type": "boolean"},
+            "event_type": {"type": "string"},
+            "message": {"type": "string"},
+            "data": {
+                "type": "object",
+                "required": ["transaction_id", "entity_id"],
+                "properties": {
+                    "transaction_id": {"type": "string"},
+                    "entity_id": {"type": "string"},
+                    "composite_score": {"type": ["number", "null"]},
+                    "risk_level": {"type": ["string", "null"]},
+                    "risky": {"type": ["boolean", "null"]},
+                },
+            },
+            "meta": {
+                "type": "object",
+                "required": ["trace_id"],
+                "properties": {
+                    "trace_id": {"type": "string"},
+                    "span_id": {"type": ["string", "null"]},
+                    "correlation_id": {"type": ["string", "null"]},
+                    "timestamp": {"type": "string"},
+                    "aggregation_key": {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string"},
+                            "value": {"type": "string"},
+                        },
+                    },
+                },
+            },
+        },
+    },
+    "risk_scoring_mapped_event": {
+        "type": "object",
+        "required": ["schema_version", "event_type", "data", "meta"],
+        "properties": {
+            "schema_version": {"type": "string"},
+            "success": {"type": "boolean"},
+            "event_type": {"type": "string", "enum": ["link.mapped", "link.flagged"]},
+            "message": {"type": "string"},
+            "data": {
+                "type": "object",
+                "required": ["accountno", "linked_accounts_count"],
+                "properties": {
+                    "accountno": {"type": "string"},
+                    "linked_accounts_count": {"type": "integer"},
+                    "flagged_entity_links": {"type": "integer"},
+                    "beneficiary_blacklisted": {"type": "boolean"},
+                    "linked_entities": {"type": "array"},
+                    "network_centrality_score": {"type": "number"},
+                    "max_path_length": {"type": "integer"},
+                },
+            },
+            "meta": {"type": "object"},
+        },
+    },
     "configuration": {
         "type": "object",
         "required": ["id", "session_id"],

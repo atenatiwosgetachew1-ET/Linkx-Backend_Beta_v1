@@ -165,10 +165,13 @@ LinkX supports external partner service accounts with granular RBAC permissions.
 | **ML Service** | `POST /api/ML_link_analysis` | `ml_service_<id>` | `ml` | `ml:read`, `ml:link_analysis`, `ml:session:read` |
 | **Rule Engine** | `POST /api/RULE_link_analysis`<br>`POST /api/rule_engine_analysis` | `rule_engine_<id>` | `rule_engine` | `rule_engine:read`, `rule_engine:link_analysis`, `rule_engine:session:read` |
 | **AI Co-Analyst** | `GET /ai/sessions`<br>`GET /ai/sessions/:id/graph/metadata` | Scoped whitelist / owned | `ai` | `ai:read`, `ai:session:read`, `ai:artifact:read`, `ai:graph:metadata:read` |
+| **Risk Scoring** | Kafka: `dev.scoring.score.calculated.v1`<br>Output: `dev.analysis.link.mapped.v1` | `risk_scoring_<id>` | `risk_scoring` | `risk_scoring:read`, `risk_scoring:link_analysis`, `risk_scoring:kafka:consume`, `risk_scoring:kafka:produce` |
 
 ### Authentication Protocol for Service Accounts
 
 External services obtain a short-lived Bearer JWT via:
 - **`POST /auth/service-token`** with `{"client_id": "<service_client_id>", "client_secret": "<password>"}`.
-- Alternatively, endpoints accept direct API Key authentication via `X-API-Key` headers (`LINKX_PUBLIC_API_KEY`, `LINKX_ML_SERVICE_API_KEY`, `LINKX_RULE_ENGINE_API_KEY`).
+- Alternatively, endpoints accept direct API Key authentication via `X-API-Key` headers (`LINKX_PUBLIC_API_KEY`, `LINKX_ML_SERVICE_API_KEY`, `LINKX_RULE_ENGINE_API_KEY`, `LINKX_RISK_SCORING_API_KEY`).
+- For Kafka-based services (**Risk Scoring**), brokers authenticate via cluster networking on `172.27.23.70:9092, 172.27.23.118:9092, 172.27.23.100:9092`.
+
 
