@@ -9,23 +9,37 @@ def _env_list(name, default):
 
 
 def get_default_session_config(session_id):
+    default_kafka = ["172.27.23.70:9092", "172.27.23.118:9092", "172.27.23.100:9092"]
+    default_kafka_str = ",".join(default_kafka)
+    default_storage = os.getenv("LINKX_ACTIVE_STORAGE_ADDRESS", "172.27.23.43")
+    default_es_base = os.getenv("LINKX_ELASTIC_API_BASE_URL", f"http://{default_storage}:5000")
+
     return {
         "session_id": session_id,
         "user_id": os.getenv("LINKX_DEFAULT_USER_ID", "Unknown"),
-        "kafka_addresses": [],
+        "kafka_addresses": _env_list("LINKX_KAFKA_BOOTSTRAP_SERVERS", default_kafka),
+        "active_kafka_adress": os.getenv("LINKX_KAFKA_BOOTSTRAP_SERVERS", default_kafka_str),
+        "kafka_bootstrap_servers": os.getenv("LINKX_KAFKA_BOOTSTRAP_SERVERS", default_kafka_str),
+        "kafka_risk_scoring_input_topic": os.getenv(
+            "LINKX_KAFKA_RISK_SCORING_INPUT_TOPIC", "dev.scoring.score.calculated.v1"
+        ),
+        "kafka_risk_scoring_mapped_topic": os.getenv(
+            "LINKX_KAFKA_RISK_SCORING_MAPPED_TOPIC", "dev.analysis.link.mapped.v1"
+        ),
+        "kafka_risk_scoring_flagged_topic": os.getenv(
+            "LINKX_KAFKA_RISK_SCORING_FLAGGED_TOPIC", "dev.analysis.link.flagged.v1"
+        ),
         "REST APIs": [],
-        "active_kafka_adress": "",
-        "active_kafka_topic": os.getenv("LINKX_ACTIVE_KAFKA_TOPIC", ""),
-        "active_kafka_max_messages": int(os.getenv("LINKX_ACTIVE_KAFKA_MAX_MESSAGES", "500")),
-        "active_kafka_from_beginning": os.getenv("LINKX_ACTIVE_KAFKA_FROM_BEGINNING", "false").lower() == "true",
         "active_REST_API": "",
-        "storage_addresses": _env_list("LINKX_STORAGE_ADDRESSES", ["172.20.137.129"]),
+        "storage_addresses": _env_list("LINKX_STORAGE_ADDRESSES", [default_storage]),
         "storage_path": os.getenv("LINKX_STORAGE_PATH", "user/bank/cleaned_partitioned"),
         "storage_databases": _env_list("LINKX_STORAGE_DATABASES", ["bankdb", "bank_db"]),
         "storage_tables": _env_list("LINKX_STORAGE_TABLES", ["individual_transactions", "entity_transactions"]),
-        "active_storage_address": os.getenv("LINKX_ACTIVE_STORAGE_ADDRESS", "172.20.137.129"),
+        "active_storage_address": default_storage,
+        "active_storage_host": os.getenv("LINKX_ACTIVE_STORAGE_HOST", default_storage),
         "active_storage_database": os.getenv("LINKX_ACTIVE_STORAGE_DATABASE", "bankdb"),
         "active_storage_tables": _env_list("LINKX_ACTIVE_STORAGE_TABLES", ["individual_transactions", "entity_transactions"]),
+        "elastic_api_base_url": default_es_base,
         "hadoop_rcp_port": os.getenv("LINKX_HADOOP_RCP_PORT", "9870"),
         "hadoop_web_port": os.getenv("LINKX_HADOOP_WEB_PORT", ""),
         "spark_port": os.getenv("LINKX_SPARK_PORT", "4040"),

@@ -6,6 +6,7 @@ import socket
 import sys
 import time
 
+from batch_manager.config_defaults import get_default_session_config
 from batch_manager.services.risk_scoring_kafka_service import (
     DEFAULT_INPUT_TOPIC,
     DEFAULT_KAFKA_BROKERS,
@@ -27,8 +28,9 @@ def run_consumer_loop(brokers=None, input_topic=None, group_id=None, once=False)
     signal.signal(signal.SIGTERM, handle_shutdown)
     signal.signal(signal.SIGINT, handle_shutdown)
 
-    brokers = brokers or DEFAULT_KAFKA_BROKERS
-    input_topic = input_topic or DEFAULT_INPUT_TOPIC
+    defaults = get_default_session_config("risk_scoring_daemon")
+    brokers = brokers or defaults.get("active_kafka_adress") or DEFAULT_KAFKA_BROKERS
+    input_topic = input_topic or defaults.get("kafka_risk_scoring_input_topic") or DEFAULT_INPUT_TOPIC
     group_id = group_id or os.getenv("LINKX_KAFKA_RISK_GROUP_ID", "linkx-risk-analysis-worker")
     worker_id = f"linkx-risk-worker@{socket.gethostname()}:{os.getpid()}"
 

@@ -59,6 +59,18 @@ def _config_value(session_id, key):
     return get_default_session_config(session_id).get(key)
 
 
+def _kafka_brokers(session_id=""):
+    return _config_value(session_id, "active_kafka_adress") or _config_value(session_id, "kafka_bootstrap_servers") or DEFAULT_KAFKA_BROKERS
+
+
+def _kafka_mapped_topic(session_id=""):
+    return _config_value(session_id, "kafka_risk_scoring_mapped_topic") or DEFAULT_MAPPED_TOPIC
+
+
+def _kafka_flagged_topic(session_id=""):
+    return _config_value(session_id, "kafka_risk_scoring_flagged_topic") or DEFAULT_FLAGGED_TOPIC
+
+
 def _with_port(url, port):
     url = str(url or "")
     if port and "://" in url and not url.rsplit(":", 1)[-1].isdigit():
@@ -397,6 +409,7 @@ def execute_formal_link_analysis(event_data):
         centrality_score=centrality_score,
         max_path_length=max_path_length,
         duration_ms=duration_ms,
+        session_id=session_id,
     )
 
     return response_event, "success"
@@ -412,6 +425,7 @@ def build_link_response(
     centrality_score,
     max_path_length,
     duration_ms,
+    session_id="",
 ):
     input_meta = dict((event_data or {}).get("meta") or {})
     trace_id = input_meta.get("trace_id") or os.urandom(16).hex()
@@ -419,7 +433,9 @@ def build_link_response(
     correlation_id = input_meta.get("correlation_id") or trace_id
 
     event_type = "link.flagged" if is_flagged else "link.mapped"
-    destination_topic = DEFAULT_FLAGGED_TOPIC if is_flagged else DEFAULT_MAPPED_TOPIC
+    flagged_topic = _kafka_flagged_topic(session_id)
+    mapped_topic = _kafka_mapped_topic(session_id)
+    destination_topic = flagged_topic if is_flagged else mapped_topic
     action_text = "flagged" if is_flagged else "map completed"
     message_text = f"Link {action_text} for account {account_no}: {linked_count} linked"
 
@@ -488,10 +504,11 @@ def process_risk_scoring_event(event_data, brokers=None, publish=False):
     return response_event
 
 
-def publish_risk_scoring_response(response_event, brokers=None, topic=None):
-    brokers = brokers or DEFAULT_KAFKA_BROKERS
+def publish_risk_scoring_response(response_event, brokers=None, topic=None, session_id=""):
+    brokers = brokers or _kafka_brokers(session_id)
     is_flagged = (response_event.get("event_type") == "link.flagged")
-    target_topic = topic or (DEFAULT_FLAGGED_TOPIC if is_flagged else DEFAULT_MAPPED_TOPIC)
+    default_topic = _kafka_flagged_topic(session_id) if is_flagged else _kafka_mapped_topic(session_id)
+    target_topic = topic or default_topic
 
     try:
         from confluent_kafka import Producer
