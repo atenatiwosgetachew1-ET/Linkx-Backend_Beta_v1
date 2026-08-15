@@ -1,14 +1,29 @@
 import os
 import time
 
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
-
-
-CLEANUP_TASK_COUNT = Counter(
-    "linkx_cleanup_tasks_total",
-    "Total cleanup tasks executed.",
-    ("task_type", "status"),
-)
+try:
+    from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
+    CLEANUP_TASK_COUNT = Counter(
+        "linkx_cleanup_tasks_total",
+        "Total cleanup tasks executed.",
+        ("task_type", "status"),
+    )
+except ImportError:
+    CONTENT_TYPE_LATEST = "text/plain"
+    def generate_latest():
+        return b""
+    class _DummyMetric:
+        def labels(self, *args, **kwargs):
+            return self
+        def inc(self, *args, **kwargs):
+            pass
+        def dec(self, *args, **kwargs):
+            pass
+        def set(self, *args, **kwargs):
+            pass
+        def observe(self, *args, **kwargs):
+            pass
+    CLEANUP_TASK_COUNT = _DummyMetric()
 
 _metrics_server_started = False
 
