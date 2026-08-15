@@ -1,0 +1,17 @@
+[Unit]
+Description=LinkX Risk Scoring Kafka Consumer Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=linkx
+WorkingDirectory=/opt/linkx-worker
+EnvironmentFile=/opt/linkx-worker/.env
+ExecStart=/opt/linkx-worker/.venv/bin/python src/linkx_worker/risk_scoring_consumer.py
+Restart=always
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
