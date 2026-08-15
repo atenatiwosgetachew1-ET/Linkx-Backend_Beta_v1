@@ -14,8 +14,11 @@ DEFAULT_KAFKA_BROKERS = os.getenv(
 DEFAULT_INPUT_TOPIC = os.getenv(
     "LINKX_KAFKA_RISK_SCORING_INPUT_TOPIC", "dev.scoring.score.calculated.v1"
 )
-DEFAULT_OUTPUT_TOPIC = os.getenv(
-    "LINKX_KAFKA_RISK_SCORING_OUTPUT_TOPIC", "dev.analysis.link.mapped.v1"
+DEFAULT_MAPPED_TOPIC = os.getenv(
+    "LINKX_KAFKA_RISK_SCORING_MAPPED_TOPIC", "dev.analysis.link.mapped.v1"
+)
+DEFAULT_FLAGGED_TOPIC = os.getenv(
+    "LINKX_KAFKA_RISK_SCORING_FLAGGED_TOPIC", "dev.analysis.link.flagged.v1"
 )
 
 
@@ -159,6 +162,8 @@ def build_link_mapped_response(input_event, graph_result, duration_ms=50.0):
             "flagged_entity_links": bool(graph_result.get("flagged_entity_links", 0) > 0),
         }
 
+    destination_topic = DEFAULT_FLAGGED_TOPIC if is_flagged else DEFAULT_MAPPED_TOPIC
+
     return {
         "schema_version": "1.0",
         "success": True,
@@ -178,7 +183,7 @@ def build_link_mapped_response(input_event, graph_result, duration_ms=50.0):
             },
             "messaging": {
                 "system": "kafka",
-                "destination_name": DEFAULT_OUTPUT_TOPIC,
+                "destination_name": destination_topic,
                 "operation_name": "publish",
             },
             "source_id": "link",
@@ -224,9 +229,12 @@ def process_risk_scoring_event(event_data, brokers=None, publish=False):
 def publish_risk_scoring_response(response_event, brokers=None, topic=None):
     """
     Publishes the link mapped/flagged response event to the Kafka cluster.
+    If topic is not specified, routes to dev.analysis.link.flagged.v1 for flagged events
+    and dev.analysis.link.mapped.v1 for clear/clean events.
     """
     brokers = brokers or DEFAULT_KAFKA_BROKERS
-    topic = topic or DEFAULT_OUTPUT_TOPIC
+    is_flagged = (response_event.get("event_type") == "link.flagged")
+    target_topic = topic or (DEFAULT_FLAGGED_TOPIC if is_flagged else DEFAULT_MAPPED_TOPIC)
 
     try:
         from confluent_kafka import Producer
@@ -234,9 +242,76 @@ def publish_risk_scoring_response(response_event, brokers=None, topic=None):
         p = Producer(conf)
         key = str((response_event.get("data") or {}).get("accountno") or "").encode("utf-8")
         val = json.dumps(response_event).encode("utf-8")
-        p.produce(topic, key=key, value=val)
+        p.produce(target_topic, key=key, value=val)
         p.flush(timeout=5.0)
         return True
     except Exception as exc:
-        print(f"[RiskScoring] Error publishing Kafka event: {exc}")
+        print(f"[RiskScoring] Error publishing Kafka event to {target_topic}: {exc}")
         return False
+
+
+def publish_xvigilance_flagged_event(
+    account_no,
+    flagged_entities=None,
+    reason="XVigilance Autonomous Detective Anomaly Detected",
+    trace_id=None,
+    correlation_id=None,
+    brokers=None,
+):
+    """
+    Direct helper for the XVigilance engine to publish high-confidence
+    anomaly/fraud detections directly to dev.analysis.link.flagged.v1.
+    """
+    account_no = str(account_no or "").strip()
+    flagged_entities = list(flagged_entities or [])
+    trace_id = trace_id or os.urandom(16).hex()
+    span_id = os.urandom(8).hex()
+    correlation_id = correlation_id or trace_id
+
+    event_payload = {
+        "schema_version": "1.0",
+        "success": True,
+        "event_type": "link.flagged",
+        "message": f"XVigilance flagged account {account_no}: {reason}",
+        "data": {
+            "accountno": account_no,
+            "linked_accounts_count": len(flagged_entities),
+            "flagged_entity_links": len(flagged_entities),
+            "beneficiary_blacklisted": True,
+            "linked_entities": flagged_entities,
+            "network_centrality_score": 0.85,
+            "max_path_length": 2,
+            "flags": {
+                "beneficiary_blacklisted": True,
+                "flagged_entity_links": True,
+                "xvigilance_anomaly": True,
+            },
+        },
+        "meta": {
+            "trace_id": trace_id,
+            "span_id": span_id,
+            "traceparent": f"00-{trace_id}-{span_id}-01",
+            "correlation_id": correlation_id,
+            "timestamp": _iso8601_now(),
+            "service": {
+                "name": "link-analysis-xvigilance",
+                "version": "1.0.0",
+                "namespace": "risk-decision-platform",
+            },
+            "messaging": {
+                "system": "kafka",
+                "destination_name": DEFAULT_FLAGGED_TOPIC,
+                "operation_name": "publish",
+            },
+            "source_id": "link",
+            "aggregation_key": {
+                "type": "accountno",
+                "value": account_no,
+            },
+            "processing": {
+                "duration_ms": 1.0,
+            },
+        },
+        "error": None,
+    }
+    return publish_risk_scoring_response(event_payload, brokers=brokers, topic=DEFAULT_FLAGGED_TOPIC)

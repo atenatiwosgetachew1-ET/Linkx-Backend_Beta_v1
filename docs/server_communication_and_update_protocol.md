@@ -165,7 +165,14 @@ LinkX supports external partner service accounts with granular RBAC permissions.
 | **ML Service** | `POST /api/ML_link_analysis` | `ml_service_<id>` | `ml` | `ml:read`, `ml:link_analysis`, `ml:session:read` |
 | **Rule Engine** | `POST /api/RULE_link_analysis`<br>`POST /api/rule_engine_analysis` | `rule_engine_<id>` | `rule_engine` | `rule_engine:read`, `rule_engine:link_analysis`, `rule_engine:session:read` |
 | **AI Co-Analyst** | `GET /ai/sessions`<br>`GET /ai/sessions/:id/graph/metadata` | Scoped whitelist / owned | `ai` | `ai:read`, `ai:session:read`, `ai:artifact:read`, `ai:graph:metadata:read` |
-| **Risk Scoring** | Kafka: `dev.scoring.score.calculated.v1`<br>Output: `dev.analysis.link.mapped.v1` | `risk_scoring_<id>` | `risk_scoring` | `risk_scoring:read`, `risk_scoring:link_analysis`, `risk_scoring:kafka:consume`, `risk_scoring:kafka:produce` |
+| **Risk Scoring & XVigilance** | **Input**: `dev.scoring.score.calculated.v1`<br>**Clean Output**: `dev.analysis.link.mapped.v1`<br>**Flagged Output**: `dev.analysis.link.flagged.v1` | `risk_scoring_<id>` | `risk_scoring` | `risk_scoring:read`, `risk_scoring:link_analysis`, `risk_scoring:kafka:consume`, `risk_scoring:kafka:produce` |
+
+### Kafka Topic Routing Rules (Risk Scoring & XVigilance)
+
+1. **Input Requests**: LinkX Worker (Server 3) consumes incoming risk score calculated messages from **`dev.scoring.score.calculated.v1`**.
+2. **Clean / Non-Suspicious Responses**: If graph link analysis determines the entity is clear (no sanctions/blacklists), LinkX produces the response to **`dev.analysis.link.mapped.v1`** (`event_type: "link.mapped"`).
+3. **Suspicious / Flagged Responses**: If graph link analysis uncovers sanctions, blacklisted beneficiaries, or high-risk entity links, LinkX produces the response to **`dev.analysis.link.flagged.v1`** (`event_type: "link.flagged"`).
+4. **XVigilance Detective Engine**: Autonomous background detective findings on Server 4 automatically publish directly into **`dev.analysis.link.flagged.v1`**.
 
 ### Authentication Protocol for Service Accounts
 
@@ -173,5 +180,6 @@ External services obtain a short-lived Bearer JWT via:
 - **`POST /auth/service-token`** with `{"client_id": "<service_client_id>", "client_secret": "<password>"}`.
 - Alternatively, endpoints accept direct API Key authentication via `X-API-Key` headers (`LINKX_PUBLIC_API_KEY`, `LINKX_ML_SERVICE_API_KEY`, `LINKX_RULE_ENGINE_API_KEY`, `LINKX_RISK_SCORING_API_KEY`).
 - For Kafka-based services (**Risk Scoring**), brokers authenticate via cluster networking on `172.27.23.70:9092, 172.27.23.118:9092, 172.27.23.100:9092`.
+
 
 
