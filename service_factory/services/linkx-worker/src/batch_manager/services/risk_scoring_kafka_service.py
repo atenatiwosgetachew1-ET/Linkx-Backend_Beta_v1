@@ -277,30 +277,100 @@ def _get_linked_entities_from_neo4j(session_id, account_no):
     return entities
 
 
-def execute_formal_link_analysis(event_data):
+def sanitize_risk_scoring_request(raw_event):
     """
-    Executes the Formal 7-Step LinkX Analysis Pipeline:
-    1. Prepare Controlled Session
-    2. Search HDFS / Elasticsearch
-    3. Construct LinkX DataFrame
-    4. Ingest into Neo4j
-    5. Run Incremental Cypher Rules & Centrality Metrics
-    6. Extract Summary Metrics
-    7. Route Response Event (link.mapped vs link.flagged)
+    Sanitization Layer for incoming Risk Scoring score.calculated events.
+    Filters and normalizes ONLY the strictly required fields needed for
+    LinkX graph analysis and distributed tracing, dropping all bulk payloads.
     """
-    t0 = time.time()
-    event_data = dict(event_data or {})
-    data_section = dict(event_data.get("data") or {})
-    meta_section = dict(event_data.get("meta") or {})
+    if isinstance(raw_event, (bytes, bytearray)):
+        raw_event = raw_event.decode("utf-8")
+    if isinstance(raw_event, str):
+        try:
+            raw_event = json.loads(raw_event)
+        except Exception as exc:
+            raise ValueError(f"invalid_json_payload: {exc}")
 
-    account_no = str(
-        data_section.get("entity_id")
-        or (meta_section.get("aggregation_key") or {}).get("value")
-        or data_section.get("accountno")
+    if not isinstance(raw_event, dict):
+        raise ValueError("payload_must_be_a_dict")
+
+    data = raw_event.get("data") or {}
+    meta = raw_event.get("meta") or {}
+    agg_key = meta.get("aggregation_key") or {}
+
+    # 1. Extract & normalize entity/account identifier
+    entity_id = str(
+        data.get("entity_id")
+        or agg_key.get("value")
+        or data.get("accountno")
         or ""
     ).strip()
 
-    date = data_section.get("scored_at") or meta_section.get("timestamp")
+    if not entity_id:
+        raise ValueError("missing_required_entity_id")
+
+    # 2. Extract transaction ID (optional but recommended)
+    transaction_id = str(data.get("transaction_id") or "").strip() or None
+
+    # 3. Determine node type (account vs corporate entity)
+    is_entity = bool(data.get("is_entity", False))
+
+    # 4. Extract or generate distributed tracing context
+    trace_id = str(meta.get("trace_id") or os.urandom(16).hex())
+    span_id = str(meta.get("span_id") or os.urandom(8).hex())
+    correlation_id = str(meta.get("correlation_id") or trace_id)
+    timestamp = str(meta.get("timestamp") or _iso8601_now())
+
+    sanitized = {
+        "event_type": str(raw_event.get("event_type") or "score.calculated"),
+        "data": {
+            "entity_id": entity_id,
+            "is_entity": is_entity,
+        },
+        "meta": {
+            "trace_id": trace_id,
+            "span_id": span_id,
+            "traceparent": f"00-{trace_id}-{span_id}-01",
+            "correlation_id": correlation_id,
+            "timestamp": timestamp,
+            "aggregation_key": {
+                "type": "accountno",
+                "value": entity_id,
+            },
+        },
+    }
+
+    if transaction_id:
+        sanitized["data"]["transaction_id"] = transaction_id
+
+    return sanitized
+
+
+def execute_formal_link_analysis(event_data):
+    """
+    Executes the Formal 7-Step LinkX Analysis Pipeline:
+    1. Sanitize & Validate Input Payload
+    2. Prepare Controlled Session
+    3. Search HDFS / Elasticsearch
+    4. Construct LinkX DataFrame
+    5. Ingest into Neo4j
+    6. Run Incremental Cypher Rules & Centrality Metrics
+    7. Extract Summary Metrics & Route Response Event
+    """
+    t0 = time.time()
+
+    # Step 0: Sanitization Layer
+    try:
+        sanitized_event = sanitize_risk_scoring_request(event_data)
+    except Exception as sanitize_exc:
+        print(f"[RiskScoring] Sanitization failed: {sanitize_exc}")
+        return None, f"sanitization_failed: {sanitize_exc}"
+
+    data_section = sanitized_event["data"]
+    meta_section = sanitized_event["meta"]
+    account_no = data_section["entity_id"]
+
+    date = meta_section.get("timestamp")
     if date and "T" in str(date):
         date = str(date).split("T")[0]
 
