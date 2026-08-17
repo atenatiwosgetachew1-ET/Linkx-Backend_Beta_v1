@@ -48,9 +48,9 @@ def get_default_session_config(session_id):
         "hive_port": os.getenv("LINKX_HIVE_PORT", "10000"),
         "api_port": os.getenv("LINKX_API_PORT", "5000"),
         "search_api_endpoint_es_fuzzy": os.getenv("LINKX_ES_FUZZY_ENDPOINT", "api/search/individual"),
-        "search_api_endpoint_es_strict": os.getenv("LINKX_ES_STRICT_ENDPOINT", "api/search/ui"),
+        "search_api_endpoint_es_strict": os.getenv("LINKX_ES_STRICT_ENDPOINT", "api/search/uii"),
         "search_api_endpoint_hive_fuzzy": os.getenv("LINKX_HIVE_FUZZY_ENDPOINT", "api/search/individual"),
-        "search_api_endpoint_hive_strict": os.getenv("LINKX_HIVE_STRICT_ENDPOINT", "api/search/ui"),
+        "search_api_endpoint_hive_strict": os.getenv("LINKX_HIVE_STRICT_ENDPOINT", "api/search/uii"),
         "search_columns_strict": _env_list(
             "LINKX_SEARCH_COLUMNS_STRICT",
             ["transactionid", "businessmobileno", "accountno", "benaccountno", "bentelno", "transactiondate", "transactiontime"],
