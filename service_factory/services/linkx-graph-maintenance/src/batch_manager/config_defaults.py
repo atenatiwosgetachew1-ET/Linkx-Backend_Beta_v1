@@ -40,6 +40,7 @@ def get_default_session_config(session_id):
         "active_storage_database": os.getenv("LINKX_ACTIVE_STORAGE_DATABASE", "bankdb"),
         "active_storage_tables": _env_list("LINKX_ACTIVE_STORAGE_TABLES", ["individual_transactions", "entity_transactions"]),
         "elastic_api_base_url": default_es_base,
+        "elastic_api_authorization": os.getenv("LINKX_ELASTIC_API_AUTHORIZATION", ""),
         "hadoop_rcp_port": os.getenv("LINKX_HADOOP_RCP_PORT", "9870"),
         "hadoop_web_port": os.getenv("LINKX_HADOOP_WEB_PORT", ""),
         "spark_port": os.getenv("LINKX_SPARK_PORT", "4040"),

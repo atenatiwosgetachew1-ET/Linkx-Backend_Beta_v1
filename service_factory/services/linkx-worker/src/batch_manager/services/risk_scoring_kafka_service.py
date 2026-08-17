@@ -431,7 +431,9 @@ def execute_formal_link_analysis(event_data):
         strict_mood,
         date_column,
         date,
-        auth_header=load_temp_config("elastic_api_authorization", session_id),
+        auth_header=load_temp_config("elastic_api_authorization", session_id)
+        or _config_value(session_id, "elastic_api_authorization")
+        or os.getenv("LINKX_ELASTIC_API_AUTHORIZATION"),
     )
 
     result_size = 0
