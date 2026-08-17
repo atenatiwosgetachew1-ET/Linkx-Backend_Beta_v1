@@ -91,6 +91,27 @@ class TestRiskScoringSanitization(unittest.TestCase):
         self.assertEqual(sanitized["meta"]["correlation_id"], "e1804ee6-fef9-4d7b-9beb-1a7b6b0cd429")
         self.assertEqual(sanitized["meta"]["aggregation_key"]["value"], "ACC83393")
 
+    def test_sanitization_preserves_dynamic_aggregation_key_type(self):
+        phone_payload = {
+            "event_type": "score.calculated",
+            "data": {
+                "transaction_id": "tx_phone_123",
+                "entity_id": "0911223344",
+                "is_entity": False,
+            },
+            "meta": {
+                "trace_id": "trace_phone_1",
+                "aggregation_key": {
+                    "type": "businessmobileno",
+                    "value": "0911223344",
+                },
+            },
+        }
+        sanitized = sanitize_risk_scoring_request(phone_payload)
+        self.assertEqual(sanitized["data"]["entity_id"], "0911223344")
+        self.assertEqual(sanitized["meta"]["aggregation_key"]["type"], "businessmobileno")
+        self.assertEqual(sanitized["meta"]["aggregation_key"]["value"], "0911223344")
+
     def test_sanitization_raises_on_missing_entity_id(self):
         invalid_payload = {"data": {}, "meta": {}}
         with self.assertRaises(ValueError):

@@ -277,6 +277,27 @@ def _get_linked_entities_from_neo4j(session_id, account_no):
     return entities
 
 
+def _normalize_search_column(col_type):
+    col = str(col_type or "accountno").strip().lower().replace("_", "").replace("-", "")
+    mapping = {
+        "accountno": "accountno",
+        "account": "accountno",
+        "accountnumber": "accountno",
+        "accno": "accountno",
+        "benaccountno": "benaccountno",
+        "benaccount": "benaccountno",
+        "businessmobileno": "businessmobileno",
+        "mobileno": "businessmobileno",
+        "mobile": "businessmobileno",
+        "phone": "businessmobileno",
+        "bentelno": "bentelno",
+        "bentel": "bentelno",
+        "transactionid": "transactionid",
+        "txid": "transactionid",
+    }
+    return mapping.get(col, str(col_type).strip().lower())
+
+
 def sanitize_risk_scoring_request(raw_event):
     """
     Sanitization Layer for incoming Risk Scoring score.calculated events.
@@ -298,10 +319,11 @@ def sanitize_risk_scoring_request(raw_event):
     meta = raw_event.get("meta") or {}
     agg_key = meta.get("aggregation_key") or {}
 
-    # 1. Extract & normalize entity/account identifier
+    # 1. Extract dynamic aggregation key (type specifies storage search column)
+    raw_agg_type = str(agg_key.get("type") or "accountno").strip()
     entity_id = str(
-        data.get("entity_id")
-        or agg_key.get("value")
+        agg_key.get("value")
+        or data.get("entity_id")
         or data.get("accountno")
         or ""
     ).strip()
@@ -334,7 +356,7 @@ def sanitize_risk_scoring_request(raw_event):
             "correlation_id": correlation_id,
             "timestamp": timestamp,
             "aggregation_key": {
-                "type": "accountno",
+                "type": raw_agg_type or "accountno",
                 "value": entity_id,
             },
         },
@@ -351,7 +373,7 @@ def execute_formal_link_analysis(event_data):
     Executes the Formal 7-Step LinkX Analysis Pipeline:
     1. Sanitize & Validate Input Payload
     2. Prepare Controlled Session
-    3. Search HDFS / Elasticsearch
+    3. Search HDFS / Elasticsearch using dynamic aggregation_key.type column
     4. Construct LinkX DataFrame
     5. Ingest into Neo4j
     6. Run Incremental Cypher Rules & Centrality Metrics
@@ -368,7 +390,12 @@ def execute_formal_link_analysis(event_data):
 
     data_section = sanitized_event["data"]
     meta_section = sanitized_event["meta"]
-    account_no = data_section["entity_id"]
+    agg_key = meta_section.get("aggregation_key") or {}
+
+    raw_agg_type = agg_key.get("type") or "accountno"
+    search_column = _normalize_search_column(raw_agg_type)
+    keyword = agg_key.get("value") or data_section["entity_id"]
+    account_no = keyword
 
     date = meta_section.get("timestamp")
     if date and "T" in str(date):
@@ -382,8 +409,6 @@ def execute_formal_link_analysis(event_data):
         return None, "session_prepare_failed"
 
     # Step 2: Storage Retrieval (HDFS / Elasticsearch)
-    keyword = account_no
-    search_column = "accountno"
     strict_mood = True
     date_column = _config_value(session_id, "date_column")
 
@@ -509,8 +534,13 @@ def build_link_response(
     action_text = "flagged" if is_flagged else "map completed"
     message_text = f"Link {action_text} for account {account_no}: {linked_count} linked"
 
+    input_agg_key = input_meta.get("aggregation_key") or {}
+    agg_type = str(input_agg_key.get("type") or "accountno")
+    agg_val = str(input_agg_key.get("value") or account_no)
+
     data_payload = {
-        "accountno": account_no,
+        "accountno": agg_val,
+        "entity_id": agg_val,
         "linked_accounts_count": linked_count,
         "flagged_entity_links": flagged_count,
         "beneficiary_blacklisted": is_flagged,
@@ -548,8 +578,8 @@ def build_link_response(
             },
             "source_id": "link",
             "aggregation_key": {
-                "type": "accountno",
-                "value": account_no,
+                "type": agg_type,
+                "value": agg_val,
             },
             "processing": {
                 "duration_ms": round(float(duration_ms), 1),
