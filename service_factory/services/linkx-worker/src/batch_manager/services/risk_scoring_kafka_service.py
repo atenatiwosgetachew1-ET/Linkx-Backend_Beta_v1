@@ -277,31 +277,10 @@ def _get_linked_entities_from_neo4j(session_id, account_no):
     return entities
 
 
-def _normalize_search_column(col_type):
-    col = str(col_type or "accountno").strip().lower().replace("_", "").replace("-", "")
-    mapping = {
-        "accountno": "accountno",
-        "account": "accountno",
-        "accountnumber": "accountno",
-        "accno": "accountno",
-        "benaccountno": "benaccountno",
-        "benaccount": "benaccountno",
-        "businessmobileno": "businessmobileno",
-        "mobileno": "businessmobileno",
-        "mobile": "businessmobileno",
-        "phone": "businessmobileno",
-        "bentelno": "bentelno",
-        "bentel": "bentelno",
-        "transactionid": "transactionid",
-        "txid": "transactionid",
-    }
-    return mapping.get(col, str(col_type).strip().lower())
-
-
 def sanitize_risk_scoring_request(raw_event):
     """
     Sanitization Layer for incoming Risk Scoring score.calculated events.
-    Filters and normalizes ONLY the strictly required fields needed for
+    Filters and extracts ONLY the strictly required fields needed for
     LinkX graph analysis and distributed tracing, dropping all bulk payloads.
     """
     if isinstance(raw_event, (bytes, bytearray)):
@@ -319,7 +298,7 @@ def sanitize_risk_scoring_request(raw_event):
     meta = raw_event.get("meta") or {}
     agg_key = meta.get("aggregation_key") or {}
 
-    # 1. Extract dynamic aggregation key (type specifies storage search column)
+    # 1. Extract exact aggregation key as passed (type specifies storage search column directly)
     raw_agg_type = str(agg_key.get("type") or "accountno").strip()
     entity_id = str(
         agg_key.get("value")
@@ -331,7 +310,7 @@ def sanitize_risk_scoring_request(raw_event):
     if not entity_id:
         raise ValueError("missing_required_entity_id")
 
-    # 2. Extract transaction ID (optional but recommended)
+    # 2. Extract transaction ID (optional but preserved for provenance)
     transaction_id = str(data.get("transaction_id") or "").strip() or None
 
     # 3. Determine node type (account vs corporate entity)
@@ -373,7 +352,7 @@ def execute_formal_link_analysis(event_data):
     Executes the Formal 7-Step LinkX Analysis Pipeline:
     1. Sanitize & Validate Input Payload
     2. Prepare Controlled Session
-    3. Search HDFS / Elasticsearch using dynamic aggregation_key.type column
+    3. Search HDFS / Elasticsearch using exact passed aggregation_key.type column
     4. Construct LinkX DataFrame
     5. Ingest into Neo4j
     6. Run Incremental Cypher Rules & Centrality Metrics
@@ -392,9 +371,8 @@ def execute_formal_link_analysis(event_data):
     meta_section = sanitized_event["meta"]
     agg_key = meta_section.get("aggregation_key") or {}
 
-    raw_agg_type = agg_key.get("type") or "accountno"
-    search_column = _normalize_search_column(raw_agg_type)
-    keyword = agg_key.get("value") or data_section["entity_id"]
+    search_column = str(agg_key.get("type") or "accountno").strip()
+    keyword = str(agg_key.get("value") or data_section["entity_id"]).strip()
     account_no = keyword
 
     date = meta_section.get("timestamp")
