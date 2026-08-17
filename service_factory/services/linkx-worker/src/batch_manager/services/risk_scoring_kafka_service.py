@@ -32,11 +32,14 @@ def _iso8601_now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
-def _bank_source_target_relationship(session_id):
+def _bank_source_target_relationship(session_id, custom_source=None, custom_target=None, custom_rel=None):
+    source = custom_source or _config_value(session_id, "default_source_col") or "accountno"
+    target = custom_target or _config_value(session_id, "default_target_col") or "benaccountno"
+    relationship = custom_rel or _config_value(session_id, "default_relationship") or "TRANSACTS_TO"
     return {
-        "source": _config_value(session_id, "default_source_col") or "accountno",
-        "target": _config_value(session_id, "default_target_col") or "benaccountno",
-        "relationship": _config_value(session_id, "default_relationship") or "TRANSACTS_TO",
+        "source": source,
+        "target": target,
+        "relationship": relationship,
     }
 
 
@@ -124,7 +127,7 @@ def _run_analyzer(payload, step_name):
         return False
 
 
-def _ingest_dataframe_to_neo4j(session_id):
+def _ingest_dataframe_to_neo4j(session_id, custom_source=None, custom_target=None, custom_rel=None):
     rule = "bank transactions"
     credentials = _neo4j_credentials(session_id)
     if not credentials:
@@ -136,7 +139,12 @@ def _ingest_dataframe_to_neo4j(session_id):
     if not _run_analyzer(link_payload, "link analysis"):
         return False
 
-    source_target = _bank_source_target_relationship(session_id)
+    source_target = _bank_source_target_relationship(
+        session_id,
+        custom_source=custom_source,
+        custom_target=custom_target,
+        custom_rel=custom_rel,
+    )
     if source_target:
         relationship_payload = _base_analyzer_payload(session_id, credentials)
         relationship_payload.update({
@@ -322,6 +330,11 @@ def sanitize_risk_scoring_request(raw_event):
     correlation_id = str(meta.get("correlation_id") or trace_id)
     timestamp = str(meta.get("timestamp") or _iso8601_now())
 
+    # 5. Extract optional custom source/target columns if explicitly requested
+    source_col = str(data.get("source_column") or data.get("source_col") or data.get("source") or "").strip() or None
+    target_col = str(data.get("target_column") or data.get("target_col") or data.get("target") or "").strip() or None
+    custom_rel = str(data.get("relationship") or data.get("relationship_name") or "").strip() or None
+
     sanitized = {
         "event_type": str(raw_event.get("event_type") or "score.calculated"),
         "data": {
@@ -343,6 +356,11 @@ def sanitize_risk_scoring_request(raw_event):
 
     if transaction_id:
         sanitized["data"]["transaction_id"] = transaction_id
+    if source_col and target_col:
+        sanitized["data"]["source_column"] = source_col
+        sanitized["data"]["target_column"] = target_col
+        if custom_rel:
+            sanitized["data"]["relationship"] = custom_rel
 
     return sanitized
 
@@ -354,7 +372,7 @@ def execute_formal_link_analysis(event_data):
     2. Prepare Controlled Session
     3. Search HDFS / Elasticsearch using exact passed aggregation_key.type column
     4. Construct LinkX DataFrame
-    5. Ingest into Neo4j
+    5. Ingest into Neo4j using requested source/target columns (or fallback to rule defaults)
     6. Run Incremental Cypher Rules & Centrality Metrics
     7. Extract Summary Metrics & Route Response Event
     """
@@ -404,7 +422,7 @@ def execute_formal_link_analysis(event_data):
         else:
             api_url = f"http://{storage_address}:{api_port}/{api_search_endpoint}"
 
-    print(f"[RiskScoring] Querying Elasticsearch for account {account_no} on {api_url}")
+    print(f"[RiskScoring] Querying Elasticsearch for {search_column}={keyword} on {api_url}")
     response = es_keyword_search(
         "search",
         api_url,
@@ -435,6 +453,7 @@ def execute_formal_link_analysis(event_data):
             centrality_score=0.0,
             max_path_length=0,
             duration_ms=duration_ms,
+            session_id=session_id,
         ), "success"
 
     # Step 3: DataFrame Generation
@@ -452,7 +471,16 @@ def execute_formal_link_analysis(event_data):
         return None, "dataframe_creation_failed"
 
     # Step 4: Neo4j Ingestion & Step 5: Incremental Analysis
-    if not _ingest_dataframe_to_neo4j(session_id):
+    custom_source = data_section.get("source_column")
+    custom_target = data_section.get("target_column")
+    custom_rel = data_section.get("relationship")
+
+    if not _ingest_dataframe_to_neo4j(
+        session_id,
+        custom_source=custom_source,
+        custom_target=custom_target,
+        custom_rel=custom_rel,
+    ):
         duration_ms = (time.time() - t0) * 1000.0
         return None, "neo4j_ingestion_failed"
 

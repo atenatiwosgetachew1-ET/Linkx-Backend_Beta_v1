@@ -112,6 +112,24 @@ class TestRiskScoringSanitization(unittest.TestCase):
         self.assertEqual(sanitized["meta"]["aggregation_key"]["type"], "businessmobileno")
         self.assertEqual(sanitized["meta"]["aggregation_key"]["value"], "0911223344")
 
+    def test_sanitization_extracts_custom_source_target_columns(self):
+        custom_payload = {
+            "event_type": "score.calculated",
+            "data": {
+                "entity_id": "ACC999",
+                "source_column": "origin_account",
+                "target_column": "destination_account",
+                "relationship": "FUNDS_SENT",
+            },
+            "meta": {
+                "aggregation_key": {"type": "origin_account", "value": "ACC999"},
+            },
+        }
+        sanitized = sanitize_risk_scoring_request(custom_payload)
+        self.assertEqual(sanitized["data"]["source_column"], "origin_account")
+        self.assertEqual(sanitized["data"]["target_column"], "destination_account")
+        self.assertEqual(sanitized["data"]["relationship"], "FUNDS_SENT")
+
     def test_sanitization_raises_on_missing_entity_id(self):
         invalid_payload = {"data": {}, "meta": {}}
         with self.assertRaises(ValueError):
