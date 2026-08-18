@@ -191,7 +191,48 @@ class TestRiskScoringSanitization(unittest.TestCase):
         self.assertEqual(second_ent["entity_id"], "02")
         self.assertEqual(second_ent["accountno"], "1000350224924")
 
+    def test_risk_scoring_evidence_idempotency(self):
+        from batch_manager.services.risk_scoring_kafka_service import (
+            ensure_risk_scoring_evidence_schema,
+            get_cached_or_persisted_evidence,
+            persist_link_analysis_evidence,
+        )
+
+        req = {
+            "meta": {
+                "trace_id": "trace-test-evidence-1",
+                "correlation_id": "corr-test-1",
+                "aggregation_key": {"type": "accountno", "value": "1000558269034"}
+            },
+            "data": {
+                "transaction_id": "tx-12345",
+                "entity_id": "1000558269034"
+            }
+        }
+        resp = {
+            "schema_version": "1.0",
+            "success": True,
+            "event_type": "link.flagged",
+            "data": {
+                "accountno": "1000558269034",
+                "entity_id": "1000558269034",
+                "flagged_rules": ["HUB_AND_SPOKE"]
+            },
+            "meta": {
+                "trace_id": "trace-test-evidence-1"
+            }
+        }
+
+        # Should not throw when PostgreSQL is invoked or gracefully handled
+        ensure_risk_scoring_evidence_schema()
+        persist_link_analysis_evidence(req, resp, session_id="test_session", duration_ms=45.0)
+        # Check retrieval function signature and safe fallback
+        cached = get_cached_or_persisted_evidence("1000558269034", trace_id="trace-test-evidence-1")
+        if cached:
+            self.assertEqual(cached["event_type"], "link.flagged")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

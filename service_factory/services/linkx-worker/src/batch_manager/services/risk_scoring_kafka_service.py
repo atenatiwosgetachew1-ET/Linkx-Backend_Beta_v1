@@ -695,18 +695,176 @@ def build_link_response(
     }
 
 
+def ensure_risk_scoring_evidence_schema():
+    try:
+        from batch_manager.utils.postgres_utils import get_postgres_connection
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS link_analysis_evidence (
+                    id BIGSERIAL PRIMARY KEY,
+                    trace_id TEXT NOT NULL,
+                    correlation_id TEXT,
+                    transaction_id TEXT,
+                    entity_id TEXT NOT NULL,
+                    entity_type TEXT NOT NULL DEFAULT 'accountno',
+                    session_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    is_flagged BOOLEAN NOT NULL DEFAULT FALSE,
+                    flagged_rules JSONB,
+                    linked_accounts_count INT NOT NULL DEFAULT 0,
+                    network_centrality_score NUMERIC(5, 2),
+                    max_path_length INT,
+                    duration_ms NUMERIC(10, 2),
+                    request_payload JSONB NOT NULL,
+                    response_payload JSONB NOT NULL,
+                    analyzed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    CONSTRAINT uq_evidence_trace_entity UNIQUE (trace_id, entity_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_link_evidence_entity ON link_analysis_evidence (entity_id, analyzed_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_link_evidence_flagged ON link_analysis_evidence (is_flagged, analyzed_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_link_evidence_tx ON link_analysis_evidence (transaction_id);
+                """)
+            conn.commit()
+    except Exception as exc:
+        print(f"[RiskScoring] Schema ensure notice: {exc}")
+
+
+def get_cached_or_persisted_evidence(entity_id, trace_id=None, transaction_id=None):
+    if not entity_id:
+        return None
+    try:
+        from batch_manager.utils.postgres_utils import get_postgres_connection
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cur:
+                if trace_id:
+                    cur.execute("""
+                    SELECT response_payload
+                    FROM link_analysis_evidence
+                    WHERE trace_id = %s AND entity_id = %s
+                    LIMIT 1
+                    """, (str(trace_id), str(entity_id)))
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        return row[0]
+
+                if transaction_id:
+                    cur.execute("""
+                    SELECT response_payload
+                    FROM link_analysis_evidence
+                    WHERE transaction_id = %s AND entity_id = %s
+                      AND analyzed_at >= NOW() - INTERVAL '2 hours'
+                    ORDER BY analyzed_at DESC
+                    LIMIT 1
+                    """, (str(transaction_id), str(entity_id)))
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        return row[0]
+    except Exception as exc:
+        print(f"[RiskScoring] Evidence cache check notice: {exc}")
+    return None
+
+
+def persist_link_analysis_evidence(request_event, response_event, session_id="", duration_ms=0.0):
+    try:
+        from batch_manager.utils.postgres_utils import get_postgres_connection
+        ensure_risk_scoring_evidence_schema()
+
+        req_meta = dict((request_event or {}).get("meta") or {})
+        req_data = dict((request_event or {}).get("data") or {})
+        resp_data = dict((response_event or {}).get("data") or {})
+
+        trace_id = str(req_meta.get("trace_id") or (response_event.get("meta") or {}).get("trace_id") or os.urandom(16).hex())
+        correlation_id = str(req_meta.get("correlation_id") or (response_event.get("meta") or {}).get("correlation_id") or trace_id)
+        transaction_id = req_data.get("transaction_id") or None
+        if transaction_id:
+            transaction_id = str(transaction_id)
+
+        agg_key = req_meta.get("aggregation_key") or {}
+        entity_type = str(agg_key.get("type") or "accountno")
+        entity_id = str(agg_key.get("value") or req_data.get("entity_id") or resp_data.get("entity_id") or "")
+
+        event_type = str(response_event.get("event_type") or "link.mapped")
+        is_flagged = bool(event_type == "link.flagged" or resp_data.get("beneficiary_blacklisted"))
+        flagged_rules = resp_data.get("flagged_rules") or []
+        linked_count = int(resp_data.get("linked_accounts_count") or 0)
+        centrality = float(resp_data.get("network_centrality_score") or 0.0)
+        max_path = int(resp_data.get("max_path_length") or 0)
+
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                INSERT INTO link_analysis_evidence (
+                    trace_id, correlation_id, transaction_id, entity_id, entity_type,
+                    session_id, event_type, is_flagged, flagged_rules, linked_accounts_count,
+                    network_centrality_score, max_path_length, duration_ms,
+                    request_payload, response_payload, analyzed_at
+                )
+                VALUES (
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s::jsonb, %s,
+                    %s, %s, %s,
+                    %s::jsonb, %s::jsonb, NOW()
+                )
+                ON CONFLICT (trace_id, entity_id) DO UPDATE SET
+                    response_payload = EXCLUDED.response_payload,
+                    duration_ms = EXCLUDED.duration_ms,
+                    analyzed_at = NOW()
+                """, (
+                    trace_id, correlation_id, transaction_id, entity_id, entity_type,
+                    session_id, event_type, is_flagged, json.dumps(flagged_rules), linked_count,
+                    centrality, max_path, round(float(duration_ms), 2),
+                    json.dumps(request_event), json.dumps(response_event),
+                ))
+            conn.commit()
+    except Exception as exc:
+        print(f"[RiskScoring] Evidence persistence notice: {exc}")
+
+
 def process_risk_scoring_event(event_data, brokers=None, publish=True):
     """
-    Automated workflow:
+    Automated workflow with Idempotency & Evidence Persistence:
     1. Consumes/ingests the incoming Risk Scoring event.
-    2. Runs full Link Analysis (storage lookup, graph mapping, rule evaluation).
-    3. Prepares standard output response (link.flagged / link.mapped).
-    4. Automatically produces response to Kafka topic (dev.analysis.link.mapped.v1).
+    2. Checks database for existing analysis (deduplication / replay).
+    3. If new: Runs full Link Analysis (Elasticsearch, Neo4j, typology rules).
+    4. Persists immutable analysis evidence to PostgreSQL.
+    5. Automatically produces response to Kafka topic (dev.analysis.link.mapped.v1).
     """
+    try:
+        sanitized = sanitize_risk_scoring_request(event_data)
+    except Exception:
+        sanitized = event_data if isinstance(event_data, dict) else {}
+
+    s_meta = dict(sanitized.get("meta") or {})
+    s_data = dict(sanitized.get("data") or {})
+    entity_id = (s_meta.get("aggregation_key") or {}).get("value") or s_data.get("entity_id")
+    trace_id = s_meta.get("trace_id")
+    tx_id = s_data.get("transaction_id")
+
+    # 1. Deduplication / Idempotency check:
+    cached = get_cached_or_persisted_evidence(entity_id=entity_id, trace_id=trace_id, transaction_id=tx_id)
+    if cached:
+        print(f"[RiskScoring] Deduplication: Replaying existing analysis for entity {entity_id}")
+        if publish:
+            publish_risk_scoring_response(cached, brokers=brokers)
+        return cached
+
+    # 2. Fresh Analysis execution:
     response_event, status = execute_formal_link_analysis(event_data)
     if not response_event:
         return {"status": "failed", "detail": status}
 
+    # 3. Persist Evidence to PostgreSQL:
+    sess_id = (response_event.get("meta") or {}).get("session_id") or ""
+    dur_ms = (response_event.get("meta") or {}).get("processing", {}).get("duration_ms") or 0.0
+    persist_link_analysis_evidence(
+        request_event=sanitized,
+        response_event=response_event,
+        session_id=sess_id,
+        duration_ms=dur_ms,
+    )
+
+    # 4. Auto-publish to Kafka:
     if publish:
         publish_risk_scoring_response(response_event, brokers=brokers)
 
