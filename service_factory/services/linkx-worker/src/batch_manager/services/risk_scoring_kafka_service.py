@@ -183,7 +183,14 @@ def _analysis_summary(session_id):
             WHERE ($session_id = '' OR rule_rel.session_id = $session_id)
               AND type(rule_rel) IN $relationship_types
             WITH total_nodes, flagged_nodes, clean_nodes, flagged_relationships, all_relationships,
-                 count(DISTINCT rule_rel) AS total_relationship_edges
+                 count(DISTINCT rule_rel) AS total_relationship_edges,
+                 count(DISTINCT CASE WHEN type(rule_rel) = 'HUB_AND_SPOKE' THEN rule_rel END) AS hub_spoke_edges,
+                 count(DISTINCT CASE WHEN type(rule_rel) = 'SMURFING' THEN rule_rel END) AS smurfing_edges,
+                 count(DISTINCT CASE WHEN type(rule_rel) = 'CIRCULAR_FLOW' THEN rule_rel END) AS circular_flow_edges,
+                 count(DISTINCT CASE WHEN type(rule_rel) = 'HIGH_RISK_LINK' THEN rule_rel END) AS high_risk_edges,
+                 count(DISTINCT CASE WHEN type(rule_rel) = 'DORMANT_TO_ACTIVE' THEN rule_rel END) AS dormant_edges,
+                 count(DISTINCT CASE WHEN type(rule_rel) = 'ABNORMAL_BALANCE_CHANGE' THEN rule_rel END) AS balance_change_edges,
+                 count(DISTINCT CASE WHEN type(rule_rel) = 'SHARED_IDENTIFIER' THEN rule_rel END) AS shared_id_edges
             OPTIONAL MATCH (metric_node:{safe_label})
             WHERE ($session_id = '' OR metric_node.batch_id STARTS WITH $session_id OR metric_node.session_id = $session_id)
             RETURN
@@ -193,6 +200,13 @@ def _analysis_summary(session_id):
                 flagged_relationships,
                 all_relationships,
                 total_relationship_edges,
+                hub_spoke_edges,
+                smurfing_edges,
+                circular_flow_edges,
+                high_risk_edges,
+                dormant_edges,
+                balance_change_edges,
+                shared_id_edges,
                 min(coalesce(metric_node.degree, 0)) AS degree_min,
                 max(coalesce(metric_node.degree, 0)) AS degree_max,
                 avg(coalesce(metric_node.degree, 0)) AS degree_avg,
@@ -228,6 +242,13 @@ def _analysis_summary(session_id):
         "flagged_relationships": int(record.get("flagged_relationships") or 0),
         "all_relationships": int(record.get("all_relationships") or 0),
         "total_relationship_edges": int(record.get("total_relationship_edges") or 0),
+        "hub_spoke_edges": int(record.get("hub_spoke_edges") or 0),
+        "smurfing_edges": int(record.get("smurfing_edges") or 0),
+        "circular_flow_edges": int(record.get("circular_flow_edges") or 0),
+        "high_risk_edges": int(record.get("high_risk_edges") or 0),
+        "dormant_edges": int(record.get("dormant_edges") or 0),
+        "balance_change_edges": int(record.get("balance_change_edges") or 0),
+        "shared_id_edges": int(record.get("shared_id_edges") or 0),
         "degree_avg": float(record.get("degree_avg") or 0.0),
         "pagerank_avg": float(record.get("pagerank_avg") or 0.0),
         "betweenness_avg": float(record.get("betweenness_avg") or 0.0),
@@ -491,9 +512,33 @@ def execute_formal_link_analysis(event_data):
     flagged_nodes = int(summary.get("flagged_nodes") or 0)
     flagged_rels = int(summary.get("flagged_relationships") or 0)
     total_nodes = int(summary.get("total_nodes") or 0)
+    total_rel_edges = int(summary.get("total_relationship_edges") or 0)
+    hub_spoke_edges = int(summary.get("hub_spoke_edges") or 0)
+    smurfing_edges = int(summary.get("smurfing_edges") or 0)
+    circular_flow_edges = int(summary.get("circular_flow_edges") or 0)
+    high_risk_edges = int(summary.get("high_risk_edges") or 0)
+    dormant_edges = int(summary.get("dormant_edges") or 0)
+    balance_change_edges = int(summary.get("balance_change_edges") or 0)
+    shared_id_edges = int(summary.get("shared_id_edges") or 0)
+
+    rule_flags_map = {
+        "hub_and_spoke": (hub_spoke_edges > 0),
+        "smurfing": (smurfing_edges > 0),
+        "circular_flow": (circular_flow_edges > 0),
+        "high_risk_link": (high_risk_edges > 0),
+        "dormant_to_active": (dormant_edges > 0),
+        "abnormal_balance_change": (balance_change_edges > 0),
+        "shared_identifier": (shared_id_edges > 0),
+        "flagged_entity_links": (flagged_nodes > 0 or flagged_rels > 0),
+    }
 
     linked_entities = _get_linked_entities_from_neo4j(session_id, account_no)
-    is_flagged = (flagged_nodes > 0 or flagged_rels > 0)
+    is_flagged = bool(
+        flagged_nodes > 0
+        or flagged_rels > 0
+        or total_rel_edges > 0
+        or any(rule_flags_map.values())
+    )
     
     degree_avg = float(summary.get("degree_avg") or 0.0)
     pagerank_avg = float(summary.get("pagerank_avg") or 0.0)
@@ -513,6 +558,7 @@ def execute_formal_link_analysis(event_data):
         max_path_length=max_path_length,
         duration_ms=duration_ms,
         session_id=session_id,
+        flags=rule_flags_map if is_flagged else None,
     )
 
     return response_event, "success"
@@ -529,6 +575,7 @@ def build_link_response(
     max_path_length,
     duration_ms,
     session_id="",
+    flags=None,
 ):
     input_meta = dict((event_data or {}).get("meta") or {})
     trace_id = input_meta.get("trace_id") or os.urandom(16).hex()
@@ -557,7 +604,7 @@ def build_link_response(
         "max_path_length": max_path_length,
     }
     if is_flagged:
-        data_payload["flags"] = {
+        data_payload["flags"] = flags or {
             "beneficiary_blacklisted": is_flagged,
             "flagged_entity_links": (flagged_count > 0),
         }
