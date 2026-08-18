@@ -10,7 +10,10 @@ from batch_manager.utils.hdfs_utils import stream_hdfs_metadata,load_hdfs_files
 
 from batch_manager.utils.hive_utils import run_hive_query, hive_keyword_search, load_hive_rows
 from batch_manager.utils.elastic_utils import es_keyword_search, es_keyword_search_spark_chunks
-from py4j.java_gateway import java_import
+try:
+    from py4j.java_gateway import java_import
+except ImportError:
+    java_import = None
 import os, pickle
 from datetime import datetime, timedelta
 from globals import load_temp_config, save_temp_config

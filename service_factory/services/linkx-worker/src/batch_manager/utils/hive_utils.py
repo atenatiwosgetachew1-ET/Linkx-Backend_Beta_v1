@@ -1,11 +1,20 @@
-from pyhive import hive
+try:
+    from pyhive import hive
+except ImportError:
+    hive = None
 import re
 import requests
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from functools import reduce
-from pyspark.sql.functions import col, lit
-from TCLIService.ttypes import TOperationState
+try:
+    from pyspark.sql.functions import col, lit
+except ImportError:
+    col, lit = None, None
+try:
+    from TCLIService.ttypes import TOperationState
+except ImportError:
+    TOperationState = None
 import logging
 
 

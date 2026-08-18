@@ -1,4 +1,7 @@
-from pyspark.sql import DataFrame as SparkDF
+try:
+    from pyspark.sql import DataFrame as SparkDF
+except ImportError:
+    SparkDF = None
 import pandas as pd
 import os
 from functools import reduce

@@ -393,7 +393,7 @@ def execute_formal_link_analysis(event_data):
     keyword = str(agg_key.get("value") or data_section["entity_id"]).strip()
     account_no = keyword
 
-    date = meta_section.get("timestamp")
+    date = data_section.get("date") or data_section.get("transactiondate")
     if date and "T" in str(date):
         date = str(date).split("T")[0]
 

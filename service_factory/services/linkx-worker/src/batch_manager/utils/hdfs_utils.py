@@ -2,7 +2,10 @@ import os
 import pickle
 import re
 from batch_manager.utils.spark_utils import get_spark_session
-from py4j.java_gateway import java_import
+try:
+    from py4j.java_gateway import java_import
+except ImportError:
+    java_import = None
 from globals import create_file
 from datetime import datetime
 import json

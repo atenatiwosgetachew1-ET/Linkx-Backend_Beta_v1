@@ -1,5 +1,9 @@
 import re
-from pyspark.sql import SparkSession
+import os
+try:
+    from pyspark.sql import SparkSession
+except ImportError:
+    SparkSession = None
 import pandas as pd
 from batch_manager.utils.hdfs_utils import categorize_sources, load_hdfs_files
 from batch_manager.utils.elastic_utils import load_elastic_rows

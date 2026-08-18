@@ -1,6 +1,19 @@
-from kafka import KafkaConsumer, KafkaProducer
-from kafka.errors import NoBrokersAvailable
-from kafka.admin import KafkaAdminClient
+try:
+    from kafka import KafkaConsumer, KafkaProducer
+    from kafka.admin import KafkaAdminClient
+except Exception:
+    KafkaConsumer = None
+    KafkaProducer = None
+    KafkaAdminClient = None
+
+try:
+    from kafka.errors import NoBrokersAvailable
+except Exception:
+    try:
+        from kafka.errors import BrokerNotAvailableError as NoBrokersAvailable
+    except Exception:
+        class NoBrokersAvailable(Exception):
+            pass
 from neo4j import GraphDatabase
 import re
 import json

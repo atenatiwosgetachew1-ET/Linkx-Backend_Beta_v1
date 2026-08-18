@@ -9,7 +9,10 @@ from batch_manager.batch_data_manager import batch_data_manager
 from batch_manager.processing.merger import merge_pandas_and_save, merge_spark_and_save
 from batch_manager.utils.schema_utils import align_schemas
 from batch_manager.utils.spark_utils import get_spark_session
-from pyspark.sql.functions import col as spark_col
+try:
+    from pyspark.sql.functions import col as spark_col
+except ImportError:
+    spark_col = None
 from batch_manager.utils.artifact_utils import ensure_artifact_dir, register_artifact_dir
 from globals import load_temp_config, save_temp_config
 from security.redaction import redact_value

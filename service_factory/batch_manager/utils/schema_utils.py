@@ -1,5 +1,9 @@
-from pyspark.sql import DataFrame as SparkDataFrame
-from pyspark.sql.functions import lit
+try:
+    from pyspark.sql import DataFrame as SparkDataFrame
+    from pyspark.sql.functions import lit
+except ImportError:
+    SparkDataFrame = None
+    lit = None
 import pandas as pd
 
 def align_schemas(df, all_columns):
@@ -15,7 +19,7 @@ def align_schemas(df, all_columns):
     """
     all_columns = list(all_columns)  # ensure orderable
     
-    if isinstance(df, SparkDataFrame):
+    if SparkDataFrame is not None and isinstance(df, SparkDataFrame):
         df_cols = set(df.columns)
         missing = set(all_columns) - df_cols
         for col in missing:

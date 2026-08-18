@@ -3,8 +3,14 @@ import os
 import shutil
 import logging
 from urllib.parse import urlsplit
-from pyspark.sql import Row
-import polars as pl
+try:
+    from pyspark.sql import Row
+except ImportError:
+    Row = None
+try:
+    import polars as pl
+except ImportError:
+    pl = None
 import pandas as pd
 from batch_manager.utils.hive_utils import hive_keyword_search
 from batch_manager.utils.spark_utils import ensure_spark_df

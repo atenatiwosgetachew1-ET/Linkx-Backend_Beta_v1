@@ -1,5 +1,8 @@
 import os
-from pyspark.sql import SparkSession
+try:
+    from pyspark.sql import SparkSession
+except ImportError:
+    SparkSession = None
 from threading import Lock
 
 _spark = None
