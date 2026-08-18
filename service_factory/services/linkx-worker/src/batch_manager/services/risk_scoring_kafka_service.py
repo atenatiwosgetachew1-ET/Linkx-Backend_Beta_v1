@@ -26,9 +26,42 @@ DEFAULT_MAPPED_TOPIC = os.getenv(
 DEFAULT_FLAGGED_TOPIC = os.getenv(
     "LINKX_KAFKA_RISK_SCORING_FLAGGED_TOPIC", "dev.analysis.link.mapped.v1"
 )
-DEFAULT_MAX_LINKED_ENTITIES = int(
-    os.getenv("LINKX_RISK_SCORING_MAX_LINKED_ENTITIES", "50")
-)
+def _load_env_file_value(key, default=None):
+    val = os.getenv(key)
+    if val is not None and str(val).strip():
+        return str(val).strip()
+
+    candidate_paths = [
+        os.path.join(os.getcwd(), ".env"),
+        "/opt/linkx-worker/.env",
+        "/opt/linkx-backend-api/.env",
+        "/opt/linkx-backend-update/.env",
+        "/var/www/linkx-backend/.env",
+    ]
+    for env_path in candidate_paths:
+        if os.path.isfile(env_path):
+            try:
+                with open(env_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#") or "=" not in line:
+                            continue
+                        k, v = line.split("=", 1)
+                        if k.strip() == key:
+                            v = v.strip().strip("'\"")
+                            if v:
+                                return v
+            except Exception:
+                pass
+    return default
+
+
+def get_max_linked_entities_setting(session_id=""):
+    raw = _config_value(session_id, "max_linked_entities") or _load_env_file_value("LINKX_RISK_SCORING_MAX_LINKED_ENTITIES", "50")
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        return 50
 
 
 def _iso8601_now():
@@ -265,7 +298,7 @@ def _get_linked_entities_from_neo4j(
     flagged_rule_types=None,
     max_entities=None,
 ):
-    max_entities = max_entities if max_entities is not None else DEFAULT_MAX_LINKED_ENTITIES
+    max_entities = max_entities if max_entities is not None else get_max_linked_entities_setting(session_id)
     credentials = _neo4j_credentials(session_id)
     if not credentials:
         return []
@@ -584,7 +617,7 @@ def execute_formal_link_analysis(event_data):
 
     max_entities = data_section.get("max_linked_entities")
     if max_entities is None:
-        max_entities = DEFAULT_MAX_LINKED_ENTITIES
+        max_entities = get_max_linked_entities_setting(session_id)
     linked_entities = _get_linked_entities_from_neo4j(
         session_id,
         account_no,
