@@ -255,7 +255,7 @@ def _analysis_summary(session_id):
     }
 
 
-def _get_linked_entities_from_neo4j(session_id, account_no):
+def _get_linked_entities_from_neo4j(session_id, account_no, search_column="accountno", flagged_rule_types=None):
     credentials = _neo4j_credentials(session_id)
     if not credentials:
         return []
@@ -264,41 +264,52 @@ def _get_linked_entities_from_neo4j(session_id, account_no):
     safe_label = f"`{str(node_label).replace('`', '')}`"
     driver = create_neo4j_driver(credentials)
     entities = []
+    flagged_rules = list(flagged_rule_types or [])
     try:
         with driver.session() as session:
             records = session.run(f"""
-            MATCH (n:{safe_label})
+            MATCH (n:{safe_label})-[r]->(target:{safe_label})
             WHERE ($session_id = '' OR n.batch_id STARTS WITH $session_id OR n.session_id = $session_id)
-              AND coalesce(n.ACCOUNTNO, n.accountno) = $account_no
-            OPTIONAL MATCH (n)-[r]->(target:{safe_label})
-            WHERE ($session_id = '' OR r.session_id = $session_id)
+              AND (
+                  coalesce(n.ACCOUNTNO, n.accountno) = $account_no
+                  OR coalesce(target.ACCOUNTNO, target.BENACCOUNTNO, target.accountno) = $account_no
+              )
+              AND (
+                  $has_flagged_rules = false
+                  OR type(r) IN $flagged_rules
+                  OR coalesce(r.is_flagged, false) = true
+              )
             RETURN 
-                coalesce(target.ACCOUNTNO, target.BENACCOUNTNO, target.accountno, 'UNKNOWN') AS target_id,
+                coalesce(target.ACCOUNTNO, target.BENACCOUNTNO, target.accountno, n.ACCOUNTNO, n.accountno, 'UNKNOWN') AS target_id,
                 type(r) AS rel_type,
                 coalesce(r.is_flagged, false) AS is_flagged,
                 coalesce(target.is_flagged, false) AS target_flagged,
                 target.risk_score AS risk_score
-            LIMIT 50
-            """, session_id=session_id, account_no=account_no)
+            LIMIT 100
+            """, session_id=session_id, account_no=account_no, has_flagged_rules=bool(flagged_rules), flagged_rules=flagged_rules)
 
             seen = set()
+            idx = 1
             for rec in records:
                 target_id = rec.get("target_id")
-                if not target_id or target_id == "UNKNOWN" or target_id in seen:
+                if not target_id or target_id == "UNKNOWN" or str(target_id) == str(account_no) or target_id in seen:
                     continue
                 seen.add(target_id)
-                is_flag = bool(rec.get("is_flagged") or rec.get("target_flagged"))
-                risk_val = float(rec.get("risk_score") or (0.8 if is_flag else 0.2))
+                rel_type = str(rec.get("rel_type") or "TRANSACTS_TO")
+                is_flag = bool(rec.get("is_flagged") or rec.get("target_flagged") or (rel_type in flagged_rules))
+                risk_val = float(rec.get("risk_score") or (0.85 if is_flag else 0.2))
+
                 ent = {
-                    "entity_id": target_id,
-                    "entity_type": "account",
-                    "relationship": str(rec.get("rel_type") or "TRANSACTS_TO").lower(),
+                    "entity_id": f"{idx:02d}",
+                    search_column: str(target_id),
+                    "relationship": rel_type,
                     "risk_contribution": round(risk_val, 2),
                 }
                 if is_flag:
                     ent["flagged"] = True
-                    ent["flag_reason"] = "flagged transaction link"
+                    ent["flag_reason"] = f"flagged rule relationship ({rel_type})"
                 entities.append(ent)
+                idx += 1
     except Exception as exc:
         print(f"Risk Scoring link entities extraction failed: {exc}")
     finally:
@@ -521,23 +532,29 @@ def execute_formal_link_analysis(event_data):
     balance_change_edges = int(summary.get("balance_change_edges") or 0)
     shared_id_edges = int(summary.get("shared_id_edges") or 0)
 
-    rule_flags_map = {
-        "hub_and_spoke": (hub_spoke_edges > 0),
-        "smurfing": (smurfing_edges > 0),
-        "circular_flow": (circular_flow_edges > 0),
-        "high_risk_link": (high_risk_edges > 0),
-        "dormant_to_active": (dormant_edges > 0),
-        "abnormal_balance_change": (balance_change_edges > 0),
-        "shared_identifier": (shared_id_edges > 0),
-        "flagged_entity_links": (flagged_nodes > 0 or flagged_rels > 0),
-    }
+    active_flagged_rules = [
+        rule_name for rule_name, is_set in [
+            ("HUB_AND_SPOKE", hub_spoke_edges > 0),
+            ("SMURFING", smurfing_edges > 0),
+            ("CIRCULAR_FLOW", circular_flow_edges > 0),
+            ("HIGH_RISK_LINK", high_risk_edges > 0),
+            ("DORMANT_TO_ACTIVE", dormant_edges > 0),
+            ("ABNORMAL_BALANCE_CHANGE", balance_change_edges > 0),
+            ("SHARED_IDENTIFIER", shared_id_edges > 0),
+        ] if is_set
+    ]
 
-    linked_entities = _get_linked_entities_from_neo4j(session_id, account_no)
+    linked_entities = _get_linked_entities_from_neo4j(
+        session_id,
+        account_no,
+        search_column=search_column,
+        flagged_rule_types=active_flagged_rules,
+    )
     is_flagged = bool(
         flagged_nodes > 0
         or flagged_rels > 0
         or total_rel_edges > 0
-        or any(rule_flags_map.values())
+        or bool(active_flagged_rules)
     )
     
     degree_avg = float(summary.get("degree_avg") or 0.0)
@@ -558,7 +575,7 @@ def execute_formal_link_analysis(event_data):
         max_path_length=max_path_length,
         duration_ms=duration_ms,
         session_id=session_id,
-        flags=rule_flags_map if is_flagged else None,
+        flagged_rules=active_flagged_rules if is_flagged else None,
     )
 
     return response_event, "success"
@@ -575,7 +592,7 @@ def build_link_response(
     max_path_length,
     duration_ms,
     session_id="",
-    flags=None,
+    flagged_rules=None,
 ):
     input_meta = dict((event_data or {}).get("meta") or {})
     trace_id = input_meta.get("trace_id") or os.urandom(16).hex()
@@ -594,20 +611,18 @@ def build_link_response(
     agg_val = str(input_agg_key.get("value") or account_no)
 
     data_payload = {
-        "accountno": agg_val,
+        agg_type: agg_val,
         "entity_id": agg_val,
         "linked_accounts_count": linked_count,
         "flagged_entity_links": flagged_count,
         "beneficiary_blacklisted": is_flagged,
-        "linked_entities": linked_entities,
-        "network_centrality_score": centrality_score,
-        "max_path_length": max_path_length,
     }
-    if is_flagged:
-        data_payload["flags"] = flags or {
-            "beneficiary_blacklisted": is_flagged,
-            "flagged_entity_links": (flagged_count > 0),
-        }
+    if is_flagged and flagged_rules:
+        data_payload["flagged_rules"] = flagged_rules
+
+    data_payload["linked_entities"] = linked_entities
+    data_payload["network_centrality_score"] = centrality_score
+    data_payload["max_path_length"] = max_path_length
 
     return {
         "schema_version": "1.0",

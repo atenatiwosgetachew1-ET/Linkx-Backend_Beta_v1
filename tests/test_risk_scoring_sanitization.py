@@ -135,6 +135,63 @@ class TestRiskScoringSanitization(unittest.TestCase):
         with self.assertRaises(ValueError):
             sanitize_risk_scoring_request(invalid_payload)
 
+    def test_build_link_response_formatting(self):
+        from batch_manager.services.risk_scoring_kafka_service import build_link_response
+        
+        raw_event = {
+            "meta": {
+                "trace_id": "test-trace-123",
+                "correlation_id": "test-corr-456",
+                "aggregation_key": {"type": "accountno", "value": "1000558269034"}
+            }
+        }
+        
+        linked_entities = [
+            {
+                "entity_id": "01",
+                "accountno": "1000582849138",
+                "relationship": "HUB_AND_SPOKE",
+                "risk_contribution": 0.85,
+                "flagged": True
+            },
+            {
+                "entity_id": "02",
+                "accountno": "1000350224924",
+                "relationship": "HUB_AND_SPOKE",
+                "risk_contribution": 0.75,
+                "flagged": True
+            }
+        ]
+        
+        resp = build_link_response(
+            event_data=raw_event,
+            account_no="1000558269034",
+            is_flagged=True,
+            linked_entities=linked_entities,
+            linked_count=2,
+            flagged_count=2,
+            centrality_score=0.88,
+            max_path_length=2,
+            duration_ms=68.2,
+            flagged_rules=["HUB_AND_SPOKE"],
+        )
+        
+        # Verify event type & destination
+        self.assertEqual(resp["event_type"], "link.flagged")
+        self.assertEqual(resp["data"]["accountno"], "1000558269034")
+        self.assertEqual(resp["data"]["flagged_rules"], ["HUB_AND_SPOKE"])
+        
+        # Verify incremental entity_id and column naming in linked_entities
+        first_ent = resp["data"]["linked_entities"][0]
+        self.assertEqual(first_ent["entity_id"], "01")
+        self.assertEqual(first_ent["accountno"], "1000582849138")
+        self.assertNotIn("entity_type", first_ent)
+        
+        second_ent = resp["data"]["linked_entities"][1]
+        self.assertEqual(second_ent["entity_id"], "02")
+        self.assertEqual(second_ent["accountno"], "1000350224924")
+
 
 if __name__ == "__main__":
     unittest.main()
+
