@@ -255,7 +255,13 @@ def _analysis_summary(session_id):
     }
 
 
-def _get_linked_entities_from_neo4j(session_id, account_no, search_column="accountno", flagged_rule_types=None):
+def _get_linked_entities_from_neo4j(
+    session_id,
+    account_no,
+    search_column="accountno",
+    flagged_rule_types=None,
+    max_entities=50,
+):
     credentials = _neo4j_credentials(session_id)
     if not credentials:
         return []
@@ -263,7 +269,7 @@ def _get_linked_entities_from_neo4j(session_id, account_no, search_column="accou
     node_label = rule_to_node_label("bank transactions", session_id)
     safe_label = f"`{str(node_label).replace('`', '')}`"
     driver = create_neo4j_driver(credentials)
-    entities = []
+    raw_entities = []
     flagged_rules = list(flagged_rule_types or [])
     try:
         with driver.session() as session:
@@ -285,11 +291,10 @@ def _get_linked_entities_from_neo4j(session_id, account_no, search_column="accou
                 coalesce(r.is_flagged, false) AS is_flagged,
                 coalesce(target.is_flagged, false) AS target_flagged,
                 target.risk_score AS risk_score
-            LIMIT 100
+            LIMIT 500
             """, session_id=session_id, account_no=account_no, has_flagged_rules=bool(flagged_rules), flagged_rules=flagged_rules)
 
             seen = set()
-            idx = 1
             for rec in records:
                 target_id = rec.get("target_id")
                 if not target_id or target_id == "UNKNOWN" or str(target_id) == str(account_no) or target_id in seen:
@@ -299,21 +304,38 @@ def _get_linked_entities_from_neo4j(session_id, account_no, search_column="accou
                 is_flag = bool(rec.get("is_flagged") or rec.get("target_flagged") or (rel_type in flagged_rules))
                 risk_val = float(rec.get("risk_score") or (0.85 if is_flag else 0.2))
 
-                ent = {
-                    "entity_id": f"{idx:02d}",
+                raw_entities.append({
                     search_column: str(target_id),
                     "relationship": rel_type,
                     "risk_contribution": round(risk_val, 2),
-                }
-                if is_flag:
-                    ent["flagged"] = True
-                    ent["flag_reason"] = f"flagged rule relationship ({rel_type})"
-                entities.append(ent)
-                idx += 1
+                    "is_flagged": is_flag,
+                })
     except Exception as exc:
         print(f"Risk Scoring link entities extraction failed: {exc}")
     finally:
         driver.close()
+
+    # Sort strictly by risk_contribution descending so critical risk nodes are never dropped
+    raw_entities.sort(key=lambda x: (x["risk_contribution"], x["is_flagged"]), reverse=True)
+
+    # Apply configurable cap
+    if max_entities and int(max_entities) > 0:
+        raw_entities = raw_entities[:int(max_entities)]
+
+    # Assign sequential entity_id starting from '01'
+    entities = []
+    for idx, item in enumerate(raw_entities, start=1):
+        ent = {
+            "entity_id": f"{idx:02d}",
+            search_column: item[search_column],
+            "relationship": item["relationship"],
+            "risk_contribution": item["risk_contribution"],
+        }
+        if item.get("is_flagged"):
+            ent["flagged"] = True
+            ent["flag_reason"] = f"flagged rule relationship ({item['relationship']})"
+        entities.append(ent)
+
     return entities
 
 
@@ -367,6 +389,15 @@ def sanitize_risk_scoring_request(raw_event):
     target_col = str(data.get("target_column") or data.get("target_col") or data.get("target") or "").strip() or None
     custom_rel = str(data.get("relationship") or data.get("relationship_name") or "").strip() or None
 
+    # 6. Extract optional max_linked_entities cap
+    max_entities_val = data.get("max_linked_entities") or data.get("max_entities") or data.get("limit")
+    max_linked_entities = None
+    if max_entities_val is not None:
+        try:
+            max_linked_entities = int(max_entities_val)
+        except (ValueError, TypeError):
+            max_linked_entities = None
+
     sanitized = {
         "event_type": str(raw_event.get("event_type") or "score.calculated"),
         "data": {
@@ -388,11 +419,14 @@ def sanitize_risk_scoring_request(raw_event):
 
     if transaction_id:
         sanitized["data"]["transaction_id"] = transaction_id
-    if source_col and target_col:
+    if source_col:
         sanitized["data"]["source_column"] = source_col
+    if target_col:
         sanitized["data"]["target_column"] = target_col
-        if custom_rel:
-            sanitized["data"]["relationship"] = custom_rel
+    if custom_rel:
+        sanitized["data"]["relationship"] = custom_rel
+    if max_linked_entities is not None:
+        sanitized["data"]["max_linked_entities"] = max_linked_entities
 
     return sanitized
 
@@ -544,11 +578,13 @@ def execute_formal_link_analysis(event_data):
         ] if is_set
     ]
 
+    max_entities = data_section.get("max_linked_entities") or 50
     linked_entities = _get_linked_entities_from_neo4j(
         session_id,
         account_no,
         search_column=search_column,
         flagged_rule_types=active_flagged_rules,
+        max_entities=max_entities,
     )
     is_flagged = bool(
         flagged_nodes > 0
