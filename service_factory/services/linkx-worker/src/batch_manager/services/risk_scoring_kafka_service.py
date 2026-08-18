@@ -24,7 +24,7 @@ DEFAULT_MAPPED_TOPIC = os.getenv(
     "LINKX_KAFKA_RISK_SCORING_MAPPED_TOPIC", "dev.analysis.link.mapped.v1"
 )
 DEFAULT_FLAGGED_TOPIC = os.getenv(
-    "LINKX_KAFKA_RISK_SCORING_FLAGGED_TOPIC", "dev.analysis.link.flagged.v1"
+    "LINKX_KAFKA_RISK_SCORING_FLAGGED_TOPIC", "dev.analysis.link.mapped.v1"
 )
 
 
@@ -716,15 +716,30 @@ def publish_risk_scoring_response(response_event, brokers=None, topic=None, sess
     default_topic = _kafka_flagged_topic(session_id) if is_flagged else _kafka_mapped_topic(session_id)
     target_topic = topic or default_topic
 
-    key = str((response_event.get("data") or {}).get("accountno") or "").encode("utf-8")
+    meta = dict(response_event.get("meta") or {})
+    account_key = (
+        str((response_event.get("data") or {}).get("accountno") or "")
+        or str((meta.get("aggregation_key") or {}).get("value") or "")
+        or str((response_event.get("data") or {}).get("entity_id") or "")
+    )
+    key = account_key.encode("utf-8") if account_key else None
     val = json.dumps(response_event).encode("utf-8")
+
+    traceparent = str(meta.get("traceparent") or f"00-{meta.get('trace_id', os.urandom(16).hex())}-{meta.get('span_id', os.urandom(8).hex())}-01")
+    correlation_id = str(meta.get("correlation_id") or meta.get("trace_id") or os.urandom(16).hex())
+
+    kafka_headers = [
+        ("traceparent", traceparent.encode("utf-8")),
+        ("X-Correlation-ID", correlation_id.encode("utf-8")),
+        ("content-type", b"application/json"),
+    ]
 
     # 1. Try confluent-kafka
     try:
         from confluent_kafka import Producer
         conf = {"bootstrap.servers": brokers, "client.id": "linkx-link-analysis-producer"}
         p = Producer(conf)
-        p.produce(target_topic, key=key, value=val)
+        p.produce(target_topic, key=key, value=val, headers=kafka_headers)
         p.flush(timeout=5.0)
         return True
     except ImportError:
@@ -737,7 +752,7 @@ def publish_risk_scoring_response(response_event, brokers=None, topic=None, sess
         from kafka import KafkaProducer
         server_list = [b.strip() for b in brokers.split(",") if b.strip()]
         kp = KafkaProducer(bootstrap_servers=server_list, client_id="linkx-link-analysis-producer")
-        future = kp.send(target_topic, key=key, value=val)
+        future = kp.send(target_topic, key=key, value=val, headers=kafka_headers)
         future.get(timeout=5.0)
         kp.flush()
         return True
