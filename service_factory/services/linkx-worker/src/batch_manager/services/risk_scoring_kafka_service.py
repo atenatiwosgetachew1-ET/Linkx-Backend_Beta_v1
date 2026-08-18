@@ -26,6 +26,9 @@ DEFAULT_MAPPED_TOPIC = os.getenv(
 DEFAULT_FLAGGED_TOPIC = os.getenv(
     "LINKX_KAFKA_RISK_SCORING_FLAGGED_TOPIC", "dev.analysis.link.mapped.v1"
 )
+DEFAULT_MAX_LINKED_ENTITIES = int(
+    os.getenv("LINKX_RISK_SCORING_MAX_LINKED_ENTITIES", "50")
+)
 
 
 def _iso8601_now():
@@ -260,8 +263,9 @@ def _get_linked_entities_from_neo4j(
     account_no,
     search_column="accountno",
     flagged_rule_types=None,
-    max_entities=50,
+    max_entities=None,
 ):
+    max_entities = max_entities if max_entities is not None else DEFAULT_MAX_LINKED_ENTITIES
     credentials = _neo4j_credentials(session_id)
     if not credentials:
         return []
@@ -578,7 +582,9 @@ def execute_formal_link_analysis(event_data):
         ] if is_set
     ]
 
-    max_entities = data_section.get("max_linked_entities") or 50
+    max_entities = data_section.get("max_linked_entities")
+    if max_entities is None:
+        max_entities = DEFAULT_MAX_LINKED_ENTITIES
     linked_entities = _get_linked_entities_from_neo4j(
         session_id,
         account_no,
