@@ -695,10 +695,13 @@ def build_link_response(
     }
 
 
-def process_risk_scoring_event(event_data, brokers=None, publish=False):
+def process_risk_scoring_event(event_data, brokers=None, publish=True):
     """
-    Job handler wrapper to process an incoming Risk Scoring event,
-    execute the formal link analysis, and publish the output to Kafka.
+    Automated workflow:
+    1. Consumes/ingests the incoming Risk Scoring event.
+    2. Runs full Link Analysis (storage lookup, graph mapping, rule evaluation).
+    3. Prepares standard output response (link.flagged / link.mapped).
+    4. Automatically produces response to Kafka topic (dev.analysis.link.mapped.v1).
     """
     response_event, status = execute_formal_link_analysis(event_data)
     if not response_event:
@@ -759,3 +762,62 @@ def publish_risk_scoring_response(response_event, brokers=None, topic=None, sess
     except Exception as exc:
         print(f"[RiskScoring] kafka-python publish error to {target_topic}: {exc}")
         return False
+
+
+def start_risk_scoring_consumer(
+    brokers=None,
+    input_topic=None,
+    group_id="dev.analysis.link.consumer",
+    auto_publish=True,
+    max_messages=None,
+):
+    """
+    Continuous automated runner:
+    1. Consumes messages from input_topic (dev.scoring.score.calculated.v1).
+    2. Runs Link Analysis pipeline automatically.
+    3. Builds response.
+    4. Auto-produces response to destination topic (dev.analysis.link.mapped.v1).
+    """
+    brokers = brokers or _kafka_brokers()
+    topic = input_topic or DEFAULT_INPUT_TOPIC
+    server_list = [b.strip() for b in brokers.split(",") if b.strip()]
+
+    print(f"[RiskScoringConsumer] Starting automated link analysis worker...")
+    print(f"[RiskScoringConsumer] Brokers: {brokers} | Input: {topic} | Group: {group_id}")
+
+    try:
+        from kafka import KafkaConsumer
+        consumer = KafkaConsumer(
+            topic,
+            bootstrap_servers=server_list,
+            group_id=group_id,
+            auto_offset_reset="latest",
+            enable_auto_commit=True,
+            value_deserializer=lambda m: json.loads(m.decode("utf-8")) if m else None,
+        )
+    except Exception as exc:
+        print(f"[RiskScoringConsumer] Failed to initialize Kafka consumer: {exc}")
+        return
+
+    count = 0
+    try:
+        for msg in consumer:
+            if not msg.value:
+                continue
+            count += 1
+            print(f"[RiskScoringConsumer] [{count}] Received event on {msg.topic} [partition={msg.partition}, offset={msg.offset}]")
+            try:
+                result = process_risk_scoring_event(msg.value, brokers=brokers, publish=auto_publish)
+                status = "success" if (result and result.get("success")) else "failed"
+                evt_type = (result or {}).get("event_type", "unknown")
+                print(f"[RiskScoringConsumer] [{count}] Processed event: status={status}, event_type={evt_type}")
+            except Exception as proc_err:
+                print(f"[RiskScoringConsumer] [{count}] Error processing event: {proc_err}")
+
+            if max_messages and count >= max_messages:
+                break
+    except KeyboardInterrupt:
+        print("[RiskScoringConsumer] Consumer stopped by interrupt.")
+    finally:
+        consumer.close()
+
