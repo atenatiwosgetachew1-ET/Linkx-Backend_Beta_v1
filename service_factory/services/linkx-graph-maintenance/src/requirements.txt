@@ -3,7 +3,7 @@ bidict==0.23.1
 blinker==1.9.0
 certifi==2026.1.4
 charset-normalizer==3.4.4
-click==8.3.1
+click>=8.3.3
 dnspython==2.8.0
 docopt==0.6.2
 eventlet==0.40.4
@@ -20,7 +20,7 @@ Jinja2==3.1.6
 joblib==1.5.3
 jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
-kafka-python==2.3.0
+kafka-python>=2.3.2
 MarkupSafe==3.0.3
 neo4j==6.1.0
 numpy==2.4.1
