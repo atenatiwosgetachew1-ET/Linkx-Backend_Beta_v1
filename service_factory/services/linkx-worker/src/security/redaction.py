@@ -3,10 +3,8 @@ MAX_STRING_LOG_LENGTH = 512
 
 
 def is_sensitive_key(key):
-    lowered = str(key or "").lower()
-    if lowered.endswith("_ref") or lowered.endswith("_id"):
-        return False
-    return any(part in lowered for part in SENSITIVE_KEY_PARTS)
+    key = str(key or "").lower()
+    return any(part in key for part in SENSITIVE_KEY_PARTS)
 
 
 def redact_value(value, key=None, *, max_depth=6):

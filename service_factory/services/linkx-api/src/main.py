@@ -902,9 +902,10 @@ def init():
     try:
         reusable = _load_reusable_parent_session(current_actor, old_session)
         if reusable and reusable.get("configuration") is not None:
+            safe_config = redact_value(reusable['configuration'])
             response_results = {
                 'session_id': reusable['session_id'],
-                'configuration': reusable['configuration'],
+                'configuration': safe_config,
                 'reused_existing_session': reusable.get('reused_existing_session', False),
                 'session_rotated': reusable.get('session_rotated', False),
             }
@@ -913,7 +914,7 @@ def init():
             return jsonify({
                 'message': 'success',
                 'results': response_results,
-                'configurations': reusable['configuration'],
+                'configurations': safe_config,
             }), 200
 
         session_id = reusable.get('session_id') if reusable else _new_parent_session_id(current_actor)
@@ -926,7 +927,7 @@ def init():
             default_config=configs,
             existing_session_id=rotation_source,
         )
-        normalized = _normalize_configuration(stored_new_configs)
+        normalized = redact_value(_normalize_configuration(stored_new_configs))
         response_results = {
             'session_id': session_id,
             'configuration': normalized,
@@ -1058,8 +1059,10 @@ def configuration():
             defaults = get_default_session_config(session_id or (actor.get("id") if actor else "default"))
             if session_id:
                 save_temp_config("data", defaults, session_id)
-                if actor:
-                    save_session_config(session_id, actor, defaults)
+                try:
+                    save_session_config(session_id, defaults)
+                except Exception:
+                    pass
             if actor and actor.get("actor_type") == "user":
                 reset_user_config(actor.get("id"), default_config=defaults)
             return _configuration_success(defaults)
@@ -1210,6 +1213,10 @@ def configuration():
                 return jsonify({'message': 'validation_error', 'detail': str(exc), 'field': field_name}), 400
             if session_id:
                 save_temp_config("all", config_dict, session_id)
+                try:
+                    save_session_config(session_id, config_dict)
+                except Exception:
+                    pass
                 _record_security_event_safe(
                     "config.session.save",
                     actor=current_actor_from_request(),
