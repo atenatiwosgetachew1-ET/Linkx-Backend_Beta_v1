@@ -4,6 +4,35 @@ import os
 logger = logging.getLogger("linkx.config")
 
 
+def _auto_load_dotenv():
+    candidate_paths = [
+        os.path.join(os.getcwd(), ".env"),
+        "/opt/linkx-backend-api/.env",
+        "/opt/linkx-worker/.env",
+        "/opt/linkx-backend-update/.env",
+        "/opt/linkx-api/.env",
+        "/var/www/linkx-backend/.env",
+    ]
+    for env_path in candidate_paths:
+        if os.path.isfile(env_path):
+            try:
+                with open(env_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#") or "=" not in line:
+                            continue
+                        k, v = line.split("=", 1)
+                        k = k.strip()
+                        v = v.strip().strip("'\"")
+                        if k and k not in os.environ:
+                            os.environ[k] = v
+            except Exception:
+                pass
+
+
+_auto_load_dotenv()
+
+
 def _env_list(name, default):
     value = os.getenv(name)
     if value is None or not str(value).strip():
@@ -12,6 +41,7 @@ def _env_list(name, default):
 
 
 def get_default_session_config(session_id):
+    _auto_load_dotenv()
     kafka_servers = os.getenv("LINKX_KAFKA_BOOTSTRAP_SERVERS", "").strip()
     kafka_list = _env_list("LINKX_KAFKA_BOOTSTRAP_SERVERS", [])
     if not kafka_servers:

@@ -1070,11 +1070,29 @@ def configuration():
         try:
             if session_id:
                 config_data = load_temp_config("all", session_id)
+                defaults = get_default_session_config(session_id)
                 if not config_data or not isinstance(config_data, dict) or not config_data.get("data"):
-                    actor = current_actor_from_request()
-                    defaults = get_default_session_config(session_id)
                     save_temp_config("data", defaults, session_id)
                     config_data = {"data": defaults}
+                else:
+                    data_obj = dict(config_data.get("data") or {})
+                    updated = False
+                    for k in (
+                        "storage_addresses",
+                        "active_storage_address",
+                        "active_storage_host",
+                        "elastic_api_base_url",
+                        "kafka_addresses",
+                        "active_kafka_adress",
+                        "kafka_bootstrap_servers",
+                        "active_tool_protocol",
+                    ):
+                        if not data_obj.get(k) and defaults.get(k):
+                            data_obj[k] = defaults[k]
+                            updated = True
+                    if updated:
+                        config_data["data"] = data_obj
+                        save_temp_config("data", data_obj, session_id)
             else:
                 actor = current_actor_from_request()
                 defaults = get_default_session_config(actor.get("id") if actor else "default")
