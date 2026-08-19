@@ -522,6 +522,14 @@ def _normalize_configuration(config):
     active_db = normalized.get("active_tool_database") or normalized.get("custom_tool_database")
     if active_db and active_db not in normalized["tool_databases"]:
         normalized["tool_databases"] = [active_db, *[db for db in normalized["tool_databases"] if db != active_db]]
+    active_storage = str(normalized.get("active_storage_address") or "").strip()
+    storage_list = normalized.get("storage_addresses") or []
+    if active_storage and active_storage not in storage_list:
+        normalized["storage_addresses"] = [active_storage, *[a for a in storage_list if a != active_storage]]
+    active_kafka = str(normalized.get("active_kafka_adress") or "").strip()
+    kafka_list = normalized.get("kafka_addresses") or []
+    if active_kafka and active_kafka not in kafka_list:
+        normalized["kafka_addresses"] = [active_kafka, *[a for a in kafka_list if a != active_kafka]]
     return normalized
 
 
