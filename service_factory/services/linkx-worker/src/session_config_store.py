@@ -298,6 +298,27 @@ def save_user_config(user_id, config):
     return True
 
 
+def reset_user_config(user_id, default_config=None):
+    if not user_id or not db_enabled():
+        return default_config or {}
+    ensure_schema()
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM user_configs WHERE user_id = %s", (user_id,))
+            if default_config is not None:
+                cur.execute(
+                    """
+                    INSERT INTO user_configs (user_id, config)
+                    VALUES (%s, %s::jsonb)
+                    RETURNING config
+                    """,
+                    (user_id, json.dumps(_protect_config_secrets(default_config or {}, cur, "user", user_id))),
+                )
+                inserted = cur.fetchone()
+        conn.commit()
+    return default_config or {}
+
+
 def create_session_config(session_id, actor=None, default_config=None, existing_session_id=None):
     if not session_id or not db_enabled():
         return default_config or {}

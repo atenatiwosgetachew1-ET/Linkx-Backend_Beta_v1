@@ -13,10 +13,6 @@ from batch_manager.utils.neo4j_utils import create_neo4j_driver
 from globals import create_file, load_temp_config, save_temp_config
 from security.redaction import redact_value
 
-DEFAULT_KAFKA_BROKERS = os.getenv(
-    "LINKX_KAFKA_BOOTSTRAP_SERVERS",
-    "172.27.23.70:9092,172.27.23.118:9092,172.27.23.100:9092",
-)
 DEFAULT_INPUT_TOPIC = os.getenv(
     "LINKX_KAFKA_RISK_SCORING_INPUT_TOPIC", "dev.scoring.score.calculated.v1"
 )
@@ -26,6 +22,8 @@ DEFAULT_MAPPED_TOPIC = os.getenv(
 DEFAULT_FLAGGED_TOPIC = os.getenv(
     "LINKX_KAFKA_RISK_SCORING_FLAGGED_TOPIC", "dev.analysis.link.mapped.v1"
 )
+
+
 def _load_env_file_value(key, default=None):
     val = os.getenv(key)
     if val is not None and str(val).strip():
@@ -54,6 +52,9 @@ def _load_env_file_value(key, default=None):
             except Exception:
                 pass
     return default
+
+
+DEFAULT_KAFKA_BROKERS = _load_env_file_value("LINKX_KAFKA_BOOTSTRAP_SERVERS", "")
 
 
 def get_max_linked_entities_setting(session_id=""):

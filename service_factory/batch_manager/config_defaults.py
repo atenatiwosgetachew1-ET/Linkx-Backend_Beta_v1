@@ -1,25 +1,41 @@
+import logging
 import os
+
+logger = logging.getLogger("linkx.config")
 
 
 def _env_list(name, default):
     value = os.getenv(name)
-    if not value:
+    if value is None or not str(value).strip():
         return default
-    return [item.strip() for item in value.split(",") if item.strip()]
+    return [item.strip() for item in str(value).split(",") if item.strip()]
 
 
 def get_default_session_config(session_id):
-    default_kafka = ["172.27.23.70:9092", "172.27.23.118:9092", "172.27.23.100:9092"]
-    default_kafka_str = ",".join(default_kafka)
-    default_storage = os.getenv("LINKX_ACTIVE_STORAGE_ADDRESS", "172.27.23.43")
-    default_es_base = os.getenv("LINKX_ELASTIC_API_BASE_URL", f"http://{default_storage}:5000")
+    kafka_servers = os.getenv("LINKX_KAFKA_BOOTSTRAP_SERVERS", "").strip()
+    kafka_list = _env_list("LINKX_KAFKA_BOOTSTRAP_SERVERS", [])
+    if not kafka_servers:
+        logger.warning("[CONFIG DIAGNOSTIC] 'LINKX_KAFKA_BOOTSTRAP_SERVERS' is not set in environment.")
+
+    storage_addr = os.getenv("LINKX_ACTIVE_STORAGE_ADDRESS", "").strip()
+    if not storage_addr:
+        logger.warning("[CONFIG DIAGNOSTIC] 'LINKX_ACTIVE_STORAGE_ADDRESS' is not set in environment.")
+
+    es_base_url = os.getenv(
+        "LINKX_ELASTIC_API_BASE_URL",
+        f"http://{storage_addr}:5000" if storage_addr else "",
+    ).strip()
+
+    neo4j_url = os.getenv("LINKX_ACTIVE_TOOL_PROTOCOL") or os.getenv("LINKX_NEO4J_URL", "")
+    if not neo4j_url:
+        logger.warning("[CONFIG DIAGNOSTIC] 'LINKX_ACTIVE_TOOL_PROTOCOL' / 'LINKX_NEO4J_URL' is not set in environment.")
 
     return {
         "session_id": session_id,
         "user_id": os.getenv("LINKX_DEFAULT_USER_ID", "Unknown"),
-        "kafka_addresses": _env_list("LINKX_KAFKA_BOOTSTRAP_SERVERS", default_kafka),
-        "active_kafka_adress": os.getenv("LINKX_KAFKA_BOOTSTRAP_SERVERS", default_kafka_str),
-        "kafka_bootstrap_servers": os.getenv("LINKX_KAFKA_BOOTSTRAP_SERVERS", default_kafka_str),
+        "kafka_addresses": kafka_list,
+        "active_kafka_adress": kafka_servers,
+        "kafka_bootstrap_servers": kafka_servers,
         "kafka_risk_scoring_input_topic": os.getenv(
             "LINKX_KAFKA_RISK_SCORING_INPUT_TOPIC", "dev.scoring.score.calculated.v1"
         ),
@@ -27,19 +43,20 @@ def get_default_session_config(session_id):
             "LINKX_KAFKA_RISK_SCORING_MAPPED_TOPIC", "dev.analysis.link.mapped.v1"
         ),
         "kafka_risk_scoring_flagged_topic": os.getenv(
-            "LINKX_KAFKA_RISK_SCORING_FLAGGED_TOPIC", "dev.analysis.link.flagged.v1"
+            "LINKX_KAFKA_RISK_SCORING_FLAGGED_TOPIC", "dev.analysis.link.mapped.v1"
         ),
+        "max_linked_entities": int(os.getenv("LINKX_RISK_SCORING_MAX_LINKED_ENTITIES", "50")),
         "REST APIs": [],
         "active_REST_API": "",
-        "storage_addresses": _env_list("LINKX_STORAGE_ADDRESSES", [default_storage]),
+        "storage_addresses": _env_list("LINKX_STORAGE_ADDRESSES", [storage_addr] if storage_addr else []),
         "storage_path": os.getenv("LINKX_STORAGE_PATH", "user/bank/cleaned_partitioned"),
         "storage_databases": _env_list("LINKX_STORAGE_DATABASES", ["bankdb", "bank_db"]),
         "storage_tables": _env_list("LINKX_STORAGE_TABLES", ["individual_transactions", "entity_transactions"]),
-        "active_storage_address": default_storage,
-        "active_storage_host": os.getenv("LINKX_ACTIVE_STORAGE_HOST", default_storage),
+        "active_storage_address": storage_addr,
+        "active_storage_host": os.getenv("LINKX_ACTIVE_STORAGE_HOST", storage_addr),
         "active_storage_database": os.getenv("LINKX_ACTIVE_STORAGE_DATABASE", "bankdb"),
         "active_storage_tables": _env_list("LINKX_ACTIVE_STORAGE_TABLES", ["individual_transactions", "entity_transactions"]),
-        "elastic_api_base_url": default_es_base,
+        "elastic_api_base_url": es_base_url,
         "elastic_api_authorization": os.getenv("LINKX_ELASTIC_API_AUTHORIZATION", ""),
         "hadoop_rcp_port": os.getenv("LINKX_HADOOP_RCP_PORT", "9870"),
         "hadoop_web_port": os.getenv("LINKX_HADOOP_WEB_PORT", ""),
@@ -70,7 +87,7 @@ def get_default_session_config(session_id):
         "dataframes_limit": int(os.getenv("LINKX_DATAFRAMES_LIMIT", "1000000")),
         "tools": _env_list("LINKX_TOOLS", ["neo4j"]),
         "active_tool": os.getenv("LINKX_ACTIVE_TOOL", "neo4j"),
-        "active_tool_protocol": os.getenv("LINKX_ACTIVE_TOOL_PROTOCOL", "neo4j://172.21.22.88"),
+        "active_tool_protocol": neo4j_url,
         "active_tool_username": os.getenv("LINKX_ACTIVE_TOOL_USERNAME", "neo4j"),
         "active_tool_password": os.getenv("LINKX_ACTIVE_TOOL_PASSWORD", ""),
         "active_tool_database": os.getenv("LINKX_ACTIVE_TOOL_DATABASE", ""),

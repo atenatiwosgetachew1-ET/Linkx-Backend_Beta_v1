@@ -44,7 +44,7 @@ from api.STR_link_analysis import STR_link_analysis_api
 from api.ML_link_analysis import ML_link_analysis_api
 from api.rule_engine_analysis import RULE_link_analysis_api
 from api.ai_service import ai_service_api
-from session_config_store import create_session_config, duplicate_window_config, get_user_config, get_workspace_layout, load_session_config, save_session_config, save_user_config, save_workspace_layout
+from session_config_store import create_session_config, duplicate_window_config, get_user_config, get_workspace_layout, load_session_config, reset_user_config, save_session_config, save_user_config, save_workspace_layout
 from service_orchestration import enqueue_cleanup_run, enqueue_worker_job, get_active_session_lock, get_actor_main_session_info, get_any_active_actor_lock, get_worker_job, list_cleanup_audit, public_lock_state, reactivate_analysis_session, request_session_cancellation
 from auth.decorators import auth_required, current_actor_from_request, permission_required
 from auth.repository import actor_has_permission, bind_analysis_session_actor, can_access_analysis_session_actor, get_postgres_connection, record_security_event
@@ -978,6 +978,25 @@ def account_configuration_save():
         metadata={"sensitive_paths": _sensitive_config_paths(normalized_config)},
     )
     return _configuration_success(normalized_config)
+
+
+@app.route('/account/configuration/reset', methods=['POST'])
+@auth_required
+def account_configuration_reset():
+    actor = current_actor_from_request()
+    if not actor or actor.get("actor_type") != "user":
+        return jsonify({"message": "user_required"}), 403
+    defaults = get_default_session_config(actor.get("id") or "default")
+    config = reset_user_config(actor.get("id"), default_config=defaults)
+    _record_security_event_safe(
+        "config.user.reset",
+        actor=actor,
+        target_type="user_config",
+        target_id=str(actor.get("id")),
+        success=True,
+    )
+    return _configuration_success(config)
+
 
 
 @app.route('/configuration', methods=['POST'])
