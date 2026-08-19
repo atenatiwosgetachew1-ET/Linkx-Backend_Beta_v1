@@ -59,6 +59,11 @@ def save_uploaded_file(uploaded_file, save_dir, filename_prefix, session_id):
 def load_temp_config(key, session_id):
     db_config = load_session_config(session_id)
     if db_config is not None:
+        # Flatten legacy nested 'data' wrapper left in DB by older code
+        if isinstance(db_config, dict) and isinstance(db_config.get("data"), dict):
+            inner = db_config.pop("data")
+            for k, v in inner.items():
+                db_config.setdefault(k, v)
         if key == "all":
             return response_config(db_config)
         if key == "data":
@@ -88,10 +93,10 @@ def save_temp_config(key, value, session_id):
         if not isinstance(value, dict):
             raise ValueError("When key='all', value must be a dict to merge.")
         flat = value.get("data") if isinstance(value.get("data"), dict) else value
-        if save_session_config(session_id, flat, merge=True):
+        if save_session_config(session_id, flat, merge=False):
             return
     elif key == "data":
-        if save_session_config(session_id, value if isinstance(value, dict) else {key: value}, merge=True):
+        if save_session_config(session_id, value if isinstance(value, dict) else {key: value}, merge=False):
             return
     else:
         if save_session_config(session_id, {key: value}, merge=True):
