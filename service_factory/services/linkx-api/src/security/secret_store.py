@@ -8,6 +8,8 @@ MASKED_SECRET = "***"
 
 def is_sensitive_key(key):
     lowered = str(key or "").lower()
+    if lowered.endswith("_ref"):
+        return False
     return any(part in lowered for part in SENSITIVE_KEY_PARTS)
 
 

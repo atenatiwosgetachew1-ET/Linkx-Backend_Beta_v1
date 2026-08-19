@@ -4,6 +4,8 @@ MAX_STRING_LOG_LENGTH = 512
 
 def is_sensitive_key(key):
     key = str(key or "").lower()
+    if key.endswith("_ref"):
+        return False
     return any(part in key for part in SENSITIVE_KEY_PARTS)
 
 
