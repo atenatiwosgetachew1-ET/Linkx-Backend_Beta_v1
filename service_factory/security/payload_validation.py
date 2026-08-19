@@ -242,7 +242,7 @@ COMMON_SCHEMAS = {
         "type": "object",
         "required": ["id", "session_id"],
         "properties": {
-            "id": {"type": "string", "enum": ["load", "save", "remove_rule"]},
+            "id": {"type": "string", "enum": ["load", "save", "remove_rule", "reset", "load_default", "upload"]},
             "session_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$"},
             "rule_name": {"type": "string", "maxLength": 255},
             "active_rule": {"type": ["array", "string"], "items": {"type": "string", "maxLength": 255}},
