@@ -1,5 +1,6 @@
 import json
 import os
+import uuid
 from datetime import datetime
 
 from security.secret_store import MASKED_SECRET, decrypt_secret, encrypt_secret, is_sensitive_key, should_store_secret
@@ -94,17 +95,30 @@ def _store_managed_secret(cur, scope_type, scope_id, secret_type, value):
     return cur.fetchone()[0]
 
 
+def _is_valid_uuid(val):
+    if not val:
+        return False
+    try:
+        uuid.UUID(str(val))
+        return True
+    except (ValueError, TypeError, AttributeError):
+        return False
+
+
 def _load_managed_secret(cur, secret_id):
-    if not secret_id:
+    if not secret_id or not _is_valid_uuid(secret_id):
         return None
-    cur.execute(
-        "SELECT ciphertext FROM managed_secrets WHERE id = %s AND deleted_at IS NULL",
-        (str(secret_id),),
-    )
-    row = cur.fetchone()
-    if not row:
+    try:
+        cur.execute(
+            "SELECT ciphertext FROM managed_secrets WHERE id = %s AND deleted_at IS NULL",
+            (str(secret_id),),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return decrypt_secret(row[0])
+    except Exception:
         return None
-    return decrypt_secret(row[0])
 
 
 def _protect_config_secrets(value, cur, scope_type, scope_id, prefix=""):
