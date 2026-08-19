@@ -87,7 +87,11 @@ def save_temp_config(key, value, session_id):
     if key == "all":
         if not isinstance(value, dict):
             raise ValueError("When key='all', value must be a dict to merge.")
-        if save_session_config(session_id, value, merge=True):
+        flat = value.get("data") if isinstance(value.get("data"), dict) else value
+        if save_session_config(session_id, flat, merge=True):
+            return
+    elif key == "data":
+        if save_session_config(session_id, value if isinstance(value, dict) else {key: value}, merge=True):
             return
     else:
         if save_session_config(session_id, {key: value}, merge=True):

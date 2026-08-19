@@ -1067,10 +1067,6 @@ def configuration():
             defaults = get_default_session_config(session_id or (actor.get("id") if actor else "default"))
             if session_id:
                 save_temp_config("data", defaults, session_id)
-                try:
-                    save_session_config(session_id, defaults)
-                except Exception:
-                    pass
             if actor and actor.get("actor_type") == "user":
                 reset_user_config(actor.get("id"), default_config=defaults)
             return _configuration_success(defaults)
@@ -1221,10 +1217,6 @@ def configuration():
                 return jsonify({'message': 'validation_error', 'detail': str(exc), 'field': field_name}), 400
             if session_id:
                 save_temp_config("all", config_dict, session_id)
-                try:
-                    save_session_config(session_id, config_dict)
-                except Exception:
-                    pass
                 _record_security_event_safe(
                     "config.session.save",
                     actor=current_actor_from_request(),

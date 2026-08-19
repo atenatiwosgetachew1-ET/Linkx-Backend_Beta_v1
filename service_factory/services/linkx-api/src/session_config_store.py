@@ -179,6 +179,8 @@ def _merge_config(current, incoming):
 
 PARENT_SCOPED_CONFIG_KEYS = {
     "kafka_addresses",
+    "active_kafka_adress",
+    "kafka_bootstrap_servers",
     "REST APIs",
     "storage_addresses",
     "storage_path",
