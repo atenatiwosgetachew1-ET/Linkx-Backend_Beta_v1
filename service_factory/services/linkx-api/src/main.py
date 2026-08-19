@@ -1032,15 +1032,17 @@ def configuration():
     session_id = str(session_id or "").strip()
     if session_id.lower() in {"none", "null", "undefined"}:
         session_id = ""
-    action = str(data.get("id") or "").strip().lower()
-    if "load" in action:
+    raw_action = str(data.get("id") or "").strip().lower()
+    if raw_action in {"load_default", "load-default", "reset", "reset_default", "reset_defaults", "default"}:
+        action = "load_default"
+    elif "load" in raw_action:
         action = "load"
-    elif "save" in action or "update" in action:
+    elif "save" in raw_action or "update" in raw_action:
         action = "save"
-    elif "remove" in action and "rule" in action:
+    elif "remove" in raw_action and "rule" in raw_action:
         action = "remove_rule"
 
-    required_permission = "config:read" if action == "load" else "config:write"
+    required_permission = "config:read" if action in {"load", "load_default"} else "config:write"
     denied = _require_permission(required_permission)
     if denied:
         return denied
@@ -1050,10 +1052,29 @@ def configuration():
         if not _config_session_accessible(session_id, actor):
             return jsonify({"message": "forbidden"}), 403
 
-    if action == "load":
+    if action == "load_default":
+        try:
+            actor = current_actor_from_request()
+            defaults = get_default_session_config(session_id or (actor.get("id") if actor else "default"))
+            if session_id:
+                save_temp_config("data", defaults, session_id)
+                if actor:
+                    save_session_config(session_id, actor, defaults)
+            if actor and actor.get("actor_type") == "user":
+                reset_user_config(actor.get("id"), default_config=defaults)
+            return _configuration_success(defaults)
+        except Exception as e:
+            current_app.logger.warning("configuration reset failed: %s", e)
+            return jsonify({'message': 'failed!', 'error': 'configuration_reset_failed'}), 500
+    elif action == "load":
         try:
             if session_id:
                 config_data = load_temp_config("all", session_id)
+                if not config_data or not isinstance(config_data, dict) or not config_data.get("data"):
+                    actor = current_actor_from_request()
+                    defaults = get_default_session_config(session_id)
+                    save_temp_config("data", defaults, session_id)
+                    config_data = {"data": defaults}
             else:
                 actor = current_actor_from_request()
                 defaults = get_default_session_config(actor.get("id") if actor else "default")
