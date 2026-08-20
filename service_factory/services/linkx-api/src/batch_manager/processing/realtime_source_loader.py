@@ -95,8 +95,8 @@ def read_kafka_batch_messages(broker_url, topic, max_messages=1000, timeout_ms=1
 
         topic_partitions = [TopicPartition(topic, partition) for partition in partitions]
         consumer.assign(topic_partitions)
-        beginning_offsets = consumer.beginning_offsets(topic_partitions, timeout_ms=timeout_ms)
-        end_offsets = consumer.end_offsets(topic_partitions, timeout_ms=timeout_ms)
+        beginning_offsets = consumer.beginning_offsets(topic_partitions)
+        end_offsets = consumer.end_offsets(topic_partitions)
         print(f"[kafka_batch] beginning_offsets={beginning_offsets} end_offsets={end_offsets}", flush=True)
 
         for topic_partition in topic_partitions:
