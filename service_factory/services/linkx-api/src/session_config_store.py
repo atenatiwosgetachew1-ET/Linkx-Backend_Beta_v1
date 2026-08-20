@@ -181,6 +181,8 @@ PARENT_SCOPED_CONFIG_KEYS = {
     "kafka_addresses",
     "active_kafka_adress",
     "kafka_bootstrap_servers",
+    "kafka_topics",
+    "active_kafka_topic",
     "REST APIs",
     "storage_addresses",
     "storage_path",

@@ -530,6 +530,22 @@ def _normalize_configuration(config):
     kafka_list = normalized.get("kafka_addresses") or []
     if active_kafka and active_kafka not in kafka_list:
         normalized["kafka_addresses"] = [active_kafka, *[a for a in kafka_list if a != active_kafka]]
+
+    active_topic = str(normalized.get("active_kafka_topic") or "").strip()
+    topic_list = normalized.get("kafka_topics") or []
+    if active_topic and active_topic not in topic_list:
+        normalized["kafka_topics"] = [active_topic, *[t for t in topic_list if t != active_topic]]
+    else:
+        normalized.setdefault("kafka_topics", topic_list)
+        
+    for topic_key in [
+        "kafka_risk_scoring_input_topic", 
+        "kafka_risk_scoring_mapped_topic", 
+        "kafka_risk_scoring_flagged_topic"
+    ]:
+        topic_val = str(normalized.get(topic_key) or "").strip()
+        if topic_val and topic_val not in normalized["kafka_topics"]:
+            normalized["kafka_topics"].append(topic_val)
     return normalized
 
 
