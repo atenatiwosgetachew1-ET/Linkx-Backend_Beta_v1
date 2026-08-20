@@ -368,7 +368,7 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
     # Metadata loop
     # -------------------------
     def emit_metadata():
-        nonlocal last_session_status
+        nonlocal last_session_status, driver
         metadata_polls = 0
         unchanged_metadata_cycles = 0
         changed_metadata_emits = 0
