@@ -66,8 +66,8 @@ def get_default_session_config(session_id):
         "kafka_addresses": kafka_list,
         "active_kafka_adress": kafka_servers,
         "kafka_bootstrap_servers": kafka_servers,
-        "kafka_topics": [],
-        "active_kafka_topic": "",
+        "kafka_topics": _env_list("LINKX_KAFKA_TOPICS", []),
+        "active_kafka_topic": os.getenv("LINKX_ACTIVE_KAFKA_TOPIC", ""),
         "kafka_risk_scoring_input_topic": os.getenv(
             "LINKX_KAFKA_RISK_SCORING_INPUT_TOPIC", "dev.scoring.score.calculated.v1"
         ),
