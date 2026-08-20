@@ -80,9 +80,14 @@ def read_kafka_batch_messages(broker_url, topic, max_messages=1000, timeout_ms=1
     )
     try:
         partitions = consumer.partitions_for_topic(topic)
-        if not partitions:
+        retries = 0
+        while not partitions and retries < 5:
+            import time
+            time.sleep(0.5)
             consumer.topics()
             partitions = consumer.partitions_for_topic(topic)
+            retries += 1
+            
         if not partitions:
             print(f"[kafka_batch] no partitions found for topic={topic}", flush=True)
             return []
@@ -103,10 +108,12 @@ def read_kafka_batch_messages(broker_url, topic, max_messages=1000, timeout_ms=1
                 consumer.seek(topic_partition, max(beginning, end - max_messages))
 
         collected = []
-        while len(collected) < max_messages:
+        empty_polls = 0
+        while len(collected) < max_messages and empty_polls < 3:
             polled = consumer.poll(timeout_ms=timeout_ms, max_records=max_messages - len(collected))
             if not polled:
-                break
+                empty_polls += 1
+                continue
             for records in polled.values():
                 collected.extend(records)
                 if len(collected) >= max_messages:
