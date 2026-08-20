@@ -1083,8 +1083,11 @@ def configuration():
             defaults = get_default_session_config(session_id or (actor.get("id") if actor else "default"))
             if session_id:
                 save_temp_config("data", defaults, session_id)
+                defaults = load_temp_config("data", session_id) or defaults
             if actor and actor.get("actor_type") == "user":
                 reset_user_config(actor.get("id"), default_config=defaults)
+                if not session_id:
+                    defaults = get_user_config(actor.get("id"), default_config=defaults)
             return _configuration_success(defaults)
         except Exception as e:
             current_app.logger.warning("configuration reset failed: %s", e)
@@ -1096,7 +1099,7 @@ def configuration():
                 defaults = get_default_session_config(session_id)
                 if not config_data or not isinstance(config_data, dict) or not config_data.get("data"):
                     save_temp_config("data", defaults, session_id)
-                    config_data = {"data": defaults}
+                    config_data = {"data": load_temp_config("data", session_id) or defaults}
                 else:
                     data_obj = dict(config_data.get("data") or {})
                     updated = False
@@ -1233,6 +1236,7 @@ def configuration():
                 return jsonify({'message': 'validation_error', 'detail': str(exc), 'field': field_name}), 400
             if session_id:
                 save_temp_config("all", config_dict, session_id)
+                config_dict = load_temp_config("data", session_id) or config_dict
                 _record_security_event_safe(
                     "config.session.save",
                     actor=current_actor_from_request(),
@@ -1246,6 +1250,7 @@ def configuration():
                 actor = current_actor_from_request()
                 if actor and actor.get("actor_type") == "user":
                     save_user_config(actor.get("id"), config_dict)
+                    config_dict = get_user_config(actor.get("id"), default_config=config_dict)
                     _record_security_event_safe(
                         "config.user.save",
                         actor=actor,
