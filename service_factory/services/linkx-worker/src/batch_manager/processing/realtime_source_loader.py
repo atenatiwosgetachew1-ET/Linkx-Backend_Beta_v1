@@ -75,7 +75,6 @@ def read_kafka_batch_messages(broker_url, topic, max_messages=1000, timeout_ms=1
         enable_auto_commit=False,
         consumer_timeout_ms=timeout_ms,
         request_timeout_ms=max(timeout_ms + 5000, 10000),
-        api_version_auto_timeout_ms=5000,
         metadata_max_age_ms=5000,
         value_deserializer=_deserialize_value,
     )
