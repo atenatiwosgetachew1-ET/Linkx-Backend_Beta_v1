@@ -1,17 +1,11 @@
 import os
 import time
-import threading
 from globals import _session_store
 from batch_manager.utils.graph_status_events import has_active_graph_session_job, latest_graph_metadata_event
 from batch_manager.utils.neo4j_utils import create_neo4j_driver
 
 
 _RELATIONSHIP_STATUS_CACHE = {}
-
-# Eventlet monkey-patches threading primitives, so this Semaphore is green-thread
-# safe.  It serializes concurrent Neo4j metadata queries from graph_status_stream
-# tasks to prevent Eventlet's "Second simultaneous read on fileno" RuntimeError.
-_neo4j_metadata_semaphore = threading.Semaphore(1)
 
 
 def _env_float(name, default):
@@ -419,18 +413,14 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
                     last_schema_refresh_at is None
                     or (now - last_schema_refresh_at) >= metadata_schema_interval
                 )
-                _neo4j_metadata_semaphore.acquire()
-                try:
-                    metadata = get_graph_metadata(
-                        driver,
-                        session_id,
-                        tool_credentials,
-                        static_cache=metadata_static_cache,
-                        schema_cache=metadata_schema_cache,
-                        refresh_schema=refresh_schema,
-                    )
-                finally:
-                    _neo4j_metadata_semaphore.release()
+                metadata = get_graph_metadata(
+                    driver,
+                    session_id,
+                    tool_credentials,
+                    static_cache=metadata_static_cache,
+                    schema_cache=metadata_schema_cache,
+                    refresh_schema=refresh_schema,
+                )
                 metadata_polls += 1
                 last_metadata_fetch_at = time.monotonic()
                 metadata_static_cache.update({
@@ -615,15 +605,11 @@ def graph_status_stream(socketio, sid, session_id, registry_entry, node_label=No
         nonlocal last_rel_hash, unchanged_relationship_cycles
         while not stop_event.is_set():
             try:
-                _neo4j_metadata_semaphore.acquire()
-                try:
-                    relationships = _fetch_relationship_status(
-                        driver,
-                        session_id,
-                        run_id=relationship_run_id,
-                    )
-                finally:
-                    _neo4j_metadata_semaphore.release()
+                relationships = _fetch_relationship_status(
+                    driver,
+                    session_id,
+                    run_id=relationship_run_id,
+                )
 
                 # only emit if changed
                 new_hash = hash(tuple((r["id"], r["type"], r["color"], r["bgcolor"]) for r in relationships))

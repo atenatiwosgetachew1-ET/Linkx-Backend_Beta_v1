@@ -1,4 +1,6 @@
 import os
+import threading
+from contextlib import contextmanager
 from neo4j import GraphDatabase
 
 from security.secret_store import MASKED_SECRET
@@ -7,6 +9,13 @@ from session_config_store import _connect, _load_managed_secret, db_enabled, loa
 
 class Neo4jCredentialConfigError(ValueError):
     pass
+
+
+# Eventlet monkey-patches threading primitives, so this Semaphore is green-thread
+# safe.  It serializes ALL Neo4j session access across the API process to prevent
+# Eventlet's "Second simultaneous read on fileno" RuntimeError when multiple
+# green threads query Neo4j concurrently.
+_neo4j_session_semaphore = threading.Semaphore(1)
 
 
 def neo4j_database_name(credentials=None):
@@ -32,13 +41,39 @@ class DatabaseScopedDriver:
     def session(self, *args, **kwargs):
         if self.database and "database" not in kwargs:
             kwargs["database"] = self.database
-        return self._driver.session(*args, **kwargs)
+        return _SemaphoreSession(self._driver.session(*args, **kwargs))
 
     def close(self):
         return self._driver.close()
 
     def __getattr__(self, name):
         return getattr(self._driver, name)
+
+
+class _SemaphoreSession:
+    """Wraps a Neo4j session to acquire a process-wide semaphore on entry
+    and release it on exit.  This prevents concurrent Eventlet green threads
+    from triggering fileno collisions on the Neo4j driver's TCP sockets."""
+
+    def __init__(self, real_session):
+        self._session = real_session
+
+    def __enter__(self):
+        _neo4j_session_semaphore.acquire()
+        try:
+            return self._session.__enter__()
+        except Exception:
+            _neo4j_session_semaphore.release()
+            raise
+
+    def __exit__(self, *args):
+        try:
+            return self._session.__exit__(*args)
+        finally:
+            _neo4j_session_semaphore.release()
+
+    def __getattr__(self, name):
+        return getattr(self._session, name)
 
 
 def neo4j_credential_source(credentials=None):
