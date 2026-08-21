@@ -1073,20 +1073,31 @@ def can_access_analysis_session_actor(session_id, actor):
     ensure_auth_schema()
     actor_type = actor.get("actor_type")
     actor_id = actor.get("id")
+
+    # Try the exact session_id first, then fall back to the parent session.
+    # Window sessions like "5_67123" are never registered in analysis_sessions;
+    # only the parent "67123" is.  We must check both to avoid false 403s.
+    session_ids_to_check = [str(session_id)]
+    raw = str(session_id)
+    if "_" in raw:
+        parent = raw.split("_", 1)[1]
+        if parent and parent != raw:
+            session_ids_to_check.append(parent)
+
     with get_postgres_connection() as conn:
         with conn.cursor() as cur:
             if actor_type == "service":
                 cur.execute("""
                 SELECT 1
                 FROM analysis_sessions
-                WHERE session_id = %s AND owner_service_id = %s
-                """, (str(session_id), actor_id))
+                WHERE session_id = ANY(%s) AND owner_service_id = %s
+                """, (session_ids_to_check, actor_id))
             else:
                 cur.execute("""
                 SELECT 1
                 FROM analysis_sessions
-                WHERE session_id = %s AND owner_user_id = %s
-                """, (str(session_id), actor_id))
+                WHERE session_id = ANY(%s) AND owner_user_id = %s
+                """, (session_ids_to_check, actor_id))
             return cur.fetchone() is not None
 
 
