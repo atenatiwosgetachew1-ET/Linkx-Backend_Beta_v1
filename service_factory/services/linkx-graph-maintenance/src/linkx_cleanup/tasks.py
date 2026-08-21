@@ -283,8 +283,8 @@ def cleanup_session(session_id, run_id=None, dry_run=False, payload=None, mark_s
         results["status_before_cleanup"] = _mark_session_status(session_id, "cancelling")
     results["artifacts"] = cleanup_artifacts(session_id=session_id, dry_run=dry_run)
     results["filesystem"] = cleanup_filesystem_footprint(session_id, dry_run=dry_run)
-    results["session_config"] = cleanup_session_config(session_id, dry_run=dry_run)
     results["neo4j"] = cleanup_neo4j_session(session_id, run_id=run_id, dry_run=dry_run, payload=payload)
+    results["session_config"] = cleanup_session_config(session_id, dry_run=dry_run)
     if not dry_run:
         with connect() as conn:
             with conn.cursor() as cur:

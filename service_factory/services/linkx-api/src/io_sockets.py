@@ -401,5 +401,4 @@ def register_socket_handlers(socketio: SocketIO):
             _close_graph_entry(graph_entry)
 
         for session_id in watched_sessions:
-            if session_id in _session_store:
-                socketio.start_background_task(_stop_abandoned_api_session, session_id)
+            socketio.start_background_task(_stop_abandoned_api_session, session_id)
