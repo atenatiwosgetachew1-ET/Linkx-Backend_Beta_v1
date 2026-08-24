@@ -19,7 +19,7 @@ def _safe_index_name(*parts):
 
 
 def _trusted_entry_match(alias):
-    return f"all(k IN keys(entry) WHERE toString(coalesce({alias}[k], \"\")) = toString(entry[k]))"
+    return f"all(k IN keys(entry) WHERE toLower(k) IN ['category', 'type', 'reason'] OR toString(coalesce({alias}[k], \"\")) = toString(entry[k]))"
 
 
 def _trusted_node_clause(alias):
@@ -46,6 +46,12 @@ TRANSACTION_RELATIONSHIPS = [
     "ABNORMAL_BALANCE_CHANGE",
     "HUB_AND_SPOKE",
     "SHARED_IDENTIFIER",
+    "PEP_INVOLVED",
+    "SANCTIONED_ENTITY_MATCH",
+    "LATE_NIGHT_TX",
+    "JUST_BELOW_THRESHOLD",
+    "RAPID_WITHDRAWAL",
+    "ACCOUNT_ACTIVITY_SPIKE",
 ]
 
 
@@ -231,15 +237,25 @@ def batch_graph_analysis_transactions(
         """, accounts=high_risk_accounts, session_id=session_param, trusted_entries=trusted_entries)
 
         session.run(f"""
+        UNWIND $risk_entries AS entry
         MATCH (t:{label})
         WHERE ($session_id IS NULL OR {_session_scope_clause("t")})
           AND {_trusted_node_clause('t')}
-          AND {_risk_node_clause('t')}
-        MERGE (t)-[r:HIGH_RISK_LINK {{session_id:$session_id}}]->(t)
-        SET r.bgcolor = '#de7d07',
-            r.provisional = false,
-            r.reason = 'configured risk entity appears in transaction',
-            r.risk_source = 'risk_entities'
+          AND {_trusted_entry_match('t')}
+        WITH t, entry, toUpper(coalesce(entry.category, entry.CATEGORY, entry.type, entry.TYPE, 'RISK')) AS cat
+        
+        FOREACH (ignore IN CASE WHEN cat = 'PEP' THEN [1] ELSE [] END |
+            MERGE (t)-[r:PEP_INVOLVED {{session_id:$session_id}}]->(t)
+            SET r.bgcolor = '#0099ff', r.provisional = false, r.reason = 'PEP matched', r.risk_source = 'risk_entities'
+        )
+        FOREACH (ignore IN CASE WHEN cat IN ['SANCTION', 'SANCTIONS', 'SANCTIONED'] THEN [1] ELSE [] END |
+            MERGE (t)-[r:SANCTIONED_ENTITY_MATCH {{session_id:$session_id}}]->(t)
+            SET r.bgcolor = '#ff3b3b', r.provisional = false, r.reason = 'Sanctioned entity matched', r.risk_source = 'risk_entities'
+        )
+        FOREACH (ignore IN CASE WHEN NOT cat IN ['PEP', 'SANCTION', 'SANCTIONS', 'SANCTIONED'] THEN [1] ELSE [] END |
+            MERGE (t)-[r:HIGH_RISK_LINK {{session_id:$session_id}}]->(t)
+            SET r.bgcolor = '#de7d07', r.provisional = false, r.reason = 'Configured risk entity matched', r.risk_source = 'risk_entities', r.category = cat
+        )
         """, session_id=session_param, trusted_entries=trusted_entries, risk_entries=risk_entries)
 
         # ----------------------------
@@ -366,6 +382,92 @@ def batch_graph_analysis_transactions(
             r.identifier_type = identifier_type,
             r.identifier_value = identifier_value,
             r.account_count = size(accounts)
+        """, session_id=session_param, trusted_entries=trusted_entries)
+
+        # ----------------------------
+        # 9. LATE_NIGHT_TX
+        # ----------------------------
+        session.run(f"""
+        MATCH (t:{label})
+        WHERE ($session_id IS NULL OR {_session_scope_clause("t")})
+          AND t.TRANSACTIONTIME IS NOT NULL
+          AND toString(t.TRANSACTIONTIME) <> ''
+          AND {_trusted_node_clause('t')}
+        WITH t, toInteger(substring(replace(toString(t.TRANSACTIONTIME), ':', ''), 0, 4)) AS t_time
+        WHERE t_time >= 2300 OR t_time <= 400
+        MERGE (t)-[r:LATE_NIGHT_TX {{session_id:$session_id}}]->(t)
+        SET r.bgcolor = '#00c1a2',
+            r.provisional = false,
+            r.reason = 'transaction occurred outside typical business hours'
+        """, session_id=session_param, trusted_entries=trusted_entries)
+
+        # ----------------------------
+        # 10. JUST_BELOW_THRESHOLD
+        # ----------------------------
+        session.run(f"""
+        MATCH (t:{label})
+        WHERE ($session_id IS NULL OR {_session_scope_clause("t")})
+          AND coalesce(toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) > 0
+          AND {_trusted_node_clause('t')}
+        WITH t, coalesce(toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) AS amt
+        WHERE amt >= ($single_tx_threshold * 0.9) AND amt < $single_tx_threshold
+        MERGE (t)-[r:JUST_BELOW_THRESHOLD {{session_id:$session_id}}]->(t)
+        SET r.bgcolor = '#dba124',
+            r.provisional = false,
+            r.reason = 'transaction amount is suspiciously close to reporting threshold',
+            r.amount = amt,
+            r.threshold = $single_tx_threshold
+        """, session_id=session_param, trusted_entries=trusted_entries, single_tx_threshold=single_tx_threshold)
+
+        # ----------------------------
+        # 11. RAPID_WITHDRAWAL
+        # ----------------------------
+        session.run(f"""
+        MATCH (a:{label}), (b:{label})
+        WHERE ($session_id IS NULL OR ({_session_scope_clause("a")} AND {_session_scope_clause("b")}))
+          AND a.BENACCOUNTNO = b.ACCOUNTNO
+          AND a.BENACCOUNTNO IS NOT NULL
+          AND a.BENACCOUNTNO <> ''
+          AND coalesce(toString(a.TRANSACTIONDATE), '') = coalesce(toString(b.TRANSACTIONDATE), '')
+          AND elementId(a) <> elementId(b)
+          AND coalesce(toString(a.TRANSACTIONTIME), '') < coalesce(toString(b.TRANSACTIONTIME), '')
+          AND {_trusted_pair_clause('a', 'b')}
+        WITH a, b, 
+             coalesce(toFloat(a.AMOUNT), toFloat(a.amount), toFloat(a.LOCAL_AMOUNT), 0.0) AS in_amt,
+             coalesce(toFloat(b.AMOUNT), toFloat(b.amount), toFloat(b.LOCAL_AMOUNT), 0.0) AS out_amt
+        WHERE in_amt > 0 AND out_amt >= (in_amt * 0.9) AND out_amt <= (in_amt * 1.1)
+        MERGE (a)-[r:RAPID_WITHDRAWAL {{session_id:$session_id}}]->(b)
+        SET r.bgcolor = '#d5d276',
+            r.provisional = false,
+            r.reason = 'funds rapidly withdrawn or passed through on same day',
+            r.in_amount = in_amt,
+            r.out_amount = out_amt
+        """, session_id=session_param, trusted_entries=trusted_entries)
+
+        # ----------------------------
+        # 12. ACCOUNT_ACTIVITY_SPIKE
+        # ----------------------------
+        session.run(f"""
+        MATCH (t:{label})
+        WHERE ($session_id IS NULL OR {_session_scope_clause("t")})
+          AND coalesce(toString(t.ACCOUNTNO), '') <> ''
+          AND coalesce(toString(t.TRANSACTIONDATE), '') <> ''
+        WITH t.ACCOUNTNO AS acc, t.TRANSACTIONDATE AS tx_day, count(t) AS daily_count, collect(t) AS day_txns
+        WHERE daily_count >= 10
+        MATCH (all_t:{label})
+        WHERE all_t.ACCOUNTNO = acc AND coalesce(toString(all_t.TRANSACTIONDATE), '') <> ''
+        WITH acc, tx_day, daily_count, day_txns, count(all_t) AS total_count, count(DISTINCT all_t.TRANSACTIONDATE) AS total_days
+        WITH acc, tx_day, daily_count, day_txns, (toFloat(total_count) / toFloat(CASE WHEN total_days = 0 THEN 1 ELSE total_days END)) AS avg_daily
+        WHERE daily_count >= (avg_daily * 3)
+        UNWIND day_txns AS t
+        WITH t, acc, tx_day, daily_count, avg_daily
+        WHERE {_trusted_node_clause('t')}
+        MERGE (t)-[r:ACCOUNT_ACTIVITY_SPIKE {{session_id:$session_id}}]->(t)
+        SET r.bgcolor = '#e6e6e6',
+            r.provisional = false,
+            r.reason = 'unusually high transaction volume for this account on this day',
+            r.daily_count = daily_count,
+            r.avg_daily = avg_daily
         """, session_id=session_param, trusted_entries=trusted_entries)
 
         counts = _count_transaction_relationships(session, session_param) if session_param else {}
@@ -518,15 +620,25 @@ def incremental_graph_analysis_transactions(
         """, accounts=high_risk_accounts, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
 
         session.run(f"""
+        UNWIND $risk_entries AS entry
         MATCH (t:{label})
         WHERE t.batch_id = $batch_id
           AND {_trusted_node_clause('t')}
-          AND {_risk_node_clause('t')}
-        MERGE (t)-[r:HIGH_RISK_LINK {{session_id:$session_id}}]->(t)
-        SET r.bgcolor = '#de7d07',
-            r.provisional = true,
-            r.reason = 'configured risk entity appears in transaction',
-            r.risk_source = 'risk_entities'
+          AND {_trusted_entry_match('t')}
+        WITH t, entry, toUpper(coalesce(entry.category, entry.CATEGORY, entry.type, entry.TYPE, 'RISK')) AS cat
+        
+        FOREACH (ignore IN CASE WHEN cat = 'PEP' THEN [1] ELSE [] END |
+            MERGE (t)-[r:PEP_INVOLVED {{session_id:$session_id}}]->(t)
+            SET r.bgcolor = '#0099ff', r.provisional = true, r.reason = 'PEP matched', r.risk_source = 'risk_entities'
+        )
+        FOREACH (ignore IN CASE WHEN cat IN ['SANCTION', 'SANCTIONS', 'SANCTIONED'] THEN [1] ELSE [] END |
+            MERGE (t)-[r:SANCTIONED_ENTITY_MATCH {{session_id:$session_id}}]->(t)
+            SET r.bgcolor = '#ff3b3b', r.provisional = true, r.reason = 'Sanctioned entity matched', r.risk_source = 'risk_entities'
+        )
+        FOREACH (ignore IN CASE WHEN NOT cat IN ['PEP', 'SANCTION', 'SANCTIONS', 'SANCTIONED'] THEN [1] ELSE [] END |
+            MERGE (t)-[r:HIGH_RISK_LINK {{session_id:$session_id}}]->(t)
+            SET r.bgcolor = '#de7d07', r.provisional = true, r.reason = 'Configured risk entity matched', r.risk_source = 'risk_entities', r.category = cat
+        )
         """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, risk_entries=risk_entries)
 
         # Balance outlier: recalculate only accounts touched by this batch.
@@ -668,6 +780,81 @@ def incremental_graph_analysis_transactions(
             r.identifier_type = identifier_type,
             r.identifier_value = identifier_value,
             r.account_count = size(accounts)
+        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
+
+        session.run(f"""
+        MATCH (t:{label})
+        WHERE t.batch_id = $batch_id
+          AND t.TRANSACTIONTIME IS NOT NULL
+          AND toString(t.TRANSACTIONTIME) <> ''
+          AND {_trusted_node_clause('t')}
+        WITH t, toInteger(substring(replace(toString(t.TRANSACTIONTIME), ':', ''), 0, 4)) AS t_time
+        WHERE t_time >= 2300 OR t_time <= 400
+        MERGE (t)-[r:LATE_NIGHT_TX {{session_id:$session_id}}]->(t)
+        SET r.bgcolor = '#00c1a2',
+            r.provisional = true,
+            r.reason = 'transaction occurred outside typical business hours'
+        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
+
+        session.run(f"""
+        MATCH (t:{label})
+        WHERE t.batch_id = $batch_id
+          AND coalesce(toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) > 0
+          AND {_trusted_node_clause('t')}
+        WITH t, coalesce(toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) AS amt
+        WHERE amt >= ($single_tx_threshold * 0.9) AND amt < $single_tx_threshold
+        MERGE (t)-[r:JUST_BELOW_THRESHOLD {{session_id:$session_id}}]->(t)
+        SET r.bgcolor = '#dba124',
+            r.provisional = true,
+            r.reason = 'transaction amount is suspiciously close to reporting threshold',
+            r.amount = amt,
+            r.threshold = $single_tx_threshold
+        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, single_tx_threshold=single_tx_threshold)
+
+        session.run(f"""
+        MATCH (a:{label}), (b:{label})
+        WHERE (a.batch_id = $batch_id OR b.batch_id = $batch_id)
+          AND ($session_id IS NULL OR ({_session_scope_clause("a")} AND {_session_scope_clause("b")}))
+          AND a.BENACCOUNTNO = b.ACCOUNTNO
+          AND a.BENACCOUNTNO IS NOT NULL
+          AND a.BENACCOUNTNO <> ''
+          AND coalesce(toString(a.TRANSACTIONDATE), '') = coalesce(toString(b.TRANSACTIONDATE), '')
+          AND elementId(a) <> elementId(b)
+          AND coalesce(toString(a.TRANSACTIONTIME), '') < coalesce(toString(b.TRANSACTIONTIME), '')
+          AND {_trusted_pair_clause('a', 'b')}
+        WITH a, b, 
+             coalesce(toFloat(a.AMOUNT), toFloat(a.amount), toFloat(a.LOCAL_AMOUNT), 0.0) AS in_amt,
+             coalesce(toFloat(b.AMOUNT), toFloat(b.amount), toFloat(b.LOCAL_AMOUNT), 0.0) AS out_amt
+        WHERE in_amt > 0 AND out_amt >= (in_amt * 0.9) AND out_amt <= (in_amt * 1.1)
+        MERGE (a)-[r:RAPID_WITHDRAWAL {{session_id:$session_id}}]->(b)
+        SET r.bgcolor = '#d5d276',
+            r.provisional = true,
+            r.reason = 'funds rapidly withdrawn or passed through on same day',
+            r.in_amount = in_amt,
+            r.out_amount = out_amt
+        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
+
+        session.run(f"""
+        MATCH (t:{label})
+        WHERE t.batch_id = $batch_id
+          AND coalesce(toString(t.ACCOUNTNO), '') <> ''
+          AND coalesce(toString(t.TRANSACTIONDATE), '') <> ''
+        WITH t.ACCOUNTNO AS acc, t.TRANSACTIONDATE AS tx_day, count(t) AS daily_count, collect(t) AS day_txns
+        WHERE daily_count >= 10
+        MATCH (all_t:{label})
+        WHERE all_t.ACCOUNTNO = acc AND coalesce(toString(all_t.TRANSACTIONDATE), '') <> ''
+        WITH acc, tx_day, daily_count, day_txns, count(all_t) AS total_count, count(DISTINCT all_t.TRANSACTIONDATE) AS total_days
+        WITH acc, tx_day, daily_count, day_txns, (toFloat(total_count) / toFloat(CASE WHEN total_days = 0 THEN 1 ELSE total_days END)) AS avg_daily
+        WHERE daily_count >= (avg_daily * 3)
+        UNWIND day_txns AS t
+        WITH t, acc, tx_day, daily_count, avg_daily
+        WHERE {_trusted_node_clause('t')}
+        MERGE (t)-[r:ACCOUNT_ACTIVITY_SPIKE {{session_id:$session_id}}]->(t)
+        SET r.bgcolor = '#e6e6e6',
+            r.provisional = true,
+            r.reason = 'unusually high transaction volume for this account on this day',
+            r.daily_count = daily_count,
+            r.avg_daily = avg_daily
         """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
 
         counts = _count_transaction_relationships(session, session_param)
