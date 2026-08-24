@@ -1042,10 +1042,15 @@ def bind_analysis_session_actor(session_id, actor, parent_session_id=None):
             )
             VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (session_id) DO UPDATE
-            SET last_seen_at = NOW()
+            SET last_seen_at = NOW(),
+                owner_user_id = COALESCE(analysis_sessions.owner_user_id, EXCLUDED.owner_user_id),
+                owner_service_id = COALESCE(analysis_sessions.owner_service_id, EXCLUDED.owner_service_id)
             WHERE
-                (analysis_sessions.owner_user_id IS NOT DISTINCT FROM EXCLUDED.owner_user_id)
-                AND (analysis_sessions.owner_service_id IS NOT DISTINCT FROM EXCLUDED.owner_service_id)
+                (analysis_sessions.owner_user_id IS NULL AND analysis_sessions.owner_service_id IS NULL)
+                OR (
+                    (analysis_sessions.owner_user_id IS NOT DISTINCT FROM EXCLUDED.owner_user_id)
+                    AND (analysis_sessions.owner_service_id IS NOT DISTINCT FROM EXCLUDED.owner_service_id)
+                )
             RETURNING session_id
             """, (
                 str(session_id),
@@ -1080,9 +1085,11 @@ def can_access_analysis_session_actor(session_id, actor):
     session_ids_to_check = [str(session_id)]
     raw = str(session_id)
     if "_" in raw:
-        parent = raw.split("_", 1)[1]
-        if parent and parent != raw:
-            session_ids_to_check.append(parent)
+        parts = raw.split("_")
+        for i in range(1, len(parts)):
+            parent = "_".join(parts[i:])
+            if parent:
+                session_ids_to_check.append(parent)
 
     with get_postgres_connection() as conn:
         with conn.cursor() as cur:
