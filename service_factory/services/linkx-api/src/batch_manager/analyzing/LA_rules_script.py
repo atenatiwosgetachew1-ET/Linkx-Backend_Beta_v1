@@ -208,8 +208,7 @@ def batch_graph_analysis_transactions(
           AND toLower(coalesce(t.BENACCOUNTSTATE, '')) = 'active'
           AND {_trusted_node_clause('t')}
         MERGE (t)-[r:DORMANT_TO_ACTIVE {{session_id:$session_id}}]->(t)
-        SET r.bgcolor = '#c20f0f',
-            r.textcolor = '#eeeeee',
+        SET r.bgcolor = '#ff8c8c',
             r.provisional = false,
             r.reason = 'dormant source account transacts with active beneficiary'
         """, session_id=session_param, trusted_entries=trusted_entries)
@@ -277,8 +276,7 @@ def batch_graph_analysis_transactions(
         WHERE avg_change > 0 AND current_change >= avg_change * $threshold
           AND {_trusted_pair_clause('previous', 'current')}
         MERGE (previous)-[r:ABNORMAL_BALANCE_CHANGE {{session_id:$session_id}}]->(current)
-        SET r.bgcolor = '#196e08',
-            r.textcolor = '#eeeeee',
+        SET r.bgcolor = '#8fde86',
             r.provisional = false,
             r.reason = 'balance change exceeds recent account baseline',
             r.change = current_change,
@@ -304,8 +302,7 @@ def batch_graph_analysis_transactions(
         WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
         WHERE {_trusted_pair_clause('a', 'b')}
         MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
-        SET r.bgcolor = '#6f42c1',
-            r.textcolor = '#eeeeee',
+        SET r.bgcolor = '#d0b3ff',
             r.provisional = false,
             r.reason = 'account connects with multiple counterparties on same day',
             r.hub_account = hub,
@@ -329,8 +326,7 @@ def batch_graph_analysis_transactions(
         WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
         WHERE {_trusted_pair_clause('a', 'b')}
         MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
-        SET r.bgcolor = '#6f42c1',
-            r.textcolor = '#eeeeee',
+        SET r.bgcolor = '#d0b3ff',
             r.provisional = false,
             r.reason = 'account connects with multiple counterparties on same day',
             r.hub_account = hub,
@@ -364,8 +360,7 @@ def batch_graph_analysis_transactions(
         WITH txns[i] AS a, txns[i+1] AS b, identifier_type, identifier_value, accounts
         WHERE {_trusted_pair_clause('a', 'b')}
         MERGE (a)-[r:SHARED_IDENTIFIER {{session_id:$session_id}}]->(b)
-        SET r.bgcolor = '#0b7285',
-            r.textcolor = '#eeeeee',
+        SET r.bgcolor = '#8be0f0',
             r.provisional = false,
             r.reason = 'same identifier appears on multiple accounts',
             r.identifier_type = identifier_type,
@@ -503,8 +498,7 @@ def incremental_graph_analysis_transactions(
           AND toLower(coalesce(t.BENACCOUNTSTATE, '')) = 'active'
           AND {_trusted_node_clause('t')}
         MERGE (t)-[r:DORMANT_TO_ACTIVE {{session_id:$session_id}}]->(t)
-        SET r.bgcolor = '#c20f0f',
-            r.textcolor = '#eeeeee',
+        SET r.bgcolor = '#ff8c8c',
             r.provisional = true,
             r.reason = 'dormant source account transacts with active beneficiary'
         """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
@@ -572,8 +566,7 @@ def incremental_graph_analysis_transactions(
         WHERE avg_change > 0 AND current_change >= avg_change * $threshold
           AND {_trusted_pair_clause('previous', 'current')}
         MERGE (previous)-[r:ABNORMAL_BALANCE_CHANGE {{session_id:$session_id}}]->(current)
-        SET r.bgcolor = '#196e08',
-            r.textcolor = '#eeeeee',
+        SET r.bgcolor = '#8fde86',
             r.provisional = true,
             r.reason = 'balance change exceeds recent account baseline',
             r.change = current_change,
@@ -599,8 +592,7 @@ def incremental_graph_analysis_transactions(
         UNWIND range(0, size(txns)-2) AS i
         WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
         MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
-        SET r.bgcolor = '#6f42c1',
-            r.textcolor = '#eeeeee',
+        SET r.bgcolor = '#d0b3ff',
             r.provisional = true,
             r.reason = 'account connects with multiple counterparties on same day',
             r.hub_account = hub,
@@ -626,8 +618,7 @@ def incremental_graph_analysis_transactions(
         UNWIND range(0, size(txns)-2) AS i
         WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
         MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
-        SET r.bgcolor = '#6f42c1',
-            r.textcolor = '#eeeeee',
+        SET r.bgcolor = '#d0b3ff',
             r.provisional = true,
             r.reason = 'account connects with multiple counterparties on same day',
             r.hub_account = hub,
@@ -671,8 +662,7 @@ def incremental_graph_analysis_transactions(
         WITH txns[i] AS a, txns[i+1] AS b, identifier_type, identifier_value, accounts
         WHERE {_trusted_pair_clause('a', 'b')}
         MERGE (a)-[r:SHARED_IDENTIFIER {{session_id:$session_id}}]->(b)
-        SET r.bgcolor = '#0b7285',
-            r.textcolor = '#eeeeee',
+        SET r.bgcolor = '#8be0f0',
             r.provisional = true,
             r.reason = 'same identifier appears on multiple accounts',
             r.identifier_type = identifier_type,
