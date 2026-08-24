@@ -73,11 +73,23 @@ def validate_uploaded_files(files, *, allowed_extensions, max_files=10, field="f
         raise PayloadValidationError("too_many_files", field)
 
     safe_files = []
+    total_size = 0
+    max_total_size = 50 * 1024 * 1024  # 50 MB
+    
     allowed = {ext.lower().lstrip(".") for ext in allowed_extensions}
     for uploaded_file in files:
         filename = getattr(uploaded_file, "filename", "") or ""
         if not filename:
             raise PayloadValidationError("empty_filename", field)
+            
+        if hasattr(uploaded_file, "seek") and hasattr(uploaded_file, "tell"):
+            uploaded_file.seek(0, 2)  # Seek to end of file
+            file_size = uploaded_file.tell()
+            uploaded_file.seek(0)  # Reset pointer to start
+            total_size += file_size
+            if total_size > max_total_size:
+                raise PayloadValidationError("upload_size_limit_exceeded_50mb", field)
+                
         sanitize_value(filename, key=field, max_string_length=255)
         safe_name = secure_filename(filename)
         if not safe_name:
