@@ -182,6 +182,12 @@ def rule_engine_link_analysis():
         if not _prepare_session(session_id):
             return jsonify({'message': 'failed!'}), 400
 
+        from auth.decorators import current_actor_from_request
+        from auth.repository import bind_analysis_session_actor
+        actor = current_actor_from_request()
+        if actor and actor.get("id"):
+            bind_analysis_session_actor(session_id, actor)
+
         if _async_worker_jobs_enabled():
             payload = {
                 "entity": entity,

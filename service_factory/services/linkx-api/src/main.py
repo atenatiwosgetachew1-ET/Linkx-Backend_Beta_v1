@@ -1796,6 +1796,7 @@ def live_batch_files():
     if not action_id or not session_id:
         return jsonify({'results': None, 'message': 'Missing action_id or session_id'}), 400
 
+    bind_analysis_session_actor(session_id, current_actor_from_request())
 
     permission_by_action = {
         "search": "batch:query",
