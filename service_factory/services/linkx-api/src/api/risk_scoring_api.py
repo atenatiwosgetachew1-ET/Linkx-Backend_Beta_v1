@@ -4,11 +4,15 @@ import requests
 from flask import Blueprint, jsonify, request
 from auth.decorators import auth_required
 from batch_manager.analyzing.analyzer import analyzer
+import urllib3
+
+# Suppress insecure request warnings since we are using internal self-signed certs for the webhook
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 risk_scoring_api = Blueprint("risk_scoring_api", __name__)
 
-# NOTE: Replace this with the actual URL of their aggregator service
-AGGREGATOR_WEBHOOK_URL = "http://localhost/api/v1/aggregate/callback"
+# The actual aggregator webhook URL with the required SNI hostname
+AGGREGATOR_WEBHOOK_URL = "https://risk-platform.local/api/v1/aggregate/callback"
 
 
 def process_accounts_background(job_id, account_numbers):
@@ -45,7 +49,7 @@ def process_accounts_background(job_id, account_numbers):
         
         # 4. Fire the callback back to their aggregator
         try:
-            requests.post(AGGREGATOR_WEBHOOK_URL, json=callback_payload, timeout=10)
+            requests.post(AGGREGATOR_WEBHOOK_URL, json=callback_payload, timeout=10, verify=False)
             print(f"[RiskScoring] Successfully sent callback for {account_no}")
         except Exception as e:
             print(f"[RiskScoring] Failed to send webhook for {account_no}: {e}")
