@@ -1,8 +1,9 @@
 import threading
 import time
 import requests
+import os
 from flask import Blueprint, jsonify, request
-from auth.decorators import auth_required
+from auth.decorators import current_actor_from_request
 from batch_manager.analyzing.analyzer import analyzer
 import urllib3
 
@@ -56,8 +57,25 @@ def process_accounts_background(job_id, account_numbers):
 
 
 @risk_scoring_api.route('/analysis_request', methods=['POST'])
-@auth_required
 def analysis_request():
+    # --- Parallel Authentication Logic ---
+    # 1. Check for API Key first
+    api_key = request.headers.get("X-API-Key")
+    valid_api_key = os.getenv("LINKX_RISK_SCORING_API_KEY")
+    is_authenticated = False
+    
+    if api_key and valid_api_key and api_key == valid_api_key:
+        is_authenticated = True
+    else:
+        # 2. Fallback to JWT Token check
+        actor = current_actor_from_request()
+        if actor:
+            is_authenticated = True
+            
+    if not is_authenticated:
+        return jsonify({"success": False, "message": "Unauthorized - Invalid API Key or JWT Token"}), 401
+    # -------------------------------------
+
     data = request.get_json() or {}
     job_id = data.get("job_id")
     account_numbers = data.get("account_numbers") or []
