@@ -34,6 +34,7 @@ from batch_manager.analyzing.analyzer import analyzer
 from logger import log_writer,log_stream_background
 from io_sockets import register_socket_handlers
 from api.STR_link_analysis import STR_link_analysis_api
+from api.risk_scoring_api import risk_scoring_api
 from auth.decorators import auth_required, current_actor_from_request
 from auth.repository import (
     actor_has_permission,
@@ -68,6 +69,7 @@ register_socket_handlers(socketio)
 app.register_blueprint(auth_api, url_prefix="/auth")
 # Register external API blueprint
 app.register_blueprint(STR_link_analysis_api, url_prefix="/api")
+app.register_blueprint(risk_scoring_api, url_prefix="/api/risk_scoring")
 
 
 # Configure frame embedding and security headers for CTMS integration
