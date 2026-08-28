@@ -156,6 +156,7 @@ def _base_analyzer_payload(session_id, credentials):
         "id": "batch_data",
         "type": "new",
         "session_id": session_id,
+        "run_id": session_id,
         "dataframe_dir": load_temp_config("active_dataframe_dir", session_id) or os.path.join(ensure_artifact_dir("dfparts"), f"merged_dfpart_{session_id}"),
         "dataframe_id": load_temp_config("active_dataframe_id", session_id),
         "expected_dataframe_rows": load_temp_config("active_dataframe_rows", session_id),
@@ -173,9 +174,12 @@ def _base_analyzer_payload(session_id, credentials):
 def _run_analyzer(payload, step_name):
     print(f"Risk Scoring link analysis {step_name} analyzer payload:", redact_value(payload), flush=True)
     try:
-        return analyzer(payload) is True
+        result = analyzer(payload)
+        if result is not True:
+            print(f"Risk Scoring link analysis {step_name} analyzer returned False silently. Payload dir: {payload.get('dataframe_dir')}")
+        return result is True
     except Exception as exc:
-        print(f"Risk Scoring link analysis {step_name} analyzer failed:", exc)
+        print(f"Risk Scoring link analysis {step_name} analyzer failed with exception:", exc)
         return False
 
 
