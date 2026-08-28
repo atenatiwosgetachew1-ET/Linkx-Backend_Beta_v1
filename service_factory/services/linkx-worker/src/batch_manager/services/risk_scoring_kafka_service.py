@@ -81,6 +81,21 @@ def _bank_source_target_relationship(session_id, custom_source=None, custom_targ
 
 
 def _prepare_session(session_id):
+    # 1. Register session in PostgreSQL to satisfy foreign key constraints for session_configs
+    try:
+        from batch_manager.utils.postgres_utils import get_postgres_connection
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                INSERT INTO analysis_sessions (session_id, status, created_at, last_seen_at)
+                VALUES (%s, 'active', NOW(), NOW())
+                ON CONFLICT (session_id) DO NOTHING
+                """, (session_id,))
+            conn.commit()
+    except Exception as e:
+        print(f"[RiskScoring] Warning: Could not register session in postgres: {e}")
+
+    # 2. Setup legacy config file
     configs = load_temp_config("data", session_id)
     if configs:
         return True
