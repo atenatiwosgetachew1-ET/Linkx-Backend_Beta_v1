@@ -270,6 +270,7 @@ _LOCK_EXEMPT_PATHS = {
     "/auth/me",
     "/auth/verify",
     "/db/health",
+    "/api/risk_scoring/analysis_request",
 }
 
 _LOCK_PROTECTED_PREFIXES = (
