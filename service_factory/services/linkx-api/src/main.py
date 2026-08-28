@@ -300,6 +300,8 @@ _LOCK_PROTECTED_PATHS = {
 def _is_lock_exempt_request(path, method):
     if path == "/auth/session-policy":
         return method == "GET"
+    if path == "/api/risk_scoring/analysis_request" or path.endswith("/risk_scoring/analysis_request"):
+        return True
     return path in _LOCK_EXEMPT_PATHS
 
 
