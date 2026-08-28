@@ -111,6 +111,7 @@ def process_webhook_job(payload):
     }
     
     try:
+        print(f"[RiskScoringWorker] Sending payload to aggregator for {account_no}: {json.dumps(callback_payload)}")
         response = requests.post(AGGREGATOR_WEBHOOK_URL, json=callback_payload, timeout=10, verify=False)
         if response.status_code >= 200 and response.status_code < 300:
             print(f"[RiskScoringWorker] Successfully sent callback for {account_no}. Status: {response.status_code}, Response: {response.text}")
