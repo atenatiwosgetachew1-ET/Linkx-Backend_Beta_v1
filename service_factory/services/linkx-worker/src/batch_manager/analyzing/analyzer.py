@@ -134,9 +134,9 @@ def neo4j_row_data_adjuster(row_dict):
 def _parent_session_id(session_id):
     raw = str(session_id or "")
     if "_" not in raw:
-        return None
+        return raw
     _, parent = raw.split("_", 1)
-    return parent or None
+    return parent or raw
 
 
 def _graph_metadata(session_id, run_id=None, batch_id=None):
@@ -800,9 +800,9 @@ def _dataframe_to_row_dicts(df):
 def _parent_session_id(session_id):
     raw = str(session_id or "")
     if "_" not in raw:
-        return None
+        return raw
     _, parent = raw.split("_", 1)
-    return parent or None
+    return parent or raw
 
 
 def _first_config_value(value):
