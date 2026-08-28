@@ -69,11 +69,13 @@ def process_accounts_background(job_id, account_numbers):
                         cur.execute("""
                         INSERT INTO link_analysis_evidence (
                             trace_id, correlation_id, entity_id, entity_type,
+                            session_id, event_type,
                             is_flagged, flagged_rules, linked_accounts_count,
                             duration_ms, request_payload, response_payload, analyzed_at
                         )
                         VALUES (
                             %s, %s, %s, 'accountno',
+                            'webhook_sync', 'link.mapped',
                             %s, %s::jsonb, %s,
                             %s, %s::jsonb, %s::jsonb, NOW()
                         )
