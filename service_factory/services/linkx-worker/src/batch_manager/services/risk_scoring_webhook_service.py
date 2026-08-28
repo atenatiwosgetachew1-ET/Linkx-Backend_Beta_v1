@@ -25,21 +25,22 @@ def process_webhook_job(payload):
     findings = None
     duration_ms = 0.0
     
-    # --- 1. Deduplication Check ---
+    # --- 1. Deduplication Check (TEMPORARILY DISABLED FOR DEBUGGING) ---
     try:
-        with get_postgres_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                SELECT response_payload, duration_ms
-                FROM link_analysis_evidence
-                WHERE entity_id = %s AND analyzed_at >= NOW() - INTERVAL '2 hours'
-                ORDER BY analyzed_at DESC LIMIT 1
-                """, (str(account_no),))
-                row = cur.fetchone()
-                if row:
-                    findings = row[0] if isinstance(row[0], dict) else json.loads(row[0])
-                    duration_ms = float(row[1] or 0.0)
-                    print(f"[RiskScoringWorker] Replaying cached evidence for {account_no}")
+        pass
+        # with get_postgres_connection() as conn:
+        #     with conn.cursor() as cur:
+        #         cur.execute("""
+        #         SELECT response_payload, duration_ms
+        #         FROM link_analysis_evidence
+        #         WHERE entity_id = %s AND analyzed_at >= NOW() - INTERVAL '2 hours'
+        #         ORDER BY analyzed_at DESC LIMIT 1
+        #         """, (str(account_no),))
+        #         row = cur.fetchone()
+        #         if row:
+        #             findings = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+        #             duration_ms = float(row[1] or 0.0)
+        #             print(f"[RiskScoringWorker] Replaying cached evidence for {account_no}")
     except Exception as e:
         print(f"[RiskScoringWorker] Cache read error for {account_no}: {e}")
 
