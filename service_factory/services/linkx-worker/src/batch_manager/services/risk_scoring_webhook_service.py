@@ -101,9 +101,13 @@ def process_webhook_job(payload):
     }
     
     try:
-        requests.post(AGGREGATOR_WEBHOOK_URL, json=callback_payload, timeout=10, verify=False)
-        print(f"[RiskScoringWorker] Successfully sent callback for {account_no}")
-        return {"status": "success", "account_no": account_no}
+        response = requests.post(AGGREGATOR_WEBHOOK_URL, json=callback_payload, timeout=10, verify=False)
+        if response.status_code >= 200 and response.status_code < 300:
+            print(f"[RiskScoringWorker] Successfully sent callback for {account_no}. Status: {response.status_code}")
+            return {"status": "success", "account_no": account_no}
+        else:
+            print(f"[RiskScoringWorker] Aggregator REJECTED callback for {account_no}. Status: {response.status_code}, Response: {response.text}")
+            return {"status": "failed", "error": f"Aggregator returned {response.status_code}"}
     except Exception as e:
-        print(f"[RiskScoringWorker] Failed to send webhook for {account_no}: {e}")
+        print(f"[RiskScoringWorker] Failed to reach aggregator network for {account_no}: {e}")
         return {"status": "failed", "error": str(e)}
