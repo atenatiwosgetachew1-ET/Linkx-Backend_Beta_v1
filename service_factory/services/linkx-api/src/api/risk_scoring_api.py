@@ -41,8 +41,8 @@ def analysis_request():
             "account_no": account_no
         }
         try:
-            # Pushing to the default queue; the worker node will pick these up automatically
-            enqueue_worker_job(queue_name="default", job_type="risk_scoring_webhook", payload=payload)
+            # Pushing to the 'analysis' queue which the worker actively listens to
+            enqueue_worker_job(queue_name="analysis", job_type="risk_scoring_webhook", payload=payload)
         except Exception as e:
             print(f"[RiskScoring] Failed to enqueue job for {account_no}: {e}")
     
