@@ -46,12 +46,22 @@ def process_webhook_job(payload):
     # --- 2. Fresh Analysis ---
     if not findings:
         analysis_payload = {
-            "entity": "bank",
-            "search_term": account_no,
-            "match_exact": True
+            "meta": {
+                "trace_id": job_id,
+                "correlation_id": job_id
+            },
+            "data": {
+                "entity_id": account_no,
+                "analysis_type": "transaction_graph"
+            }
         }
         try:
-            findings = analyzer(analysis_payload)
+            from batch_manager.services.risk_scoring_kafka_service import execute_formal_link_analysis
+            response_event, status = execute_formal_link_analysis(analysis_payload)
+            if response_event and response_event.get("data"):
+                findings = response_event.get("data")
+            else:
+                findings = {"error": str(status), "status": "failed"}
         except Exception as e:
             findings = {"error": str(e), "status": "failed"}
             
