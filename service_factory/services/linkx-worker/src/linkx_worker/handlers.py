@@ -73,6 +73,10 @@ def run_job(job_type, payload):
         from batch_manager.services.risk_scoring_kafka_service import process_risk_scoring_event
         return process_risk_scoring_event(payload, publish=bool(payload.get("publish", False)))
 
+    if job_type == "risk_scoring_webhook":
+        from batch_manager.services.risk_scoring_webhook_service import process_webhook_job
+        return process_webhook_job(payload)
+
     if job_type in {"graph_fetch", "get_graph"}:
         return fetch_graph_result(payload)
 
