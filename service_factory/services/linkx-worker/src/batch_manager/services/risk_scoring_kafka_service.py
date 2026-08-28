@@ -573,6 +573,7 @@ def execute_formal_link_analysis(event_data):
     }
     dataframe_result, dataframe_status = create_dataframe_result(dataframe_payload, session_id)
     if dataframe_status != 200:
+        print(f"[RiskScoring] Dataframe creation failed for {account_no}. Status: {dataframe_status}, Response: {dataframe_result}")
         duration_ms = (time.time() - t0) * 1000.0
         return None, "dataframe_creation_failed"
 
