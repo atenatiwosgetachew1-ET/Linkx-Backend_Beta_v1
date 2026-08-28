@@ -517,7 +517,7 @@ def execute_formal_link_analysis(event_data):
         date = str(date).split("T")[0]
 
     ts_now = int(time.time())
-    session_id = f"risk_scoring_{account_no}_{ts_now}"
+    session_id = f"scoring-{account_no}-{ts_now}"
 
     # Step 1: Session Control & Isolation
     if not _prepare_session(session_id):
