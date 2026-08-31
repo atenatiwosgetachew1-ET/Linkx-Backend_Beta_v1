@@ -77,6 +77,10 @@ def run_job(job_type, payload):
         from batch_manager.services.risk_scoring_webhook_service import process_webhook_job
         return process_webhook_job(payload)
 
+    if job_type == "risk_scoring_sync":
+        from batch_manager.services.risk_scoring_sync_service import process_sync_job
+        return process_sync_job(payload)
+
     if job_type in {"graph_fetch", "get_graph"}:
         return fetch_graph_result(payload)
 

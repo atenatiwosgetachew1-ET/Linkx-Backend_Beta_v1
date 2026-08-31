@@ -42,6 +42,7 @@ from logger import log_writer,log_stream_background
 from io_sockets import register_socket_handlers
 from api.STR_link_analysis import STR_link_analysis_api
 from api.risk_scoring_api import risk_scoring_api
+from api.risk_scoring_sync_api import risk_scoring_sync_api
 from api.ML_link_analysis import ML_link_analysis_api
 from api.rule_engine_analysis import RULE_link_analysis_api
 from api.ai_service import ai_service_api
@@ -106,6 +107,7 @@ app.add_url_rule("/api/auth/exchange", view_func=exchange_parent_oauth_code, met
 # Register external API blueprint
 app.register_blueprint(STR_link_analysis_api, url_prefix="/api")
 app.register_blueprint(risk_scoring_api, url_prefix="/api/risk_scoring")
+app.register_blueprint(risk_scoring_sync_api, url_prefix="/api/risk_scoring")
 app.register_blueprint(ML_link_analysis_api, url_prefix="/api")
 app.register_blueprint(RULE_link_analysis_api, url_prefix="/api")
 app.register_blueprint(ai_service_api, url_prefix="/ai")
@@ -300,7 +302,7 @@ _LOCK_PROTECTED_PATHS = {
 def _is_lock_exempt_request(path, method):
     if path == "/auth/session-policy":
         return method == "GET"
-    if path == "/api/risk_scoring/analysis_request" or path.endswith("/risk_scoring/analysis_request"):
+    if path == "/api/risk_scoring/analysis_request" or path == "/api/risk_scoring/sync_analysis" or path.endswith("/risk_scoring/analysis_request") or path.endswith("/risk_scoring/sync_analysis"):
         return True
     return path in _LOCK_EXEMPT_PATHS
 
