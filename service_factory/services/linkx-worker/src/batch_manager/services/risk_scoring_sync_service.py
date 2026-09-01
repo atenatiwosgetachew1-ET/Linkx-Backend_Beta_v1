@@ -128,9 +128,9 @@ def process_sync_job(payload):
         findings["flagged_relationships"] = list(flagged_rels_set)
         
         if not nodes_dict and not edges_list:
-            findings["flagged_entities"] = {}
+            findings["graph_entities"] = {}
         else:
-            findings["flagged_entities"] = {
+            findings["graph_entities"] = {
                 "nodes": list(nodes_dict.values()),
                 "edges": edges_list
             }
