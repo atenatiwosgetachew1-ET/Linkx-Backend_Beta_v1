@@ -34,15 +34,10 @@ services:
       retries: 5
     restart: unless-stopped
 
-  otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
-    container_name: linkx-otel-collector
-    command: ["--config=/etc/otelcol-contrib/config.yaml"]
-    ports:
-      - "8889:8889"
-    volumes:
-      - ./otel/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
-    restart: unless-stopped
+  # NOTE: OTel collector is no longer Docker-based.
+  # Host metrics are collected by the CTMS standard otelcol-contrib systemd agent
+  # installed via: sudo bash install-otel-agent.sh node-20 control-data 8890
+  # See: service_factory/deploy/security/install-otel-agent.sh
 
 volumes:
   linkx_postgres_data:

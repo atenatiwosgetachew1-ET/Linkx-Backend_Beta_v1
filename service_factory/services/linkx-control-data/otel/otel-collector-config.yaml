@@ -2,17 +2,47 @@ receivers:
   prometheus:
     config:
       scrape_configs:
-        - job_name: 'linkx-control-data'
+        # Server 1 — linkx-api (Flask API metrics)
+        - job_name: 'linkx-api'
           scrape_interval: 15s
           static_configs:
-            - targets: ['localhost:8889']
+            - targets: ['172.27.23.95:8889']
+              labels:
+                server: 'node-19'
+                role: 'api'
+
+        # Server 2 — this host has no Python metrics server;
+        #            Postgres/Redis exporters can be added here later.
+
+        # Server 3 — linkx-worker (worker job metrics)
+        - job_name: 'linkx-worker'
+          scrape_interval: 15s
+          static_configs:
+            - targets: ['172.27.23.18:8889']
+              labels:
+                server: 'node-21'
+                role: 'worker'
+
+        # Server 4 — linkx-graph-maintenance (cleanup metrics)
+        - job_name: 'linkx-graph-maintenance'
+          scrape_interval: 15s
+          static_configs:
+            - targets: ['172.27.23.85:8889']
+              labels:
+                server: 'node-22'
+                role: 'graph-maintenance'
+
+extensions:
+  health_check:
+    endpoint: "0.0.0.0:13133"
 
 exporters:
   prometheus:
-    endpoint: "0.0.0.0:8889"
-    namespace: "linkx_control_data"
+    endpoint: "0.0.0.0:9464"
+    namespace: "linkx"
 
 service:
+  extensions: [health_check]
   pipelines:
     metrics:
       receivers: [prometheus]
