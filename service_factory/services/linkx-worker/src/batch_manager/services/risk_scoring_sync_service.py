@@ -13,24 +13,29 @@ from batch_manager.utils.neo4j_utils import create_neo4j_driver, load_session_ne
 
 
 def process_sync_job(payload):
-    account_no = payload.get("account_no")
+    entity_id = payload.get("entity_id")
+    entity_type = payload.get("entity_type") or "accountno"
     response_type = str(payload.get("response_type") or "flagged").lower()
 
-    if not account_no:
-        return {"status": "failed", "error": "Missing account_no"}
+    if not entity_id:
+        return {"status": "failed", "error": "Missing entity_id"}
 
     start_time = time.time()
     
     # Ensure trace_id is unique per run to avoid overwriting graphs if called rapidly
-    trace_id = f"sync-{account_no}-{int(time.time())}"
+    trace_id = f"sync-{entity_id}-{int(time.time())}"
 
     analysis_payload = {
         "meta": {
             "trace_id": trace_id,
             "correlation_id": trace_id,
+            "aggregation_key": {
+                "type": entity_type,
+                "value": entity_id
+            }
         },
         "data": {
-            "entity_id": account_no,
+            "entity_id": entity_id,
             "analysis_type": "transaction_graph",
         },
     }
@@ -44,7 +49,7 @@ def process_sync_job(payload):
             duration_ms = round((time.time() - start_time) * 1000, 2)
             return {
                 "status": "failed",
-                "account_no": account_no,
+                "entity_id": entity_id,
                 "error": str(status),
                 "processing": {"duration_ms": duration_ms},
             }
@@ -138,7 +143,7 @@ def process_sync_job(payload):
         duration_ms = round((time.time() - start_time) * 1000, 2)
         return {
             "status": "success",
-            "account_no": account_no,
+            "entity_id": entity_id,
             "source": "link",
             "data": findings,
             "processing": {"duration_ms": duration_ms},
@@ -146,10 +151,10 @@ def process_sync_job(payload):
 
     except Exception as e:
         duration_ms = round((time.time() - start_time) * 1000, 2)
-        print(f"[RiskScoringSync] Analysis failed for {account_no}: {e}")
+        print(f"[RiskScoringSync] Analysis failed for {entity_id}: {e}")
         return {
             "status": "failed",
-            "account_no": account_no,
+            "entity_id": entity_id,
             "error": str(e),
             "processing": {"duration_ms": duration_ms},
         }

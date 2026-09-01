@@ -81,22 +81,46 @@ def sync_analysis():
 
     # --- Validate input ---
     data = request.get_json() or {}
-    account_no = data.get("account_no")
-    response_type = data.get("response_type") or "flagged"
+    response_type = data.pop("response_type", "flagged")
+    
+    # Try explicit entity_id/entity_type first
+    entity_id = data.get("entity_id")
+    entity_type = data.get("entity_type")
+    
+    # Fallback: Treat any remaining key as the dynamic entity_type (e.g. {"transactionID": "123"})
+    if not entity_id:
+        for k, v in data.items():
+            if k not in {"entity_id", "entity_type", "response_type"}:
+                entity_type = k
+                entity_id = str(v)
+                break
 
-    if not account_no:
-        return jsonify({"success": False, "message": "Missing account_no"}), 400
+    if not entity_id:
+        return jsonify({"success": False, "message": "Missing search entity (e.g. account_no or entity_id)"}), 400
 
+    if not entity_type:
+        entity_type = "accountno"
+        
+    # Map 'account_no' back to Elasticsearch 'accountno' column
+    if entity_type == "account_no":
+        entity_type = "accountno"
+
+    original_key = "account_no" if entity_type == "accountno" else entity_type
+    
     # --- Enqueue job to the worker ---
     try:
         job_result = enqueue_worker_job(
             queue_name="analysis",
             job_type="risk_scoring_sync",
-            payload={"account_no": account_no, "response_type": response_type},
+            payload={
+                "entity_id": entity_id, 
+                "entity_type": entity_type, 
+                "response_type": response_type
+            },
         )
         internal_job_id = job_result["job_id"]
     except Exception as e:
-        print(f"[RiskScoringSync] Failed to enqueue sync job for {account_no}: {e}")
+        print(f"[RiskScoringSync] Failed to enqueue sync job for {entity_id}: {e}")
         return jsonify({"success": False, "message": "Failed to enqueue analysis job", "error": str(e)}), 500
 
     # --- Poll for completion ---
@@ -118,7 +142,7 @@ def sync_analysis():
             if isinstance(result, dict) and result.get("status") == "failed":
                 return jsonify({
                     "success": False,
-                    "account_no": account_no,
+                    original_key: entity_id,
                     "message": "Analysis failed",
                     "error": result.get("error"),
                     "processing": result.get("processing"),
@@ -126,7 +150,7 @@ def sync_analysis():
 
             return jsonify({
                 "success": True,
-                "account_no": account_no,
+                original_key: entity_id,
                 "source": result.get("source", "link") if isinstance(result, dict) else "link",
                 "data": result.get("data") if isinstance(result, dict) else result,
                 "processing": result.get("processing") if isinstance(result, dict) else {},
@@ -136,7 +160,7 @@ def sync_analysis():
             error_msg = job.get("error_message") or "Unknown error"
             return jsonify({
                 "success": False,
-                "account_no": account_no,
+                original_key: entity_id,
                 "message": "Analysis failed",
                 "error": error_msg,
             }), 500
@@ -144,6 +168,6 @@ def sync_analysis():
     # --- Timeout ---
     return jsonify({
         "success": False,
-        "account_no": account_no,
+        original_key: entity_id,
         "message": f"Analysis timed out after {SYNC_TIMEOUT}s. The worker may still be processing.",
     }), 504
