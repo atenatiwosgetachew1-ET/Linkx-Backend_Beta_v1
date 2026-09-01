@@ -737,6 +737,7 @@ def build_link_response(
                 "version": "1.0.0",
                 "namespace": "risk-decision-platform",
             },
+            "session_id": session_id,
             "messaging": {
                 "system": "kafka",
                 "destination_name": destination_topic,

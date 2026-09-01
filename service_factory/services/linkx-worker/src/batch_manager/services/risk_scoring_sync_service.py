@@ -55,6 +55,11 @@ def process_sync_job(payload):
         findings.pop("linked_entities", None)
         findings.pop("flagged_entity_links", None)
         
+        # Extract the exact session_id used for ingestion
+        session_id = response_event.get("meta", {}).get("session_id")
+        if not session_id:
+            raise ValueError("execute_formal_link_analysis did not return a session_id in meta")
+        
         # Connect to Neo4j to pull exact nodes & edges
         nodes_dict = {}
         edges_list = []
@@ -62,14 +67,14 @@ def process_sync_job(payload):
         all_rels_count = 0
 
         try:
-            credentials = load_session_neo4j_credentials(trace_id, purpose="graph_fetch")
+            credentials = load_session_neo4j_credentials(session_id, purpose="graph_fetch")
             driver = create_neo4j_driver(credentials)
             
             with driver.session() as session:
                 # 1. Total relationship count
                 count_res = session.run(
-                    "MATCH ()-[r]->() WHERE r.session_id = $trace_id RETURN count(r) AS c",
-                    trace_id=trace_id
+                    "MATCH ()-[r]->() WHERE r.session_id = $session_id RETURN count(r) AS c",
+                    session_id=session_id
                 )
                 record = count_res.single()
                 if record:
@@ -79,18 +84,18 @@ def process_sync_job(payload):
                 if response_type == "full":
                     query = """
                     MATCH (n)-[r]->(m)
-                    WHERE r.session_id = $trace_id
+                    WHERE r.session_id = $session_id
                     RETURN n, r, m
                     """
                 else:
                     query = """
                     MATCH (n)-[r]->(m)
-                    WHERE r.session_id = $trace_id
+                    WHERE r.session_id = $session_id
                       AND coalesce(r.is_flagged, false) = true
                     RETURN n, r, m
                     """
                 
-                for record in session.run(query, trace_id=trace_id):
+                for record in session.run(query, session_id=session_id):
                     a = record["n"]
                     b = record["m"]
                     r = record["r"]
