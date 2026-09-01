@@ -24,6 +24,34 @@ def process_sync_job(payload):
     
     # Ensure trace_id is unique per run to avoid overwriting graphs if called rapidly
     trace_id = f"sync-{entity_id}-{int(time.time())}"
+    
+    # --- 3-MINUTE CACHE CHECK ---
+    try:
+        from batch_manager.utils.postgres_utils import get_postgres_connection
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                SELECT response_payload
+                FROM link_analysis_evidence
+                WHERE entity_id = %s 
+                  AND entity_type = %s
+                  AND event_type = %s
+                  AND analyzed_at >= NOW() - INTERVAL '3 minutes'
+                ORDER BY analyzed_at DESC
+                LIMIT 1
+                """, (str(entity_id), str(entity_type), f"sync.{response_type}"))
+                row = cur.fetchone()
+                if row and row[0]:
+                    cached_response = row[0]
+                    duration_ms = round((time.time() - start_time) * 1000, 2)
+                    if "processing" in cached_response:
+                        cached_response["processing"]["duration_ms"] = duration_ms
+                        cached_response["processing"]["cached"] = True
+                    print(f"[RiskScoringSync] Cache hit for {entity_type}={entity_id} (response_type={response_type})")
+                    return cached_response
+    except Exception as e:
+        print(f"[RiskScoringSync] Cache read error: {e}")
+    # ----------------------------
 
     analysis_payload = {
         "meta": {
@@ -108,13 +136,41 @@ def process_sync_job(payload):
         findings["flagged_relationships"] = list(flagged_rels_set)
 
         duration_ms = round((time.time() - start_time) * 1000, 2)
-        return {
+        final_response = {
             "status": "success",
             "entity_id": entity_id,
             "source": "link",
             "data": findings,
             "processing": {"duration_ms": duration_ms},
         }
+
+        # --- CACHE WRITE ---
+        try:
+            with get_postgres_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                    INSERT INTO link_analysis_evidence (
+                        trace_id, correlation_id, entity_id, entity_type,
+                        session_id, event_type, is_flagged, linked_accounts_count,
+                        request_payload, response_payload, duration_ms, analyzed_at
+                    ) VALUES (
+                        %s, %s, %s, %s,
+                        %s, %s, %s, %s,
+                        %s::jsonb, %s::jsonb, %s, NOW()
+                    )
+                    """, (
+                        trace_id, trace_id, str(entity_id), str(entity_type),
+                        session_id, f"sync.{response_type}", bool(flagged_rels_set), len(all_nodes),
+                        json.dumps({"entity_id": entity_id, "entity_type": entity_type, "response_type": response_type}),
+                        json.dumps(final_response),
+                        duration_ms
+                    ))
+                conn.commit()
+        except Exception as e:
+            print(f"[RiskScoringSync] Cache write error: {e}")
+        # -------------------
+
+        return final_response
 
     except Exception as e:
         duration_ms = round((time.time() - start_time) * 1000, 2)
