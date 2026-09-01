@@ -107,6 +107,40 @@ def sync_analysis():
 
     original_key = "account_no" if entity_type == "accountno" else entity_type
     
+    # --- 3-MINUTE CACHE CHECK (API-Side Fast Path) ---
+    try:
+        from service_orchestration import connect
+        with connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                SELECT response_payload
+                FROM link_analysis_evidence
+                WHERE entity_id = %s 
+                  AND entity_type = %s
+                  AND event_type = %s
+                  AND analyzed_at >= NOW() - INTERVAL '3 minutes'
+                ORDER BY analyzed_at DESC
+                LIMIT 1
+                """, (str(entity_id), str(entity_type), f"sync.{response_type}"))
+                row = cur.fetchone()
+                if row and row[0]:
+                    cached_response = row[0]
+                    processing = cached_response.get("processing") or {}
+                    processing["cached"] = True
+                    processing["api_fast_path"] = True
+                    processing["duration_ms"] = 0.5  # Represents near-zero API latency
+                    
+                    return jsonify({
+                        "success": True,
+                        original_key: entity_id,
+                        "source": cached_response.get("source", "link"),
+                        "data": cached_response.get("data", {}),
+                        "processing": processing,
+                    }), 200
+    except Exception as e:
+        print(f"[RiskScoringSync API] Cache read error: {e}")
+    # -------------------------------------------------
+    
     # --- Enqueue job to the worker ---
     try:
         job_result = enqueue_worker_job(
