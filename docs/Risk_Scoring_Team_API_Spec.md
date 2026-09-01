@@ -20,15 +20,30 @@ X-API-Key: <your_provided_api_key>
 
 ## 1. Request Payload
 
+You can pass standard explicit properties, or simply pass the dynamic entity key directly (e.g. `{"transactionID": "123"}`).
+
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `account_no` | string | ✅ Yes | The bank account number to run link analysis on. |
+| `entity_id` | string | ✅ Yes* | The ID to search for (e.g., account number, transaction ID). |
+| `entity_type` | string | ❌ No | The type of entity (default: `"accountno"`). |
+| `<dynamic_key>` | string | ✅ Yes* | *Instead of `entity_id` and `entity_type`, you can pass a dynamic key like `"account_no": "123"` or `"transactionID": "999"` directly.* |
 | `response_type` | string | ❌ No | Determines graph output scope. Options: `"flagged"` (default) or `"full"`. |
 
-### Example Request
+### Example Requests
+
+**Option A (Dynamic fallback — Recommended):**
 ```json
 {
-  "account_no": "1007900232134",
+  "transactionID": "99999812",
+  "response_type": "full"
+}
+```
+
+**Option B (Explicit):**
+```json
+{
+  "entity_id": "99999812",
+  "entity_type": "transactionID",
   "response_type": "full"
 }
 ```
@@ -42,10 +57,9 @@ X-API-Key: <your_provided_api_key>
 | Field | Type | Description |
 |---|---|---|
 | `success` | boolean | Indicates successful completion of the pipeline. |
-| `account_no` | string | The account number that was analyzed. |
+| `<dynamic_key>` | string | The requested key (e.g., `account_no` or `transactionID`) is echoed back. |
 | `source` | string | The engine source (always `"link"`). |
 | `processing.duration_ms` | float | Time taken by the server to compute the graph (in ms). |
-| `data.accountno` | string | The target account number. |
 | `data.linked_accounts_count` | integer | Total number of discrete accounts mapped in the transaction graph. |
 | `data.all_relationships` | integer | Total number of transaction edges processed in the graph. |
 | `data.max_path_length` | integer | The maximum hop distance of linked accounts from the source. |
@@ -61,49 +75,6 @@ X-API-Key: <your_provided_api_key>
 - If `response_type` is `"full"`:
   - Returns the **entire** transaction graph (both clean and flagged nodes/edges).
 
-### Example Response (`response_type="full"`)
-```json
-{
-  "success": true,
-  "account_no": "1007900232134",
-  "source": "link",
-  "data": {
-    "accountno": "1007900232134",
-    "entity_id": "1007900232134",
-    "beneficiary_blacklisted": false,
-    "linked_accounts_count": 12,
-    "all_relationships": 24,
-    "flagged_relationships": ["SMURFING"],
-    "graph_entities": {
-      "nodes": [
-        {
-          "id": "5210",
-          "ACCOUNTNO": "ACC10030",
-          "ACCOUNTSTATE": "dormant",
-          "label": "ACC10030"
-        }
-      ],
-      "edges": [
-        {
-          "id": "5210_5406",
-          "from": "5210",
-          "to": "5406",
-          "label": "SMURFING",
-          "bgcolor": "#d8a822",
-          "reason": "beneficiary later acts as sender",
-          "width": 1
-        }
-      ]
-    },
-    "max_path_length": 2,
-    "network_centrality_score": 0.15
-  },
-  "processing": {
-    "duration_ms": 12163.89
-  }
-}
-```
-
 ---
 
 ## 3. Error Responses
@@ -112,7 +83,7 @@ X-API-Key: <your_provided_api_key>
 ```json
 {
   "success": false,
-  "message": "Missing account_no"
+  "message": "Missing search entity (e.g. account_no or entity_id)"
 }
 ```
 
@@ -121,17 +92,7 @@ X-API-Key: <your_provided_api_key>
 ```json
 {
   "success": false,
-  "account_no": "1007900232134",
+  "transactionID": "99999812",
   "message": "Analysis timed out after 120s. The worker may still be processing."
-}
-```
-
-**Analysis Failure (500 Internal Server Error)**
-```json
-{
-  "success": false,
-  "account_no": "1007900232134",
-  "message": "Analysis failed",
-  "error": "neo4j_ingestion_failed"
 }
 ```
