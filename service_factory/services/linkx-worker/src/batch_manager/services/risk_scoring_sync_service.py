@@ -81,30 +81,35 @@ def process_sync_job(payload):
             driver = create_neo4j_driver(credentials)
             
             with driver.session() as session:
-                # 1. Total relationship count
-                count_res = session.run(
-                    f"MATCH (n:{safe_label})-[r]->() WHERE r.session_id = $session_id RETURN count(r) AS c",
-                    session_id=session_id
-                )
-                record = count_res.single()
-                if record:
-                    all_rels_count = record["c"]
-                
-                # 2. Get relationships based on response_type
-                if response_type == "full":
+                # Removed the count(r) query because it triggers a full relationship scan
+                # and causes 60s timeouts when no relationships exist in the graph.
+                # We will just count relationships when processing the graph results below.
                     query = f"""
-                    MATCH (n:{safe_label})-[r]->(m:{safe_label})
+                    MATCH (n:{safe_label})-[r]->(m)
                     WHERE r.session_id = $session_id
+                    RETURN n, r, m
+                    UNION
+                    MATCH (n:Entity)-[r]->(m)
+                    WHERE r.session_id = $session_id
+                      AND n.session_id = $session_id
                     RETURN n, r, m
                     """
                 else:
                     query = f"""
-                    MATCH (n:{safe_label})-[r]->(m:{safe_label})
+                    MATCH (n:{safe_label})-[r]->(m)
                     WHERE r.session_id = $session_id
                       AND coalesce(r.is_flagged, false) = true
                     RETURN n, r, m
+                    UNION
+                    MATCH (n:Entity)-[r]->(m)
+                    WHERE r.session_id = $session_id
+                      AND coalesce(r.is_flagged, false) = true
+                      AND n.session_id = $session_id
+                    RETURN n, r, m
                     """
                 
+                # Fetch query without counting first to avoid full edge scan
+                all_rels_count = 0
                 for record in session.run(query, session_id=session_id):
                     a = record["n"]
                     b = record["m"]
@@ -129,6 +134,7 @@ def process_sync_job(payload):
                         "label": r.type,
                         **r_props
                     })
+                    all_rels_count += 1
                     
             driver.close()
         except Exception as neo_exc:
