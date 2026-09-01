@@ -64,6 +64,10 @@ def process_sync_job(payload):
         session_id = response_event.get("meta", {}).get("session_id")
         if not session_id:
             raise ValueError("execute_formal_link_analysis did not return a session_id in meta")
+            
+        from batch_manager.analyzing.analyzer import rule_to_node_label
+        node_label = rule_to_node_label("bank transactions", session_id)
+        safe_label = f"`{str(node_label).replace('`', '')}`"
         
         # Connect to Neo4j to pull exact nodes & edges
         nodes_dict = {}
@@ -78,7 +82,7 @@ def process_sync_job(payload):
             with driver.session() as session:
                 # 1. Total relationship count
                 count_res = session.run(
-                    "MATCH ()-[r]->() WHERE r.session_id = $session_id RETURN count(r) AS c",
+                    f"MATCH (n:{safe_label})-[r]->() WHERE r.session_id = $session_id RETURN count(r) AS c",
                     session_id=session_id
                 )
                 record = count_res.single()
@@ -87,14 +91,14 @@ def process_sync_job(payload):
                 
                 # 2. Get relationships based on response_type
                 if response_type == "full":
-                    query = """
-                    MATCH (n)-[r]->(m)
+                    query = f"""
+                    MATCH (n:{safe_label})-[r]->(m:{safe_label})
                     WHERE r.session_id = $session_id
                     RETURN n, r, m
                     """
                 else:
-                    query = """
-                    MATCH (n)-[r]->(m)
+                    query = f"""
+                    MATCH (n:{safe_label})-[r]->(m:{safe_label})
                     WHERE r.session_id = $session_id
                       AND coalesce(r.is_flagged, false) = true
                     RETURN n, r, m
