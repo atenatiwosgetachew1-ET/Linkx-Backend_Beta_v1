@@ -65,91 +65,47 @@ def process_sync_job(payload):
         if not session_id:
             raise ValueError("execute_formal_link_analysis did not return a session_id in meta")
             
-        from batch_manager.analyzing.analyzer import rule_to_node_label
-        node_label = rule_to_node_label("bank transactions", session_id)
-        safe_label = f"`{str(node_label).replace('`', '')}`"
+        # Connect to Neo4j to pull exact nodes & edges via the existing graph fetch endpoint logic
+        from batch_manager.analyzing.LA_graphs_script import fetch_graph
         
-        # Connect to Neo4j to pull exact nodes & edges
-        nodes_dict = {}
-        edges_list = []
-        flagged_rels_set = set()
-        all_rels_count = 0
-
-        try:
-            from batch_manager.services.risk_scoring_kafka_service import _neo4j_credentials
-            credentials = _neo4j_credentials(session_id)
-            driver = create_neo4j_driver(credentials)
+        # Step 5: Fetch graph using the exact same function the UI uses
+        # We pass rel_type="*" to get all relationships, then filter down if response_type is "flagged"
+        graph_result = fetch_graph("relationship", "fetch", session_id, "*", batch="")
+        
+        if graph_result.get("error"):
+            print(f"[RiskScoringSync] Warning: Graph fetch returned error: {graph_result['error']}")
             
-            with driver.session() as session:
-                # Removed the count(r) query because it triggers a full relationship scan
-                # and causes 60s timeouts when no relationships exist in the graph.
-                # We will just count relationships when processing the graph results below.
-                    query = f"""
-                    MATCH (n:{safe_label})-[r]->(m)
-                    WHERE r.session_id = $session_id
-                    RETURN n, r, m
-                    UNION
-                    MATCH (n:Entity)-[r]->(m)
-                    WHERE r.session_id = $session_id
-                      AND n.session_id = $session_id
-                    RETURN n, r, m
-                    """
-                else:
-                    query = f"""
-                    MATCH (n:{safe_label})-[r]->(m)
-                    WHERE r.session_id = $session_id
-                      AND coalesce(r.is_flagged, false) = true
-                    RETURN n, r, m
-                    UNION
-                    MATCH (n:Entity)-[r]->(m)
-                    WHERE r.session_id = $session_id
-                      AND coalesce(r.is_flagged, false) = true
-                      AND n.session_id = $session_id
-                    RETURN n, r, m
-                    """
-                
-                # Fetch query without counting first to avoid full edge scan
-                all_rels_count = 0
-                for record in session.run(query, session_id=session_id):
-                    a = record["n"]
-                    b = record["m"]
-                    r = record["r"]
-                    
-                    r_props = dict(r)
-                    if r_props.get("is_flagged") is True:
-                        flagged_rels_set.add(r.type)
-
-                    a_id = getattr(a, "element_id", str(a.id))
-                    if a_id not in nodes_dict:
-                        nodes_dict[a_id] = {"id": a_id, "label": a.get("BENACCOUNTNO") or a.get("ACCOUNTNO") or a_id, **dict(a)}
-                    
-                    b_id = getattr(b, "element_id", str(b.id))
-                    if b_id not in nodes_dict:
-                        nodes_dict[b_id] = {"id": b_id, "label": b.get("BENACCOUNTNO") or b.get("ACCOUNTNO") or b_id, **dict(b)}
-                    
-                    edges_list.append({
-                        "id": getattr(r, "element_id", f"{a_id}_{b_id}"),
-                        "from": a_id,
-                        "to": b_id,
-                        "label": r.type,
-                        **r_props
-                    })
-                    all_rels_count += 1
-                    
-            driver.close()
-        except Exception as neo_exc:
-            print(f"[RiskScoringSync] Failed to fetch graph from neo4j: {neo_exc}")
+        all_nodes = graph_result.get("nodes", [])
+        all_edges = graph_result.get("edges", [])
         
-        findings["all_relationships"] = all_rels_count
-        findings["flagged_relationships"] = list(flagged_rels_set)
+        all_rels_count = len(all_edges)
+        flagged_rels_set = {e["label"] for e in all_edges if e.get("is_flagged") is True}
         
-        if not nodes_dict and not edges_list:
+        if response_type == "flagged":
+            filtered_edges = [e for e in all_edges if e.get("is_flagged") is True]
+            connected_node_ids = set()
+            for e in filtered_edges:
+                connected_node_ids.add(e["from"])
+                connected_node_ids.add(e["to"])
+            filtered_nodes = [n for n in all_nodes if n["id"] in connected_node_ids]
+            
+            graph_entities = {
+                "nodes": filtered_nodes,
+                "edges": filtered_edges
+            }
+        else:
+            graph_entities = {
+                "nodes": all_nodes,
+                "edges": all_edges
+            }
+            
+        if not graph_entities["nodes"] and not graph_entities["edges"]:
             findings["graph_entities"] = {}
         else:
-            findings["graph_entities"] = {
-                "nodes": list(nodes_dict.values()),
-                "edges": edges_list
-            }
+            findings["graph_entities"] = graph_entities
+
+        findings["all_relationships"] = all_rels_count
+        findings["flagged_relationships"] = list(flagged_rels_set)
 
         duration_ms = round((time.time() - start_time) * 1000, 2)
         return {

@@ -114,9 +114,18 @@ def fetch_graph(id,action,source_id,value,batch, chunk_callback=None, chunk_size
             if str(tool).lower() != "neo4j":
                 return {"nodes": [], "edges": [], "error": "Graph fetch requires Neo4j tool credentials"}
             try:
-                credentials = load_session_neo4j_credentials(source_id, purpose="graph_fetch")
+                credentials = None
+                try:
+                    credentials = load_session_neo4j_credentials(source_id, purpose="graph_fetch")
+                except Neo4jCredentialConfigError:
+                    from batch_manager.services.risk_scoring_kafka_service import _neo4j_credentials
+                    credentials = _neo4j_credentials(source_id)
+                
+                if not credentials:
+                    raise Neo4jCredentialConfigError("No Neo4j credentials found via any method")
+                    
                 driver = create_neo4j_driver(credentials)
-            except Neo4jCredentialConfigError as exc:
+            except Exception as exc:
                 print(f"[graph_fetch] credential configuration failed session={source_id}: {exc}", flush=True)
                 return {"nodes": [], "edges": [], "error": str(exc)}
 
