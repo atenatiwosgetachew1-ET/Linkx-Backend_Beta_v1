@@ -9,7 +9,7 @@ and returns the result directly — no webhook callback is fired.
 import time
 import json
 from batch_manager.utils.postgres_utils import get_postgres_connection
-from batch_manager.utils.neo4j_utils import create_neo4j_driver, load_session_neo4j_credentials
+from batch_manager.utils.neo4j_utils import create_neo4j_driver
 
 
 def process_sync_job(payload):
@@ -76,7 +76,8 @@ def process_sync_job(payload):
         all_rels_count = 0
 
         try:
-            credentials = load_session_neo4j_credentials(session_id, purpose="graph_fetch")
+            from batch_manager.services.risk_scoring_kafka_service import _neo4j_credentials
+            credentials = _neo4j_credentials(session_id)
             driver = create_neo4j_driver(credentials)
             
             with driver.session() as session:
