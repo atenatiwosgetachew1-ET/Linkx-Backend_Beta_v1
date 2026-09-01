@@ -82,6 +82,7 @@ def sync_analysis():
     # --- Validate input ---
     data = request.get_json() or {}
     account_no = data.get("account_no")
+    response_type = data.get("response_type") or "flagged"
 
     if not account_no:
         return jsonify({"success": False, "message": "Missing account_no"}), 400
@@ -91,7 +92,7 @@ def sync_analysis():
         job_result = enqueue_worker_job(
             queue_name="analysis",
             job_type="risk_scoring_sync",
-            payload={"account_no": account_no},
+            payload={"account_no": account_no, "response_type": response_type},
         )
         internal_job_id = job_result["job_id"]
     except Exception as e:
