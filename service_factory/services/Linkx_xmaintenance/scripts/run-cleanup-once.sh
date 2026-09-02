@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd ""/bin/../src"
+cd "$(dirname "$0")/../src"
 set -a
 . ../.env
 set +a
