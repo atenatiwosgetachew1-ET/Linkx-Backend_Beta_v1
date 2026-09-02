@@ -19,7 +19,7 @@ def insert_report(report_type, source_system, payload, external_reference_id=Non
 def get_reports(report_type=None, status=None, limit=50, offset=0):
     with get_postgres_connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
-            query = "SELECT * FROM linkx_reports WHERE 1=1"
+            query = "SELECT *, COUNT(*) OVER() as _total_count FROM linkx_reports WHERE 1=1"
             params = []
             if report_type:
                 query += " AND report_type = %s"
@@ -31,7 +31,16 @@ def get_reports(report_type=None, status=None, limit=50, offset=0):
             params.extend([limit, offset])
             
             cur.execute(query, tuple(params))
-            return cur.fetchall()
+            results = cur.fetchall()
+            
+            if not results:
+                return [], 0
+                
+            total_count = results[0].get('_total_count', 0)
+            for r in results:
+                r.pop('_total_count', None)
+                
+            return results, total_count
 
 def insert_report_evidence(report_id, artifact_id, evidence_metadata):
     with get_postgres_connection() as conn:

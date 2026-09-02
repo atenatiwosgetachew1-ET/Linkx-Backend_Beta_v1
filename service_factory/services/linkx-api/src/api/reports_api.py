@@ -25,7 +25,7 @@ def _get_paginated_reports(report_type):
         offset = int(request.args.get('offset', 0))
         status = request.args.get('status')
         
-        reports = get_reports(report_type=report_type, status=status, limit=limit, offset=offset)
+        reports, total_count = get_reports(report_type=report_type, status=status, limit=limit, offset=offset)
         
         _audit(f"reports.list_{report_type.lower()}", success=True, metadata={"status": status, "limit": limit, "offset": offset})
         
@@ -34,7 +34,7 @@ def _get_paginated_reports(report_type):
             "data": reports,
             "limit": limit,
             "offset": offset,
-            "count": len(reports)
+            "count": total_count
         }), 200
     except Exception as e:
         _audit(f"reports.list_{report_type.lower()}", success=False, metadata={"error": str(e)})
