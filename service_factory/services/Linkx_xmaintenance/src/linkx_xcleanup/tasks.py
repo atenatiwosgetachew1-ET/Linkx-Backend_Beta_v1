@@ -11,8 +11,8 @@ from batch_manager.utils.neo4j_utils import (
     neo4j_credential_source,
     resolve_neo4j_credentials,
 )
-from linkx_cleanup.artifacts import artifact_root, delete_filesystem_artifact
-from linkx_cleanup.db import connect
+from linkx_xcleanup.artifacts import artifact_root, delete_filesystem_artifact
+from linkx_xcleanup.db import connect
 
 
 def _json(value):

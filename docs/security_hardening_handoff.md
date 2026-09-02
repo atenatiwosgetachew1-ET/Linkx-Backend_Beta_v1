@@ -685,8 +685,8 @@ Server 4 was validated as the Neo4j and cleanup-services host behind the existin
 - Services verified live:
   - Neo4j Bolt on `7687`
   - Neo4j Browser on `7474` for admin-only access
-  - `linkx-cleanup-worker`
-  - `linkx-cleanup-scheduler`
+  - `linkx-xcleanup-worker`
+  - `linkx-xcleanup-scheduler`
 
 ### Security And Service Posture
 

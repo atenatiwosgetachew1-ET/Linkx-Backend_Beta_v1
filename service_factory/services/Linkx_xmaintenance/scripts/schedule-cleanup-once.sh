@@ -4,4 +4,4 @@ cd "$(dirname "$0")/../src"
 set -a
 . ../.env
 set +a
-exec ../.venv/bin/python -m linkx_cleanup.scheduler --once ""
+exec ../.venv/bin/python -m linkx_xcleanup.scheduler --once ""

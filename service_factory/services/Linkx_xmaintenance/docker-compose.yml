@@ -23,7 +23,7 @@ services:
   cleanup-worker:
     build:
       context: .
-      dockerfile: Dockerfile.cleanup
+      dockerfile: Dockerfile.xcleanup
     env_file:
       - .env
     volumes:
@@ -35,8 +35,8 @@ services:
   cleanup-scheduler:
     build:
       context: .
-      dockerfile: Dockerfile.cleanup
-    command: python -m linkx_cleanup.scheduler
+      dockerfile: Dockerfile.xcleanup
+    command: python -m linkx_xcleanup.scheduler
     env_file:
       - .env
     depends_on:

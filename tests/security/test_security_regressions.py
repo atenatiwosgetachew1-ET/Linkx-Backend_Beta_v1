@@ -44,7 +44,7 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertNotIn('print(f"STR link analysis {step_name} analyzer payload:", payload)', content)
 
     def test_cleanup_neo4j_credential_logging_stays_metadata_only(self):
-        content = self.read("service_factory/services/Linkx_xmaintenance/src/linkx_cleanup/tasks.py")
+        content = self.read("service_factory/services/Linkx_xmaintenance/src/linkx_xcleanup/tasks.py")
 
         self.assertIn("Neo4j credential source", content)
         self.assertNotIn("creds=", content)

@@ -4,8 +4,8 @@ import os
 import socket
 import time
 
-from linkx_cleanup.db import connect
-from linkx_cleanup.tasks import run_cleanup
+from linkx_xcleanup.db import connect
+from linkx_xcleanup.tasks import run_cleanup
 
 
 def claim_cleanup(conn, worker_name):
@@ -67,7 +67,7 @@ def finish_cleanup(conn, cleanup, ok, result=None, error=None):
 
 
 def run_loop(poll_interval=5, once=False):
-    worker_name = os.getenv("CLEANUP_WORKER_NAME") or f"linkx-cleanup@{socket.gethostname()}:{os.getpid()}"
+    worker_name = os.getenv("CLEANUP_WORKER_NAME") or f"linkx-xcleanup@{socket.gethostname()}:{os.getpid()}"
     print(f"[cleanup] starting {worker_name}", flush=True)
     while True:
         with connect(application_name=worker_name) as conn:

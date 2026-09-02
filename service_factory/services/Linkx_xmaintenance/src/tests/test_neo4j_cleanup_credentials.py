@@ -36,9 +36,9 @@ class CleanupNeo4jCredentialTests(unittest.TestCase):
 
     def test_cleanup_neo4j_session_returns_invalid_credentials_without_retrying_auth(self):
         from batch_manager.utils.neo4j_utils import Neo4jCredentialConfigError
-        from linkx_cleanup.tasks import cleanup_neo4j_session
+        from linkx_xcleanup.tasks import cleanup_neo4j_session
 
-        with patch('linkx_cleanup.tasks._create_neo4j_driver_with_retry', side_effect=Neo4jCredentialConfigError('Neo4j password is masked but no password_ref is available')) as retry_mock:
+        with patch('linkx_xcleanup.tasks._create_neo4j_driver_with_retry', side_effect=Neo4jCredentialConfigError('Neo4j password is masked but no password_ref is available')) as retry_mock:
             result = cleanup_neo4j_session('1_196295', payload={
                 'neo4j_url': 'bolt://172.27.23.85:7687',
                 'neo4j_username': 'neo4j',

@@ -660,7 +660,7 @@ def list_cleanup_audit(filters=None):
 
     where_sql = "WHERE " + " AND ".join(where) if where else ""
 
-    with connect(application_name="linkx-cleanup-audit") as conn:
+    with connect(application_name="linkx-xcleanup-audit") as conn:
         with conn.cursor() as cur:
             cur.execute(f"SELECT count(*) FROM cleanup_runs c {where_sql}", params)
             total = cur.fetchone()[0]

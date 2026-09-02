@@ -3,12 +3,12 @@ import json
 import os
 import time
 
-from linkx_cleanup.db import connect
+from linkx_xcleanup.db import connect
 
 
 def enqueue_cleanup(cleanup_type, payload=None, dry_run=False):
     payload = payload or {}
-    with connect(application_name="linkx-cleanup-scheduler") as conn:
+    with connect(application_name="linkx-xcleanup-scheduler") as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """

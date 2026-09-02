@@ -5,7 +5,7 @@ def get_database_url():
     return os.getenv("DATABASE_URL") or os.getenv("LINKX_POSTGRES_DSN")
 
 
-def connect(application_name="linkx-cleanup"):
+def connect(application_name="linkx-xcleanup"):
     import psycopg
 
     dsn = get_database_url()

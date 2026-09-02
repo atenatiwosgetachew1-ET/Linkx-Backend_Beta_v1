@@ -12,6 +12,6 @@ Environment=NEO4J_DATA_VOLUME=linkx-neo4j_neo4j_data
 Environment=NEO4J_CONTAINER_NAME=linkx-neo4j
 Environment=NEO4J_IMAGE=neo4j:enterprise
 Environment=NEO4J_DATABASE=neo4j
-Environment="LINKX_CLEANUP_SERVICES=linkx-cleanup-worker linkx-cleanup-scheduler"
+Environment="LINKX_CLEANUP_SERVICES=linkx-xcleanup-worker linkx-xcleanup-scheduler"
 ExecStart=/opt/linkx-backend-update/service_factory/services/Linkx_xmaintenance/scripts/backup-neo4j-offline.sh
 ExecStartPost=/opt/linkx-backend-update/service_factory/scripts/sync-backups-offhost.sh

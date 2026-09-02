@@ -2,7 +2,7 @@ import os
 
 from neo4j import GraphDatabase
 
-from linkx_cleanup.db import connect
+from linkx_xcleanup.db import connect
 from security.secret_store import MASKED_SECRET, decrypt_secret
 
 
@@ -68,7 +68,7 @@ def redacted_neo4j_credentials(credentials=None):
 def _load_managed_secret(secret_id):
     if not secret_id:
         return None
-    with connect(application_name="linkx-cleanup-neo4j-secret-resolve") as conn:
+    with connect(application_name="linkx-xcleanup-neo4j-secret-resolve") as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT ciphertext FROM managed_secrets WHERE id = %s AND deleted_at IS NULL",

@@ -188,7 +188,7 @@ Next verification after deploying the fix:
 | Server 1 | node-19 | 172.27.23.95 | Flask API, RBAC, Socket.IO, frontend-facing routes, auth service tokens | Python venv + systemd | `/opt/linkx-backend-api` | `linkx-api` |
 | Server 2 | node-20 | 172.27.23.106 | PostgreSQL + Redis control data | Docker Compose + systemd wrapper | `/opt/linkx-control-data` | `linkx-control-data`, containers `linkx-postgres`, `linkx-redis` |
 | Server 3 | node-21 | 172.27.23.18 | Analysis/ingestion/dataframe workers | Python venv + systemd | `/opt/linkx-worker` | `linkx-worker` |
-| Server 4 | node-22 | 172.27.23.85 | Neo4j Enterprise + cleanup services | Neo4j Docker Compose, cleanup Python venv + systemd | `/opt/linkx-neo4j`, `/opt/Linkx_xmaintenance` | `linkx-cleanup-worker`, `linkx-cleanup-scheduler`, Neo4j container `linkx-neo4j` |
+| Server 4 | node-22 | 172.27.23.85 | Neo4j Enterprise + cleanup services | Neo4j Docker Compose, cleanup Python venv + systemd | `/opt/linkx-neo4j`, `/opt/Linkx_xmaintenance` | `linkx-xcleanup-worker`, `linkx-xcleanup-scheduler`, Neo4j container `linkx-neo4j` |
 
 Frontend is a separate React/Vite project and talks to Server 1 only.
 
@@ -251,7 +251,7 @@ The old monolith still exists at repo root, but the active refactor/deployment f
 | `service_factory/services/linkx-api/src/api/ai_service.py` | Controlled AI partner API endpoints |
 | `service_factory/services/linkx-api/src/api/STR_link_analysis.py` | External/source-target-report API; currently still heavy in API |
 | `service_factory/services/linkx-worker/src/linkx_worker` | Worker runner, job claiming, cancellation handling |
-| `service_factory/services/Linkx_xmaintenance/src/linkx_cleanup` | Cleanup worker/scheduler/tasks |
+| `service_factory/services/Linkx_xmaintenance/src/linkx_xcleanup` | Cleanup worker/scheduler/tasks |
 | `service_factory/services/linkx-control-data/postgres/migrations` | Control DB schema migrations |
 
 ## Current Update Workflow
@@ -288,12 +288,12 @@ Typical Server 4 cleanup update:
 ```bash
 cd /opt/linkx-backend-update
 sudo git pull
-sudo cp /opt/linkx-backend-update/service_factory/services/Linkx_xmaintenance/src/linkx_cleanup/tasks.py /opt/Linkx_xmaintenance/src/linkx_cleanup/tasks.py
+sudo cp /opt/linkx-backend-update/service_factory/services/Linkx_xmaintenance/src/linkx_xcleanup/tasks.py /opt/Linkx_xmaintenance/src/linkx_xcleanup/tasks.py
 sudo cp /opt/linkx-backend-update/service_factory/services/Linkx_xmaintenance/src/batch_manager/utils/neo4j_cleanup.py /opt/Linkx_xmaintenance/src/batch_manager/utils/neo4j_cleanup.py
 cd /opt/Linkx_xmaintenance/src
-sudo /opt/Linkx_xmaintenance/.venv/bin/python -m py_compile linkx_cleanup/tasks.py batch_manager/utils/neo4j_cleanup.py
-sudo systemctl restart linkx-cleanup-worker
-sudo systemctl restart linkx-cleanup-scheduler
+sudo /opt/Linkx_xmaintenance/.venv/bin/python -m py_compile linkx_xcleanup/tasks.py batch_manager/utils/neo4j_cleanup.py
+sudo systemctl restart linkx-xcleanup-worker
+sudo systemctl restart linkx-xcleanup-scheduler
 ```
 
 ## Current Service Contracts Worth Remembering
@@ -420,8 +420,8 @@ Server 4:
 ```bash
 cd /opt/linkx-neo4j
 sudo docker compose ps
-sudo systemctl status linkx-cleanup-worker --no-pager
-sudo systemctl status linkx-cleanup-scheduler --no-pager
+sudo systemctl status linkx-xcleanup-worker --no-pager
+sudo systemctl status linkx-xcleanup-scheduler --no-pager
 sudo docker exec linkx-neo4j cypher-shell -u neo4j -p '<password>' "SHOW DATABASES;"
 ```
 
@@ -783,8 +783,8 @@ Large fuzzy result behavior is configurable per user/session:
 Server 4 cleanup services are active:
 
 ```text
-linkx-cleanup-worker
-linkx-cleanup-scheduler
+linkx-xcleanup-worker
+linkx-xcleanup-scheduler
 ```
 
 The scheduler queues these cleanup types periodically:
@@ -1260,8 +1260,8 @@ Server 4:
 
 ```bash
 findmnt /mnt/linkx-artifacts
-sudo systemctl status linkx-cleanup-worker --no-pager
-sudo systemctl status linkx-cleanup-scheduler --no-pager
+sudo systemctl status linkx-xcleanup-worker --no-pager
+sudo systemctl status linkx-xcleanup-scheduler --no-pager
 cd /opt/linkx-neo4j && sudo docker compose ps
 ```
 

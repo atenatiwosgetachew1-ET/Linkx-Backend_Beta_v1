@@ -6,7 +6,7 @@ DATA_VOLUME="${NEO4J_DATA_VOLUME:-linkx-neo4j_neo4j_data}"
 CONTAINER_NAME="${NEO4J_CONTAINER_NAME:-linkx-neo4j}"
 IMAGE="${NEO4J_IMAGE:-neo4j:enterprise}"
 DATABASE="${NEO4J_DATABASE:-neo4j}"
-CLEANUP_SERVICES="${LINKX_CLEANUP_SERVICES:-linkx-cleanup-worker linkx-cleanup-scheduler}"
+CLEANUP_SERVICES="${LINKX_CLEANUP_SERVICES:-linkx-xcleanup-worker linkx-xcleanup-scheduler}"
 RETENTION_DAYS="${RETENTION_DAYS:-14}"
 
 BACKUP_TS="$(date -u +%Y%m%dT%H%M%SZ)"

@@ -1,7 +1,7 @@
 import argparse
 import json
 
-from linkx_cleanup.scheduler import enqueue_cleanup
+from linkx_xcleanup.scheduler import enqueue_cleanup
 
 
 def main():

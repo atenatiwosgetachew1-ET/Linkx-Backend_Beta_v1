@@ -4,7 +4,7 @@ import time
 try:
     from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
     CLEANUP_TASK_COUNT = Counter(
-        "linkx_cleanup_tasks_total",
+        "linkx_xcleanup_tasks_total",
         "Total cleanup tasks executed.",
         ("task_type", "status"),
     )

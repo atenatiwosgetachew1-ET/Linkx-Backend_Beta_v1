@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 WorkingDirectory=/opt/Linkx_xmaintenance/src
 EnvironmentFile=/opt/Linkx_xmaintenance/.env
-ExecStart=/opt/Linkx_xmaintenance/.venv/bin/python -m linkx_cleanup.worker
+ExecStart=/opt/Linkx_xmaintenance/.venv/bin/python -m linkx_xcleanup.worker
 Restart=always
 RestartSec=3
 

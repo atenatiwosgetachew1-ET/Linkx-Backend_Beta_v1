@@ -287,12 +287,12 @@ def verify_worker(reporter: Reporter) -> None:
 def verify_graph_maintenance(reporter: Reporter) -> None:
     root = Path("/opt/Linkx_xmaintenance")
     env_path = root / ".env"
-    tasks = root / "src/linkx_cleanup/tasks.py"
+    tasks = root / "src/linkx_xcleanup/tasks.py"
     check_path(reporter, root, "Graph maintenance deploy root", directory=True)
     check_path(reporter, env_path, "Graph maintenance env file")
     check_path(reporter, tasks, "Cleanup tasks source file")
-    check_systemd_active(reporter, "linkx-cleanup-worker")
-    check_systemd_active(reporter, "linkx-cleanup-scheduler")
+    check_systemd_active(reporter, "linkx-xcleanup-worker")
+    check_systemd_active(reporter, "linkx-xcleanup-scheduler")
     check_env_redis_url(reporter, read_env(env_path), env_path)
 
     if tasks.exists():

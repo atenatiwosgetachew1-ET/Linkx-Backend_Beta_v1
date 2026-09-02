@@ -9,4 +9,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./
 
-CMD ["python", "-m", "linkx_cleanup.worker"]
+CMD ["python", "-m", "linkx_xcleanup.worker"]

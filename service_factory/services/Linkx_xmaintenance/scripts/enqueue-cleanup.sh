@@ -4,4 +4,4 @@ cd "$(dirname "$0")/../src"
 set -a
 . ../.env
 set +a
-exec ../.venv/bin/python -m linkx_cleanup.enqueue_cleanup ""
+exec ../.venv/bin/python -m linkx_xcleanup.enqueue_cleanup ""

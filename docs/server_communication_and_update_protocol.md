@@ -15,7 +15,7 @@ The LinkX backend split consists of 4 physical/virtual servers connected over a 
 | **Server 1** | `node-19` | `172.27.23.95` | **Flask API & Gateway** | `/opt/linkx-backend-api` | `linkx-api.service`, `nginx` |
 | **Server 2** | `node-20` | `172.27.23.106` | **Control Data** | `/opt/linkx-control-data` | `linkx-postgres`, `linkx-redis`, `linkx-otel-collector` |
 | **Server 3** | `node-21` | `172.27.23.18` | **Worker Node** | `/opt/linkx-worker` | `linkx-worker.service` |
-| **Server 4** | `node-22` | `172.27.23.85` | **Graph & Maintenance** | `/opt/Linkx_xmaintenance`, `/opt/linkx-neo4j` | `linkx-cleanup-worker`, `linkx-cleanup-scheduler`, `linkx-neo4j` |
+| **Server 4** | `node-22` | `172.27.23.85` | **Graph & Maintenance** | `/opt/Linkx_xmaintenance`, `/opt/linkx-neo4j` | `linkx-xcleanup-worker`, `linkx-xcleanup-scheduler`, `linkx-neo4j` |
 | **Monitoring Host** | — | `172.27.23.36` | **Prometheus / OTel Scraper** | — | Metrics Scraper |
 | **Hadoop/Search Host**| — | `172.27.23.43` | **HDFS / Elastic Search** | — | WebHDFS `9870`, RPC `9000`, Data API `5000` |
 
@@ -138,7 +138,7 @@ sudo python3 /opt/linkx-backend-update/service_factory/deploy/security/verify-li
 sudo git -C /opt/linkx-backend-update pull
 sudo /opt/Linkx_xmaintenance/.venv/bin/python -m pip install 'prometheus-client>=0.22.1'
 sudo cp -r /opt/linkx-backend-update/service_factory/services/Linkx_xmaintenance/src/. /opt/Linkx_xmaintenance/src/
-sudo systemctl restart linkx-cleanup-worker linkx-cleanup-scheduler
+sudo systemctl restart linkx-xcleanup-worker linkx-xcleanup-scheduler
 sleep 3
 sudo python3 /opt/linkx-backend-update/service_factory/deploy/security/verify-linkx-server.py --role graph-maintenance
 ```
