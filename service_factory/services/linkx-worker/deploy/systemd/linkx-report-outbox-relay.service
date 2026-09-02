@@ -1,0 +1,16 @@
+[Unit]
+Description=LinkX Report Outbox Relay Daemon
+After=network.target linkx-worker.service
+
+[Service]
+Type=simple
+User=linkx
+Group=linkx
+WorkingDirectory=/opt/linkx-worker/src
+EnvironmentFile=/opt/linkx-worker/.env
+ExecStart=/opt/linkx-worker/.venv/bin/python /opt/linkx-worker/src/linkx_worker/report_outbox_relay.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
