@@ -185,10 +185,10 @@ Next verification after deploying the fix:
 
 | Server | Hostname Seen | IP | Main Role | Runtime | Main Path | Service Names |
 |---|---:|---:|---|---|---|---|
-| Server 1 | node-19 | 172.27.23.95 | Flask API, RBAC, Socket.IO, frontend-facing routes, auth service tokens | Python venv + systemd | `/opt/linkx-backend-api` | `linkx-api` |
-| Server 2 | node-20 | 172.27.23.106 | PostgreSQL + Redis control data | Docker Compose + systemd wrapper | `/opt/linkx-control-data` | `linkx-control-data`, containers `linkx-postgres`, `linkx-redis` |
-| Server 3 | node-21 | 172.27.23.18 | Analysis/ingestion/dataframe workers | Python venv + systemd | `/opt/linkx-worker` | `linkx-worker` |
-| Server 4 | node-22 | 172.27.23.85 | Neo4j Enterprise + cleanup services | Neo4j Docker Compose, cleanup Python venv + systemd | `/opt/linkx-neo4j`, `/opt/Linkx_xmaintenance` | `linkx-xcleanup-worker`, `linkx-xcleanup-scheduler`, Neo4j container `linkx-neo4j` |
+| Server 1 | node-19 | 172.27.23.95 | Flask API, RBAC, Socket.IO, Parent Reports Ingestion, auth service tokens | Python venv + systemd | `/opt/linkx-backend-api` | `linkx-api` |
+| Server 2 | node-20 | 172.27.23.106 | PostgreSQL + Redis control data (including centralized reports) | Docker Compose + systemd wrapper | `/opt/linkx-control-data` | `linkx-control-data`, containers `linkx-postgres`, `linkx-redis` |
+| Server 3 | node-21 | 172.27.23.18 | Analysis workers, Risk Scoring, xReport Sync Daemon | Python venv + systemd | `/opt/linkx-worker` | `linkx-worker`, `linkx-xreport` |
+| Server 4 | node-22 | 172.27.23.85 | Neo4j Enterprise, Cleanup services, XVigilance daemon | Neo4j Docker Compose, cleanup Python venv + systemd | `/opt/linkx-neo4j`, `/opt/Linkx_xmaintenance` | `linkx-xcleanup-worker`, `linkx-xcleanup-scheduler`, `linkx-xvigilance`, Neo4j container `linkx-neo4j` |
 
 Frontend is a separate React/Vite project and talks to Server 1 only.
 
@@ -197,11 +197,13 @@ Frontend is a separate React/Vite project and talks to Server 1 only.
 | From | To | Ports | Reason |
 |---|---|---:|---|
 | Frontend / browser | Server 1 | 8000 | Main LinkX API + Socket.IO |
-| Server 1 | Server 2 | 5432, 6379 | Auth/RBAC/config/session metadata, job queue/control data |
-| Server 3 | Server 2 | 5432, 6379 | Claim jobs, read config/control data, write job status/events |
+| Parent CTMS | Server 1 | 8000 | Import external reports via `/api/v1/reports/import-parent` |
+| Server 1 | Server 2 | 5432, 6379 | Auth/RBAC/config/reports/session metadata, job queue |
+| Server 3 | Server 2 | 5432, 6379 | Claim jobs, push Sibling Evidence, Outbox Relay polling |
+| Server 3 | Parent CTMS | HTTPS | `linkx-xreport` pushing outbox findings safely to external hooks |
 | Server 3 | Server 4 | 7687 | Worker analysis writes/reads Neo4j graph data |
-| Server 1 | Server 4 | 7687 | Current API graph reads, tool checks, some legacy/interactive paths |
-| Server 4 cleanup | Server 2 | 5432, 6379 | Read cleanup runs/artifacts/sessions, write cleanup audit |
+| Server 1 | Server 4 | 7687 | Current API graph reads, tool checks, workspace binding |
+| Server 4 cleanup/detective | Server 2 | 5432, 6379 | Write autonomous XVigilance findings, read/write cleanup audit |
 | Admin workstation | Servers | 22 | SSH |
 | Admin workstation | Server 4 | 7474 | Neo4j Browser admin access only |
 | AI partner service | Server 1 | 8000 | Controlled `/auth/service-token` and `/ai/...` API access |

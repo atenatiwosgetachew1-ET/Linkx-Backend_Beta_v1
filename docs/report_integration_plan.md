@@ -1,3 +1,6 @@
+# IMPLEMENTED
+This plan has been fully implemented. See below for the original design document.
+
 # Report Integration Plan
 
 ## Objective
