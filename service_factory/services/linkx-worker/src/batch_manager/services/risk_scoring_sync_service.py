@@ -165,6 +165,21 @@ def process_sync_job(payload):
                         json.dumps(final_response),
                         duration_ms
                     ))
+
+                    # Inject into the unified linkx_reports pipeline as SERVICE_EVIDENCE
+                    is_flagged = bool(flagged_rels_set)
+                    report_payload = {
+                        "trace_id": trace_id,
+                        "entity_id": str(entity_id),
+                        "is_flagged": is_flagged,
+                        "flagged_rules": list(flagged_rels_set),
+                        "network_centrality_score": findings.get("network_centrality_score", 0),
+                        "max_path_length": findings.get("max_path_length", 0)
+                    }
+                    cur.execute("""
+                        INSERT INTO linkx_reports (report_type, source_system, external_reference_id, payload, status)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """, ('SERVICE_EVIDENCE', 'risk_scoring_sync', trace_id, json.dumps(report_payload), 'FLAGGED' if is_flagged else 'RESOLVED'))
                 conn.commit()
         except Exception as e:
             print(f"[RiskScoringSync] Cache write error: {e}")
