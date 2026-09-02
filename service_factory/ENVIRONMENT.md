@@ -47,7 +47,7 @@ Use the factory compose file so ports do not collide with the live backend:
    - analysis workers
    - graph-write workers
 
-4. linkx-graph-maintenance
+4. Linkx_xmaintenance
    - Neo4j
    - cleanup workers
    - retention scheduler

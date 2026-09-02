@@ -13,7 +13,7 @@ This document is based on repository evidence from:
 - `service_factory/services/linkx-api/**`
 - `service_factory/services/linkx-worker/**`
 - `service_factory/services/linkx-control-data/**`
-- `service_factory/services/linkx-graph-maintenance/**`
+- `service_factory/services/Linkx_xmaintenance/**`
 
 ## Scope
 
@@ -22,7 +22,7 @@ Active backend split:
 - Server 1: `linkx-api`
 - Server 2: `linkx-control-data` (`PostgreSQL`, `Redis`)
 - Server 3: `linkx-worker`
-- Server 4: `linkx-graph-maintenance` (`Neo4j`, cleanup services)
+- Server 4: `Linkx_xmaintenance` (`Neo4j`, cleanup services)
 
 Frontend is separate and talks to Server 1 only.
 
@@ -677,7 +677,7 @@ Server 4 was validated as the Neo4j and cleanup-services host behind the existin
 ### Server 4 Specification
 
 - Host: `node-22`
-- Role: `linkx-graph-maintenance`
+- Role: `Linkx_xmaintenance`
 - Address: `172.27.23.85`
 - Runtime:
   - Neo4j Docker Compose deployment

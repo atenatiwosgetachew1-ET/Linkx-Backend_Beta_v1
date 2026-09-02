@@ -285,7 +285,7 @@ def verify_worker(reporter: Reporter) -> None:
 
 
 def verify_graph_maintenance(reporter: Reporter) -> None:
-    root = Path("/opt/linkx-graph-maintenance")
+    root = Path("/opt/Linkx_xmaintenance")
     env_path = root / ".env"
     tasks = root / "src/linkx_cleanup/tasks.py"
     check_path(reporter, root, "Graph maintenance deploy root", directory=True)

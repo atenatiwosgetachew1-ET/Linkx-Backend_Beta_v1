@@ -23,7 +23,7 @@ develop the service split while keeping the live backend layout unchanged.
    - final-analysis workers
    - graph-write workers
 
-4. `linkx-graph-maintenance`
+4. `Linkx_xmaintenance`
    - Neo4j
    - cleanup workers
    - retention scheduler

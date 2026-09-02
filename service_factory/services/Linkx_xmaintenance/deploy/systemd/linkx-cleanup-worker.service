@@ -1,0 +1,14 @@
+[Unit]
+Description=LinkX Cleanup Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/Linkx_xmaintenance/src
+EnvironmentFile=/opt/Linkx_xmaintenance/.env
+ExecStart=/opt/Linkx_xmaintenance/.venv/bin/python -m linkx_cleanup.worker
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

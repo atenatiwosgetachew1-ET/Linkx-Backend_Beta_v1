@@ -40,7 +40,7 @@ def schedule_session_cleanup_process(session_id, tool_credentials, log_file=None
         cmd = [
             sys.executable,
             "-m",
-            "batch_manager.jobs.cleanup_neo4j_session",
+            "batch_manager.jobs.Linkx_xmaintenance",
             "--session-id",
             str(session_id),
             "--batch-size",

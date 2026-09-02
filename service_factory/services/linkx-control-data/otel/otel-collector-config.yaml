@@ -23,8 +23,8 @@ receivers:
                 server: 'node-21'
                 role: 'worker'
 
-        # Server 4 — linkx-graph-maintenance (cleanup metrics)
-        - job_name: 'linkx-graph-maintenance'
+        # Server 4 — Linkx_xmaintenance (cleanup metrics)
+        - job_name: 'Linkx_xmaintenance'
           scrape_interval: 15s
           static_configs:
             - targets: ['172.27.23.85:8889']

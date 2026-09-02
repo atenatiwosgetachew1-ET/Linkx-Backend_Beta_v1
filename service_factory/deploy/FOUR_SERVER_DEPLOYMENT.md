@@ -49,7 +49,7 @@ Processes:
 Important rule:
 - Workers read job payloads from Redis/PostgreSQL and read/write artifacts through LINKX_ARTIFACT_ROOT.
 
-## Server 4: linkx-graph-maintenance
+## Server 4: Linkx_xmaintenance
 
 Runs graph and lifecycle maintenance.
 

@@ -185,7 +185,7 @@ Expose:
 
 Suggested location:
 
-- `service_factory/services/linkx-graph-maintenance/src/linkx_cleanup`
+- `service_factory/services/Linkx_xmaintenance/src/linkx_cleanup`
 
 Expose:
 

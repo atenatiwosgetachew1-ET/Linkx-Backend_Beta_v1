@@ -60,12 +60,12 @@ BACKUP_ROLES = {
         "patterns": ["*/*.dump", "*.dump"],
         "checksum_patterns": ["*/SHA256SUMS", "SHA256SUMS"],
         "scripts": [
-            "service_factory/services/linkx-graph-maintenance/scripts/backup-neo4j-offline.sh",
+            "service_factory/services/Linkx_xmaintenance/scripts/backup-neo4j-offline.sh",
             "service_factory/scripts/sync-backups-offhost.sh",
         ],
         "units": [
-            "service_factory/services/linkx-graph-maintenance/deploy/systemd/linkx-neo4j-backup.service",
-            "service_factory/services/linkx-graph-maintenance/deploy/systemd/linkx-neo4j-backup.timer",
+            "service_factory/services/Linkx_xmaintenance/deploy/systemd/linkx-neo4j-backup.service",
+            "service_factory/services/Linkx_xmaintenance/deploy/systemd/linkx-neo4j-backup.timer",
         ],
         "restore_note": "repeat isolated restore after a representative non-empty graph exists",
     },

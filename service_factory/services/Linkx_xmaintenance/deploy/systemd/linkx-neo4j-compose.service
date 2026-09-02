@@ -5,7 +5,7 @@ After=docker.service network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=/opt/linkx-graph-maintenance
+WorkingDirectory=/opt/Linkx_xmaintenance
 RemainAfterExit=yes
 ExecStart=/usr/bin/docker compose up -d neo4j
 ExecStop=/usr/bin/docker compose stop neo4j

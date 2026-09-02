@@ -4,9 +4,9 @@ After=network.target linkx-neo4j-compose.service
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/linkx-graph-maintenance/src
-EnvironmentFile=/opt/linkx-graph-maintenance/.env
-ExecStart=/opt/linkx-graph-maintenance/.venv/bin/python -m linkx_xvigilance.runner
+WorkingDirectory=/opt/Linkx_xmaintenance/src
+EnvironmentFile=/opt/Linkx_xmaintenance/.env
+ExecStart=/opt/Linkx_xmaintenance/.venv/bin/python -m linkx_xvigilance.runner
 Restart=always
 RestartSec=5
 KillSignal=SIGTERM

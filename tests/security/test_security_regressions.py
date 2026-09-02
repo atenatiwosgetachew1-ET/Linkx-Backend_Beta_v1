@@ -5,7 +5,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 API_SRC = REPO_ROOT / "service_factory/services/linkx-api/src"
-GRAPH_SRC = REPO_ROOT / "service_factory/services/linkx-graph-maintenance/src"
+GRAPH_SRC = REPO_ROOT / "service_factory/services/Linkx_xmaintenance/src"
 
 if str(API_SRC) not in sys.path:
     sys.path.insert(0, str(API_SRC))
@@ -44,7 +44,7 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertNotIn('print(f"STR link analysis {step_name} analyzer payload:", payload)', content)
 
     def test_cleanup_neo4j_credential_logging_stays_metadata_only(self):
-        content = self.read("service_factory/services/linkx-graph-maintenance/src/linkx_cleanup/tasks.py")
+        content = self.read("service_factory/services/Linkx_xmaintenance/src/linkx_cleanup/tasks.py")
 
         self.assertIn("Neo4j credential source", content)
         self.assertNotIn("creds=", content)
@@ -87,7 +87,7 @@ class SecurityRegressionTests(unittest.TestCase):
             "service_factory/requirements.txt",
             "service_factory/services/linkx-api/src/requirements.txt",
             "service_factory/services/linkx-worker/src/requirements.txt",
-            "service_factory/services/linkx-graph-maintenance/src/requirements.txt",
+            "service_factory/services/Linkx_xmaintenance/src/requirements.txt",
         )
         analysis_files = (
             "batch_manager/analyzing/LA_rules_script.py",

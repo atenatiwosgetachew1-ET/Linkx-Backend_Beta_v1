@@ -5,7 +5,7 @@ After=docker.service
 
 [Service]
 Type=oneshot
-WorkingDirectory=/opt/linkx-backend-update/service_factory/services/linkx-graph-maintenance
+WorkingDirectory=/opt/linkx-backend-update/service_factory/services/Linkx_xmaintenance
 Environment=BACKUP_ROOT=/opt/linkx-backups/neo4j
 Environment=RETENTION_DAYS=14
 Environment=NEO4J_DATA_VOLUME=linkx-neo4j_neo4j_data
@@ -13,5 +13,5 @@ Environment=NEO4J_CONTAINER_NAME=linkx-neo4j
 Environment=NEO4J_IMAGE=neo4j:enterprise
 Environment=NEO4J_DATABASE=neo4j
 Environment="LINKX_CLEANUP_SERVICES=linkx-cleanup-worker linkx-cleanup-scheduler"
-ExecStart=/opt/linkx-backend-update/service_factory/services/linkx-graph-maintenance/scripts/backup-neo4j-offline.sh
+ExecStart=/opt/linkx-backend-update/service_factory/services/Linkx_xmaintenance/scripts/backup-neo4j-offline.sh
 ExecStartPost=/opt/linkx-backend-update/service_factory/scripts/sync-backups-offhost.sh

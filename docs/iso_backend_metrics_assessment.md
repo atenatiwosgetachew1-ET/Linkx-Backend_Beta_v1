@@ -11,7 +11,7 @@ Backend roles under assessment:
 - Server 1: `linkx-api`
 - Server 2: `linkx-control-data`
 - Server 3: `linkx-worker`
-- Server 4: `linkx-graph-maintenance`
+- Server 4: `Linkx_xmaintenance`
 
 Frontend is separate and is not included in this backend assessment except where explicitly marked as frontend-side.
 
