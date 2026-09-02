@@ -61,3 +61,6 @@ Analysts need to see these reports and bind them to graph workspaces.
   - Allows an analyst to click a "Parent Report" or "XVigilance Finding" and instantly spawn/bind a LinkX visual graph workspace to investigate it.
 - [ ] **4.3 Audit Trailing**
   - Wrap all the above API routes with `@audit_log` decorators to push access logs to `security_audit_events`.
+- [ ] **4.4 RBAC Security Enforcement**
+  - Enforce `RequirePermission("reports:read")` on all report routes.
+  - Ensure `reports:read` is explicitly stripped from the `viewer` role so only `admin` and `analyst` roles can access them.

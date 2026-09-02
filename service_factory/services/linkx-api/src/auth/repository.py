@@ -92,7 +92,6 @@ DEFAULT_ROLE_PERMISSIONS = {
     "viewer": [
         "config:read",
         "graph:read",
-        "reports:read",
         "session:read",
     ],
 }
