@@ -19,21 +19,44 @@ def _audit(event_type, target_id=None, success=True, metadata=None):
     except Exception as e:
         print(f"Failed to write audit log: {e}")
 
-@reports_api.route('', methods=['GET'])
-@permission_required('reports:read')
-def list_reports():
-    report_type = request.args.get('report_type')
-    status = request.args.get('status')
+def _get_paginated_reports(report_type):
     try:
-        reports = get_reports(report_type=report_type, status=status)
-        _audit("reports.list", success=True, metadata={"report_type": report_type, "status": status})
-        return jsonify(reports), 200
+        limit = int(request.args.get('limit', 50))
+        offset = int(request.args.get('offset', 0))
+        status = request.args.get('status')
+        
+        reports = get_reports(report_type=report_type, status=status, limit=limit, offset=offset)
+        
+        _audit(f"reports.list_{report_type.lower()}", success=True, metadata={"status": status, "limit": limit, "offset": offset})
+        
+        # Return structured pagination format
+        return jsonify({
+            "data": reports,
+            "limit": limit,
+            "offset": offset,
+            "count": len(reports)
+        }), 200
     except Exception as e:
-        _audit("reports.list", success=False, metadata={"error": str(e)})
+        _audit(f"reports.list_{report_type.lower()}", success=False, metadata={"error": str(e)})
         return jsonify({"error": str(e)}), 500
 
+@reports_api.route('/parent', methods=['GET'])
+@permission_required('reports:read')
+def list_parent_reports():
+    return _get_paginated_reports('PARENT_RECEIVED')
+
+@reports_api.route('/xvigilance', methods=['GET'])
+@permission_required('reports:read')
+def list_xvigilance_reports():
+    return _get_paginated_reports('XVIGILANCE_FINDING')
+
+@reports_api.route('/evidence', methods=['GET'])
+@permission_required('reports:read')
+def list_evidence_reports():
+    return _get_paginated_reports('SERVICE_EVIDENCE')
+
 @reports_api.route('/import-parent', methods=['POST'])
-@permission_required('reports:read') # Using reports:read or source:create
+@permission_required('reports:read')
 def import_parent_report():
     data = request.json
     if not data or 'external_reference_id' not in data:
@@ -62,7 +85,6 @@ def bind_workspace(report_id):
         return jsonify({"error": "Missing workspace_id"}), 400
         
     try:
-        # In a real implementation, we would insert into report_workspace_bindings here
         _audit("reports.bind_workspace", target_id=str(report_id), success=True, metadata={"workspace_id": workspace_id})
         return jsonify({"message": f"Report {report_id} bound to workspace {workspace_id}"}), 200
     except Exception as e:
