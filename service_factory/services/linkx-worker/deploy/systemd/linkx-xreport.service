@@ -1,5 +1,5 @@
 [Unit]
-Description=LinkX Report Outbox Relay Daemon
+Description=LinkX xReport Relay Daemon
 After=network.target linkx-worker.service
 
 [Service]
@@ -8,7 +8,7 @@ User=linkx
 Group=linkx
 WorkingDirectory=/opt/linkx-worker/src
 EnvironmentFile=/opt/linkx-worker/.env
-ExecStart=/opt/linkx-worker/.venv/bin/python /opt/linkx-worker/src/linkx_worker/report_outbox_relay.py
+ExecStart=/opt/linkx-worker/.venv/bin/python /opt/linkx-worker/src/linkx_worker/linkx_xreport.py
 Restart=always
 RestartSec=5
 
