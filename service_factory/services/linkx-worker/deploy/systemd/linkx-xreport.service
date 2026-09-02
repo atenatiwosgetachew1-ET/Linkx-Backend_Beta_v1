@@ -4,8 +4,6 @@ After=network.target linkx-worker.service
 
 [Service]
 Type=simple
-User=linkx
-Group=linkx
 WorkingDirectory=/opt/linkx-worker/src
 EnvironmentFile=/opt/linkx-worker/.env
 ExecStart=/opt/linkx-worker/.venv/bin/python /opt/linkx-worker/src/linkx_worker/linkx_xreport.py
