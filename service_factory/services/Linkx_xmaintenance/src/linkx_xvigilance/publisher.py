@@ -86,6 +86,20 @@ def publish_xvigilance_flagged_event(
     }
 
     try:
+        # First save the finding in the local reports pipeline
+        try:
+            from linkx_xvigilance.db import connect
+            with connect(application_name="xvigilance-report-ingest") as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO linkx_reports (report_type, source_system, external_reference_id, payload, status)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """, ('XVIGILANCE_FINDING', 'linkx_xvigilance', trace_id, json.dumps(event_payload), 'NEW'))
+                    conn.commit()
+            print(f"[xvigilance] Saved report finding to database for {account_no}", flush=True)
+        except Exception as db_exc:
+            print(f"[xvigilance] Warning: Failed to save report to database: {db_exc}", flush=True)
+
         from confluent_kafka import Producer
         conf = {"bootstrap.servers": brokers, "client.id": "linkx-xvigilance-producer"}
         p = Producer(conf)

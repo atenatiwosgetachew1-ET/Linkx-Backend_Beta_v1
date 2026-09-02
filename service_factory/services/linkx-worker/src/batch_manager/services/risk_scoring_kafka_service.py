@@ -877,6 +877,20 @@ def persist_link_analysis_evidence(request_event, response_event, session_id="",
                     centrality, max_path, round(float(duration_ms), 2),
                     json.dumps(request_event), json.dumps(response_event),
                 ))
+
+                # Inject into the unified linkx_reports pipeline as SERVICE_EVIDENCE
+                report_payload = {
+                    "trace_id": trace_id,
+                    "entity_id": entity_id,
+                    "is_flagged": is_flagged,
+                    "flagged_rules": flagged_rules,
+                    "network_centrality_score": centrality,
+                    "max_path_length": max_path
+                }
+                cur.execute("""
+                    INSERT INTO linkx_reports (report_type, source_system, external_reference_id, payload, status)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, ('SERVICE_EVIDENCE', 'risk_scoring', trace_id, json.dumps(report_payload), 'FLAGGED' if is_flagged else 'RESOLVED'))
             conn.commit()
     except Exception as exc:
         print(f"[RiskScoring] Evidence persistence notice: {exc}")

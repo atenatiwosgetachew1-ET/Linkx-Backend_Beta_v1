@@ -112,6 +112,9 @@ app.register_blueprint(ML_link_analysis_api, url_prefix="/api")
 app.register_blueprint(RULE_link_analysis_api, url_prefix="/api")
 app.register_blueprint(ai_service_api, url_prefix="/ai")
 
+from api.reports_api import reports_api
+app.register_blueprint(reports_api)
+
 
 @app.after_request
 def apply_security_headers(response):
