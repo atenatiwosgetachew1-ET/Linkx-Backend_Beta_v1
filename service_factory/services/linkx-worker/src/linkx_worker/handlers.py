@@ -77,6 +77,14 @@ def run_job(job_type, payload):
         from batch_manager.services.risk_scoring_webhook_service import process_webhook_job
         return process_webhook_job(payload)
 
+    if job_type == "unified_link_analysis":
+        from batch_manager.services.unified_risk_scoring_service import process_unified_job
+        return process_unified_job(payload)
+
+    if job_type == "unified_link_analysis_webhook_only":
+        from batch_manager.services.unified_risk_scoring_service import process_unified_webhook_only_job
+        return process_unified_webhook_only_job(payload)
+
     if job_type == "risk_scoring_sync":
         from batch_manager.services.risk_scoring_sync_service import process_sync_job
         return process_sync_job(payload)

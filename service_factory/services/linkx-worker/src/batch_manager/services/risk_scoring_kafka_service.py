@@ -596,6 +596,33 @@ def execute_formal_link_analysis(event_data):
         duration_ms = (time.time() - t0) * 1000.0
         return None, "dataframe_creation_failed"
 
+    # NEW: Phase 3.1 & 3.2 Pandas Date Filtering
+    time_window = data_section.get("time_window")
+    if time_window and time_window.get("start_date") and time_window.get("end_date"):
+        try:
+            import glob
+            import pandas as pd
+            dataframe_dir = load_temp_config("active_dataframe_dir", session_id) or os.path.join(ensure_artifact_dir("dfparts"), f"merged_dfpart_{session_id}")
+            start_dt = pd.to_datetime(time_window["start_date"])
+            end_dt = pd.to_datetime(time_window["end_date"])
+            files = glob.glob(os.path.join(dataframe_dir, "*.parquet"))
+            if not files:
+                files = glob.glob(os.path.join(dataframe_dir, "*.csv"))
+            for f in files:
+                _df = pd.read_parquet(f) if f.endswith(".parquet") else pd.read_csv(f, dtype=str)
+                date_cols = [c for c in _df.columns if "date" in c.lower()]
+                if date_cols:
+                    target_col = "transactiondate" if "transactiondate" in date_cols else date_cols[0]
+                    _df[target_col] = pd.to_datetime(_df[target_col], errors="coerce")
+                    _df = _df.dropna(subset=[target_col])
+                    _df = _df[(_df[target_col] >= start_dt) & (_df[target_col] <= end_dt)]
+                    if f.endswith(".parquet"):
+                        _df.to_parquet(f, index=False)
+                    else:
+                        _df.to_csv(f, index=False)
+        except Exception as e:
+            print(f"[RiskScoring] Pandas Date Filter failed: {e}")
+
     # Step 4: Neo4j Ingestion & Step 5: Incremental Analysis
     custom_source = data_section.get("source_column")
     custom_target = data_section.get("target_column")
