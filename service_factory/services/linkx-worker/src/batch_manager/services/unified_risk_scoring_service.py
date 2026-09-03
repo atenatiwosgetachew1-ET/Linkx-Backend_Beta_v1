@@ -121,6 +121,21 @@ def process_unified_job(payload):
                         bool(v2_payload["data"].get("risk_score", 0) > 0), v2_payload["data"].get("linked_accounts_count", 0),
                         json.dumps({"time_window": time_window}), json.dumps(v2_payload), duration_ms
                     ))
+                    
+                    # Inject into the unified linkx_reports pipeline as SERVICE_EVIDENCE for the UI
+                    is_flagged = bool(v2_payload["data"].get("risk_score", 0) > 0)
+                    report_payload = {
+                        "trace_id": analysis_payload["meta"]["trace_id"],
+                        "entity_id": str(account_no),
+                        "is_flagged": is_flagged,
+                        "network_centrality_score": v2_payload["data"].get("network_centrality_score", 0),
+                        "max_path_length": v2_payload["data"].get("max_path_length", 0)
+                    }
+                    cur.execute("""
+                        INSERT INTO linkx_reports (report_type, source_system, external_reference_id, payload, status)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """, ('SERVICE_EVIDENCE', 'unified_link_analysis', analysis_payload["meta"]["trace_id"], json.dumps(report_payload), 'FLAGGED' if is_flagged else 'RESOLVED'))
+
                 conn.commit()
         except Exception as e:
             print(f"[UnifiedRiskScoring] Cache write error: {e}")
