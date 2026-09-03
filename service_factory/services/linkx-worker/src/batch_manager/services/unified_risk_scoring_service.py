@@ -76,12 +76,26 @@ def process_unified_job(payload):
             }
         else:
             findings = response_event["data"]
+            session_id = response_event.get("meta", {}).get("session_id")
+            graph_entities = {"nodes": [], "edges": []}
+            
+            if session_id:
+                try:
+                    from batch_manager.analyzing.LA_graphs_script import fetch_graph
+                    graph_result = fetch_graph("relationship", "fetch", session_id, "*", batch="")
+                    if not graph_result.get("error"):
+                        graph_entities["nodes"] = graph_result.get("nodes", [])
+                        graph_entities["edges"] = graph_result.get("edges", [])
+                except Exception as e:
+                    print(f"[UnifiedRiskScoring] Failed to fetch graph entities: {e}")
+
             # Rename legacy fields or pass graph entities
             v2_payload["data"] = {
                 "network_centrality_score": findings.get("network_centrality_score", 0),
                 "max_path_length": findings.get("max_path_length", 0),
                 "linked_accounts_count": findings.get("linked_count", 0),
-                "risk_score": 0 # Safe default
+                "risk_score": 0, # Safe default
+                "graph": graph_entities
             }
             # Calculate a basic risk score if there are flagged relationships
             if findings.get("flagged_count", 0) > 0:
