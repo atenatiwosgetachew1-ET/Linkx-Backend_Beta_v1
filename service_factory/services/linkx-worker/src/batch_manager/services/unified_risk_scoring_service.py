@@ -134,7 +134,7 @@ def process_unified_job(payload):
                     cur.execute("""
                         INSERT INTO linkx_reports (report_type, source_system, external_reference_id, payload, status)
                         VALUES (%s, %s, %s, %s, %s)
-                    """, ('SERVICE_EVIDENCE', 'unified_link_analysis', analysis_payload["meta"]["trace_id"], json.dumps(report_payload), 'FLAGGED' if is_flagged else 'RESOLVED'))
+                    """, ('SERVICE_EVIDENCE', 'risk_scoring_sync', analysis_payload["meta"]["trace_id"], json.dumps(report_payload), 'FLAGGED' if is_flagged else 'RESOLVED'))
 
                 conn.commit()
         except Exception as e:
