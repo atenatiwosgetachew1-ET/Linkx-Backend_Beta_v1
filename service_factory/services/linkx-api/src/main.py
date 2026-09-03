@@ -43,6 +43,7 @@ from io_sockets import register_socket_handlers
 from api.STR_link_analysis import STR_link_analysis_api
 from api.risk_scoring_api import risk_scoring_api
 from api.risk_scoring_sync_api import risk_scoring_sync_api
+from api.unified_risk_scoring_api import unified_risk_scoring_api
 from api.ML_link_analysis import ML_link_analysis_api
 from api.rule_engine_analysis import RULE_link_analysis_api
 from api.ai_service import ai_service_api
@@ -108,6 +109,7 @@ app.add_url_rule("/api/auth/exchange", view_func=exchange_parent_oauth_code, met
 app.register_blueprint(STR_link_analysis_api, url_prefix="/api")
 app.register_blueprint(risk_scoring_api, url_prefix="/api/risk_scoring")
 app.register_blueprint(risk_scoring_sync_api, url_prefix="/api/risk_scoring")
+app.register_blueprint(unified_risk_scoring_api, url_prefix="/api/v1/risk-score")
 app.register_blueprint(ML_link_analysis_api, url_prefix="/api")
 app.register_blueprint(RULE_link_analysis_api, url_prefix="/api")
 app.register_blueprint(ai_service_api, url_prefix="/ai")
