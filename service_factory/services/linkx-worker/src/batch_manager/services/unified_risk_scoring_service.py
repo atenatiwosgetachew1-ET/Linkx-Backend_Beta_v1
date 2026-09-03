@@ -7,7 +7,7 @@ from batch_manager.utils.postgres_utils import get_postgres_connection
 def _send_webhook(account_no, job_id, payload):
     """Phase 4: Webhook Delivery"""
     callback_url = "https://risk-platform.local/api/v1/aggregate/callback"
-    api_key = os.getenv("AGGREGATOR_API_KEY")
+    api_key = os.getenv("RISK_SCORING_API_KEY")
     
     headers = {
         "Host": "risk-platform.local",
