@@ -84,8 +84,9 @@ def process_unified_job(payload):
                     from batch_manager.analyzing.LA_graphs_script import fetch_graph
                     graph_result = fetch_graph("relationship", "fetch", session_id, "*", batch="")
                     if not graph_result.get("error"):
-                        graph_entities["nodes"] = graph_result.get("nodes", [])
-                        graph_entities["edges"] = graph_result.get("edges", [])
+                        # Truncate to max 25 nodes and edges for the Aggregator preview
+                        graph_entities["nodes"] = graph_result.get("nodes", [])[:25]
+                        graph_entities["edges"] = graph_result.get("edges", [])[:25]
                 except Exception as e:
                     print(f"[UnifiedRiskScoring] Failed to fetch graph entities: {e}")
 
