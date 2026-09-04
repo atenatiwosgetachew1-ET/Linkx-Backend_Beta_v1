@@ -656,6 +656,9 @@ def _source_id_from_graph_payload(data):
     source_id = _clean_id(data.get("source_id"))
     if source_id:
         return source_id
+    trace_id = _clean_id(data.get("trace_id"))
+    if trace_id:
+        return trace_id
     session_id = _clean_id(data.get("session_id"))
     window_id = _clean_id(data.get("window_id"))
     if session_id and window_id:
