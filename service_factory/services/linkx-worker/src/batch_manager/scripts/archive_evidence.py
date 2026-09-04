@@ -7,13 +7,24 @@ import sys
 
 # Ensure imports work when run as a standalone script
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
+
+# Explicitly load environment variables for standalone cron jobs
+try:
+    from dotenv import load_dotenv
+    if os.path.exists('/opt/linkx-worker/.env'):
+        load_dotenv('/opt/linkx-worker/.env')
+    else:
+        # Fallback for dev environment
+        load_dotenv(os.path.join(os.path.dirname(__file__), '../../../../../.env'))
+except ImportError:
+    pass
 from batch_manager.utils.postgres_utils import get_postgres_connection
 
 ARCHIVE_DIR = "/mnt/linkx-artifacts/evidence_archive"
 
 def archive_old_evidence(days):
     os.makedirs(ARCHIVE_DIR, exist_ok=True)
-    cutoff_date = datetime.utcnow() - timedelta(days=days)
+    cutoff_date = datetime.now(datetime.UTC) - timedelta(days=days)
 
     with get_postgres_connection() as conn:
         with conn.cursor() as cur:
