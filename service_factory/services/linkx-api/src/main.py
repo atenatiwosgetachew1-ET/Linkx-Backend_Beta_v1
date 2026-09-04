@@ -2043,10 +2043,8 @@ def get_graph():
 
     if not source_id:
         return jsonify({"message": "validation_error", "detail": "source_id_or_session_window_required"}), 400
-    if not _graph_accessible_source(source_id, actor):
-        return jsonify({"message": "forbidden"}), 403
 
-    if action == "evidence":
+    if action == "evidence" or data.get("relationship") == "evidence":
         try:
             from batch_manager.utils.postgres_utils import get_postgres_connection
             import json
@@ -2072,6 +2070,10 @@ def get_graph():
         except Exception as e:
             current_app.logger.exception('evidence graph fetch failed')
             return jsonify({'message': 'failed!', 'error': str(e)}), 500
+
+    # Only enforce standard Neo4j analysis ownership on non-evidence graphs
+    if not _graph_accessible_source(source_id, actor):
+        return jsonify({"message": "forbidden"}), 403
 
     if action == "relationship":
         try:
