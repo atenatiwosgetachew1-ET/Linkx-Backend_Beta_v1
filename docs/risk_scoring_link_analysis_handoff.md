@@ -184,3 +184,41 @@ sudo cp -r /opt/linkx-backend-update/service_factory/services/linkx-worker/src/.
 sudo systemctl restart linkx-worker
 sudo systemctl status linkx-worker --no-pager -n 5
 ```
+
+---
+
+## 6. Data Lifecycle & Disaster Recovery (Evidence Archival)
+
+Due to the size of the graph JSON blobs stored in `link_analysis_evidence`, keeping them in active PostgreSQL indefinitely will degrade performance. A tiered data lifecycle architecture is configured.
+
+### 6.1 Architecture
+* **Hot Tier (0-180 Days):** Heavy graph data is stored live in PostgreSQL `link_analysis_evidence` table for instant querying by the frontend via `POST /get_graph` (`id: "evidence"`).
+* **Cold Tier (> 180 Days):** A systemd-scheduled worker extracts the heavy JSON payloads, compresses them to `.json.gz`, deposits them into `/mnt/linkx-artifacts/evidence_archive/`, and updates the active Postgres row with a tiny tombstone (`{"archived": true}`).
+* **Disaster Recovery Backup:** The compressed archives are automatically swept up by the existing `linkx-artifacts-backup.timer` and `rsync`ed off-host to `172.20.107.94` using the `sync-backups-offhost.sh` pipeline.
+
+### 6.2 Archival Timer Verification (Server 3 / `node-21`)
+The evidence cleanup is orchestrated via systemd exactly matching the disaster recovery topology.
+
+**Check if the automated archival timer is running and scheduled:**
+```bash
+sudo systemctl list-timers | grep evidence
+# Expected output: ... linkx-evidence-archive.timer ...
+```
+
+**Check the logs of the last archival run:**
+```bash
+sudo journalctl -u linkx-evidence-archive.service -n 20 --no-pager
+# Expected output: [EvidenceArchiver] Successfully compressed and archived ... graphs to /mnt/linkx-artifacts/evidence_archive
+```
+
+### 6.3 Disaster Recovery Sync Verification
+To verify the evidence has safely crossed the network to the disaster backup server (`172.20.107.94`), trigger the local artifact backup manually and then log into the remote server:
+
+```bash
+# 1. (Optional) Run the artifact packaging and network sync manually on Node-21
+sudo BACKUP_DIR=/opt/linkx-backups/artifacts /opt/linkx-backend-update/service_factory/scripts/backup-artifacts.sh
+sudo /opt/linkx-backend-update/service_factory/scripts/sync-backups-offhost.sh
+
+# 2. Check the disaster server
+ssh backup-user@172.20.107.94 "ls -lh /srv/linkx-backups/*"
+```
