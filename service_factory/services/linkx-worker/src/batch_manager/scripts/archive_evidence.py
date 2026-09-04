@@ -2,7 +2,7 @@ import os
 import json
 import gzip
 import argparse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import sys
 
 # Ensure imports work when run as a standalone script
@@ -24,7 +24,7 @@ ARCHIVE_DIR = "/mnt/linkx-artifacts/evidence_archive"
 
 def archive_old_evidence(days):
     os.makedirs(ARCHIVE_DIR, exist_ok=True)
-    cutoff_date = datetime.now(datetime.UTC) - timedelta(days=days)
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
 
     with get_postgres_connection() as conn:
         with conn.cursor() as cur:
