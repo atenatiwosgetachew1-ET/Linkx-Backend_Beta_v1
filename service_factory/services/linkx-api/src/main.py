@@ -2046,6 +2046,33 @@ def get_graph():
     if not _graph_accessible_source(source_id, actor):
         return jsonify({"message": "forbidden"}), 403
 
+    if action == "evidence":
+        try:
+            from batch_manager.utils.postgres_utils import get_postgres_connection
+            import json
+            with get_postgres_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT response_payload FROM link_analysis_evidence WHERE trace_id = %s", (source_id,))
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        payload = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+                        graph_data = payload.get("data", {}).get("graph", {"nodes": [], "edges": []})
+                        return jsonify({
+                            "message": "success",
+                            "results": {
+                                "nodes": graph_data.get("nodes", []),
+                                "edges": graph_data.get("edges", []),
+                                "source_id": source_id,
+                                "graph_session_id": source_id,
+                                "relationship": "*",
+                                "graph": graph_data
+                            }
+                        }), 200
+            return jsonify({"message": "not_found", "detail": "evidence_not_found"}), 404
+        except Exception as e:
+            current_app.logger.exception('evidence graph fetch failed')
+            return jsonify({'message': 'failed!', 'error': str(e)}), 500
+
     if action == "relationship":
         try:
             if _async_worker_jobs_enabled():
