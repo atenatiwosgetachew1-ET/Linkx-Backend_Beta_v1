@@ -1,0 +1,8 @@
+[Unit]
+Description=LinkX Evidence Archival Service (PostgreSQL to Artifacts)
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/linkx-worker
+ExecStart=/opt/linkx-worker/.venv/bin/python src/batch_manager/scripts/archive_evidence.py --days 180

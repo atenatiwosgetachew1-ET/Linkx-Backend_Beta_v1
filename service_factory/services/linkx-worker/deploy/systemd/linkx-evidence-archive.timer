@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Timer for LinkX Evidence Archival Service
+
+[Timer]
+OnCalendar=*-*-* 01:00:00
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target
