@@ -135,7 +135,21 @@ def consume_firehose():
                 if is_watermark:
                     print(f"[xVigilance-Consumer] Received WATERMARK for window {data.get('window_id')}. Flushing buffer...", flush=True)
                     if buffer:
+
                         df = pd.DataFrame(buffer)
+                        
+                        # --- INGESTION NORMALIZATION LAYER ---
+                        # Maps any incoming schema variations to the universal rules schema
+                        mappings = {
+                            "SENDERACCOUNTID": "ACCOUNTNO",
+                            "RECEIVERACCOUNTID": "BENACCOUNTNO",
+                            "CREATEDDATE": "TRANSACTIONDATE",
+                            "TRANSFERAMOUNT": "AMOUNTINBIRR",
+                            # Add future mappings here...
+                        }
+                        df = df.rename(columns=mappings)
+                        # -------------------------------------
+
                         print(f"[xVigilance-Consumer] Ingesting {len(df)} remaining records to Neo4j...", flush=True)
                         realtime_neo4j_message_ingest(payload, df, batch_number)
                         buffer.clear()
