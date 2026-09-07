@@ -9,7 +9,7 @@ import sys
 from batch_manager.services.risk_scoring_kafka_service import DEFAULT_KAFKA_BROKERS, _neo4j_credentials, _base_analyzer_payload
 from batch_manager.analyzing.analyzer import realtime_neo4j_message_ingest, rule_to_node_label
 from batch_manager.services.risk_scoring_kafka_service import create_neo4j_driver
-from db import get_pg_connection
+import psycopg
 import uuid
 import json
 from kafka import KafkaConsumer
@@ -54,7 +54,7 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id):
     print(f"[xVigilance-Consumer] 🚨 Detective detected {len(anomalies)} anomalous records! Promoting to Evidence Dashboard...", flush=True)
     
     try:
-        with get_pg_connection() as conn:
+        with psycopg.connect(os.getenv('LINKX_POSTGRES_DSN')) as conn:
             with conn.cursor() as cur:
                 for anomaly in anomalies:
                     evidence_json = json.dumps({
