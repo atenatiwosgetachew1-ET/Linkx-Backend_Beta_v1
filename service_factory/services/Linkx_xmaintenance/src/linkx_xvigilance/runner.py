@@ -36,11 +36,11 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
     # --- Phase 1: Initialize Kafka Producer ---
     kafka_brokers = os.getenv("LINKX_KAFKA_BOOTSTRAP_SERVERS", "172.27.23.106:9092")
     try:
-        from confluent_kafka import Producer
-        kafka_producer = Producer({'bootstrap.servers': kafka_brokers})
+        from kafka import KafkaProducer as Producer
+        kafka_producer = Producer(bootstrap_servers=kafka_brokers, value_serializer=lambda v: json.dumps(v).encode('utf-8'))
         kafka_available = True
     except ImportError:
-        print("[xvigilance] Warning: confluent_kafka not installed. Kafka streaming disabled.", flush=True)
+        print("[xvigilance] Warning: kafka-python not installed. Kafka streaming disabled.", flush=True)
         kafka_available = False
         kafka_producer = None
     
@@ -122,14 +122,11 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
                             ]
                             
                             # Fire to Kafka (internal buffer handles efficient batching)
-                            kafka_producer.produce(
+                            kafka_producer.send(
                                 topic=kafka_topic,
-                                value=json.dumps(txn).encode('utf-8'),
+                                value=txn,
                                 headers=headers
                             )
-                        
-                        # Trigger delivery callbacks for the page
-                        kafka_producer.poll(0)
                     # =========================================================================
 
 
@@ -140,9 +137,9 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
                         "window_id": window_start.isoformat(),
                         "total_records": total_records
                     }
-                    kafka_producer.produce(
+                    kafka_producer.send(
                         topic=kafka_topic,
-                        value=json.dumps(watermark).encode('utf-8'),
+                        value=watermark,
                         headers=[("source", b"xvigilance-daemon"), ("session_id", b"XVIGILANCE_FINDINGS"), ("type", b"watermark")]
                     )
                     kafka_producer.flush()
@@ -196,9 +193,9 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
                         "window_id": window_start.isoformat(),
                         "total_records": total_records
                     }
-                    kafka_producer.produce(
+                    kafka_producer.send(
                         topic=kafka_topic,
-                        value=json.dumps(watermark).encode('utf-8'),
+                        value=watermark,
                         headers=[("source", b"xvigilance-daemon"), ("session_id", b"XVIGILANCE_FINDINGS"), ("type", b"watermark")]
                     )
                     kafka_producer.flush()
