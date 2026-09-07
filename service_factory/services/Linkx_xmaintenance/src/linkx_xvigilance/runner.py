@@ -37,10 +37,20 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
     kafka_brokers = os.getenv("LINKX_KAFKA_BOOTSTRAP_SERVERS", "172.27.23.106:9092")
     try:
         from kafka import KafkaProducer as Producer
-        kafka_producer = Producer(bootstrap_servers=kafka_brokers, value_serializer=lambda v: json.dumps(v).encode('utf-8'))
+        import json
+        kafka_producer = Producer(
+            bootstrap_servers=kafka_brokers.split(',') if ',' in kafka_brokers else kafka_brokers,
+            value_serializer=lambda v: json.dumps(v).encode('utf-8')
+        )
         kafka_available = True
+        print(f"[xvigilance] Successfully connected to Kafka Brokers: {kafka_brokers}", flush=True)
     except ImportError:
         print("[xvigilance] Warning: kafka-python not installed. Kafka streaming disabled.", flush=True)
+        kafka_available = False
+        kafka_producer = None
+    except Exception as e:
+        print(f"[xvigilance] CRITICAL: Could not connect to Kafka broker at {kafka_brokers}. Error: {e}", flush=True)
+        print("[xvigilance] Streaming is temporarily disabled until broker recovers.", flush=True)
         kafka_available = False
         kafka_producer = None
     
