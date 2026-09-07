@@ -120,8 +120,6 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
 
                     if total_records >= 500:
                         break
-                    if total_records >= 500:
-                        break
                     # =========================================================================
                     # PHASE 1: KAFKA FIREHOSE (Governed Routing)
                     if kafka_available and kafka_producer:
@@ -141,10 +139,7 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
                                 value=txn,
                                 headers=headers
                             )
-                            if total_records - len(page) + (page.index(txn) + 1) >= 500:
-                                break
-                    if total_records >= 500:
-                        break
+
                     if total_records >= 500:
                         break
                     # =========================================================================
