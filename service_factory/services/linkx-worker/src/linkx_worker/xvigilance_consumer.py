@@ -153,6 +153,14 @@ def consume_firehose():
                         
                         # --- DB-DRIVEN NORMALIZATION LAYER ---
                         db_mappings = fetch_db_mapping()
+                        
+                        # Handle exact time split if mapped to TRANSACTIONDATE
+                        if "CREATEDDATE" in df.columns and db_mappings.get("CREATEDDATE") == "TRANSACTIONDATE":
+                            import pandas as pd
+                            df["TRANSACTIONTIME"] = pd.to_datetime(df["CREATEDDATE"], unit='ms').dt.strftime('%H:%M:%S')
+                            df["TRANSACTIONDATE"] = pd.to_datetime(df["CREATEDDATE"], unit='ms').dt.strftime('%Y-%m-%d')
+                            del db_mappings["CREATEDDATE"]
+                            
                         if db_mappings:
                             df = df.rename(columns=db_mappings)
                         
