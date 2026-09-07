@@ -98,6 +98,10 @@ def get_default_session_config(session_id):
         "search_api_endpoint_es_strict": os.getenv("LINKX_ES_STRICT_ENDPOINT", "api/search/uii"),
         "search_api_endpoint_hive_fuzzy": os.getenv("LINKX_HIVE_FUZZY_ENDPOINT", "api/search/individual"),
         "search_api_endpoint_hive_strict": os.getenv("LINKX_HIVE_STRICT_ENDPOINT", "api/search/uii"),
+        "es_direct_base_url": os.getenv("LINKX_ES_DIRECT_BASE_URL", ""),
+        "es_direct_index": os.getenv("LINKX_ES_DIRECT_INDEX", "mobile_banking_transactions"),
+        "es_timestamp_column": os.getenv("LINKX_ES_TIMESTAMP_COLUMN", "CREATEDDATE"),
+        "es_scroll_page_size": int(os.getenv("XVIGILANCE_SCROLL_PAGE_SIZE", "10000")),
         "search_columns_strict": _env_list(
             "LINKX_SEARCH_COLUMNS_STRICT",
             ["transactionid", "businessmobileno", "accountno", "benaccountno", "bentelno", "transactiondate", "transactiontime"],
