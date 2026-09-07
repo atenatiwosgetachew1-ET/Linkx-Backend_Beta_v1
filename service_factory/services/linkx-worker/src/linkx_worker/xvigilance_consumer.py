@@ -159,9 +159,6 @@ def consume_firehose():
                             
                         # Format TRANSACTIONDATE if it is an epoch millisecond timestamp
                         if "TRANSACTIONDATE" in df.columns:
-                            import pandas as pd
-                            import numpy as np
-                            
                             # Handle duplicate columns (e.g. mapping CREATEDDATE -> TRANSACTIONDATE when TRANSACTIONDATE already exists)
                             df = df.loc[:,~df.columns.duplicated()].copy()
                             
