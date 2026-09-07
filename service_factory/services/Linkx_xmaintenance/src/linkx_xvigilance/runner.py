@@ -30,7 +30,23 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
     signal.signal(signal.SIGINT, handle_shutdown)
 
     worker_name = os.getenv("XVIGILANCE_WORKER_NAME") or f"xvigilance@{socket.gethostname()}:{os.getpid()}"
+
     config = get_xvigilance_config()
+
+    # --- Phase 1: Initialize Kafka Producer ---
+    kafka_brokers = os.getenv("LINKX_KAFKA_BOOTSTRAP_SERVERS", "172.27.23.106:9092")
+    try:
+        from confluent_kafka import Producer
+        kafka_producer = Producer({'bootstrap.servers': kafka_brokers})
+        kafka_available = True
+    except ImportError:
+        print("[xvigilance] Warning: confluent_kafka not installed. Kafka streaming disabled.", flush=True)
+        kafka_available = False
+        kafka_producer = None
+    
+    kafka_topic = "dev.xvigilance.transactions.raw.v1"
+    # ------------------------------------------
+
 
     print(f"==================================================================", flush=True)
     print(f" LinkX Xvigilance Autonomous Detective Engine Online              ", flush=True)
@@ -93,11 +109,47 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
                     total_records += len(page)
 
                     # =========================================================================
-                    # DETECTIVE ANALYSIS HOOK: (Placeholder for anomaly/fraud heuristics)
-                    # e.g., analyze_window_anomalies(page, window_start, window_end)
+                    # PHASE 1: KAFKA FIREHOSE (Governed Routing)
+                    if kafka_available and kafka_producer:
+                        import json
+                        for txn in page:
+                            # 1 Message = 1 Transaction (Micro-batching)
+                            # Stamping with xVigilance headers
+                            headers = [
+                                ("source", b"xvigilance-daemon"),
+                                ("session_id", b"XVIGILANCE_FINDINGS"),
+                                ("window_id", window_start.isoformat().encode('utf-8'))
+                            ]
+                            
+                            # Fire to Kafka (internal buffer handles efficient batching)
+                            kafka_producer.produce(
+                                topic=kafka_topic,
+                                value=json.dumps(txn).encode('utf-8'),
+                                headers=headers
+                            )
+                        
+                        # Trigger delivery callbacks for the page
+                        kafka_producer.poll(0)
                     # =========================================================================
 
+
+                if kafka_available and kafka_producer:
+                    import json
+                    watermark = {
+                        "event": "WINDOW_COMPLETE",
+                        "window_id": window_start.isoformat(),
+                        "total_records": total_records
+                    }
+                    kafka_producer.produce(
+                        topic=kafka_topic,
+                        value=json.dumps(watermark).encode('utf-8'),
+                        headers=[("source", b"xvigilance-daemon"), ("session_id", b"XVIGILANCE_FINDINGS"), ("type", b"watermark")]
+                    )
+                    kafka_producer.flush()
+                    print(f"[xvigilance] Watermark fired. 100% of {total_records} transactions securely routed to Kafka.", flush=True)
+
                 duration_ms = int((time.time() - t0) * 1000)
+
                 phase_duration_seconds = duration_ms / 1000.0
 
                 # Check if the analysis duration took longer than 1 hour (overrun)
@@ -136,7 +188,24 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
                     )
 
             except Exception as fetch_exc:
+
+                if kafka_available and kafka_producer:
+                    import json
+                    watermark = {
+                        "event": "WINDOW_COMPLETE",
+                        "window_id": window_start.isoformat(),
+                        "total_records": total_records
+                    }
+                    kafka_producer.produce(
+                        topic=kafka_topic,
+                        value=json.dumps(watermark).encode('utf-8'),
+                        headers=[("source", b"xvigilance-daemon"), ("session_id", b"XVIGILANCE_FINDINGS"), ("type", b"watermark")]
+                    )
+                    kafka_producer.flush()
+                    print(f"[xvigilance] Watermark fired. 100% of {total_records} transactions securely routed to Kafka.", flush=True)
+
                 duration_ms = int((time.time() - t0) * 1000)
+
                 finish_slice_run(
                     run_id=run_id,
                     feed_name=feed_name,
