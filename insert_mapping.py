@@ -20,7 +20,18 @@ with psycopg.connect(dsn) as conn:
         # Ensure session exists first!
         cur.execute("SELECT session_id FROM analysis_sessions WHERE session_id = 'xvigilance_system'")
         if not cur.fetchone():
-            cur.execute("INSERT INTO analysis_sessions (session_id, status, type) VALUES ('xvigilance_system', 'completed', 'system')")
+            try:
+                cur.execute("INSERT INTO analysis_sessions (session_id) VALUES ('xvigilance_system')")
+            except Exception as e:
+                # If there are NOT NULL constraints, we can inspect them
+                conn.rollback()
+                cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'analysis_sessions' AND is_nullable = 'NO' AND column_default IS NULL")
+                cols = [r[0] for r in cur.fetchall()]
+                # Construct dynamic insert with dummy values for required columns
+                cols.remove('session_id') if 'session_id' in cols else None
+                keys = ['session_id'] + cols
+                vals = ["'xvigilance_system'"] + ["'dummy'" for _ in cols]
+                cur.execute(f"INSERT INTO analysis_sessions ({','.join(keys)}) VALUES ({','.join(vals)})")
             
         cur.execute("SELECT config FROM session_configs WHERE session_id = 'xvigilance_system' AND window_id = ''")
         row = cur.fetchone()
