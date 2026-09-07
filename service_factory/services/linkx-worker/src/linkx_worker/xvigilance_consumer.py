@@ -84,7 +84,7 @@ def consume_firehose():
 
     topic = "dev.xvigilance.transactions.raw.v1"
     brokers = os.getenv("LINKX_KAFKA_BOOTSTRAP_SERVERS", "172.27.23.106:9092")
-    group_id = "linkx-xvigilance-fast-test"
+    group_id = "linkx-xvigilance-final-trial"
     session_id = "xvigilance-daemon"
     
     server_list = [b.strip() for b in brokers.split(",") if b.strip()]
