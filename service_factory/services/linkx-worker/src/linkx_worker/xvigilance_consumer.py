@@ -145,9 +145,14 @@ def consume_firehose():
                             "RECEIVERACCOUNTID": "BENACCOUNTNO",
                             "CREATEDDATE": "TRANSACTIONDATE",
                             "TRANSFERAMOUNT": "AMOUNTINBIRR",
-                            # Add future mappings here...
                         }
                         df = df.rename(columns=mappings)
+                        
+                        # Duplicate to lowercase to satisfy the analyzer's relationship mapper
+                        if "ACCOUNTNO" in df.columns:
+                            df["accountno"] = df["ACCOUNTNO"]
+                        if "BENACCOUNTNO" in df.columns:
+                            df["benaccountno"] = df["BENACCOUNTNO"]
                         # -------------------------------------
 
                         print(f"[xVigilance-Consumer] Ingesting {len(df)} remaining records to Neo4j...", flush=True)
