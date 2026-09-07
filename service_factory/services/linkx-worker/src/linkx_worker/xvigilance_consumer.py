@@ -161,6 +161,10 @@ def consume_firehose():
                         if "TRANSACTIONDATE" in df.columns:
                             import pandas as pd
                             import numpy as np
+                            
+                            # Handle duplicate columns (e.g. mapping CREATEDDATE -> TRANSACTIONDATE when TRANSACTIONDATE already exists)
+                            df = df.loc[:,~df.columns.duplicated()].copy()
+                            
                             # Safely convert to numeric, coercing errors to NaN. If it's a valid timestamp string like "1772363657000", it becomes numeric.
                             numeric_dates = pd.to_numeric(df["TRANSACTIONDATE"], errors='coerce')
                             # If at least one row is valid numeric, and it's large enough to be a millisecond epoch (e.g. > 1 trillion)
@@ -198,6 +202,9 @@ def consume_firehose():
                     batch_number += 1
 
         except Exception as e:
+            print(f"[xVigilance-Consumer] ERROR in consumer loop: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
             if not RUNNING:
                 break
             time.sleep(0.5)
