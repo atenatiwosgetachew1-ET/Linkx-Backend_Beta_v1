@@ -51,9 +51,28 @@ def consume_firehose():
     batch_size = 500
     batch_number = 1
 
-    credentials = _neo4j_credentials(session_id)
-    payload = _base_analyzer_payload(session_id, credentials)
-    payload["rule"] = "bank transactions"
+    credentials = {
+        "url": os.getenv("LINKX_NEO4J_URL", "bolt://172.27.23.43:7687"),
+        "username": os.getenv("LINKX_NEO4J_USERNAME", "neo4j"),
+        "password": os.getenv("LINKX_NEO4J_PASSWORD", "password"),
+        "session_id": session_id,
+    }
+    
+    payload = {
+        "id": "batch_data",
+        "type": "new",
+        "session_id": session_id,
+        "run_id": session_id,
+        "spark_conf": {
+            "storage_ip": os.getenv("LINKX_ACTIVE_STORAGE_ADDRESS", "172.27.23.43:5000"),
+            "spark_port": os.getenv("LINKX_SPARK_PORT", "7077"),
+        },
+        "tool": "neo4j",
+        "tool_credentials": credentials,
+        "log_file": f"{session_id}.log",
+        "action": "Link Analysis",
+        "rule": "bank transactions"
+    }
 
     while RUNNING:
         try:
