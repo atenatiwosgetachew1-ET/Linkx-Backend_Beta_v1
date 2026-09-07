@@ -64,13 +64,13 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id):
                     })
                     cur.execute("""
                         INSERT INTO link_analysis_evidence (
-                            id, session_id, entity_id, is_flagged, 
+                            trace_id, session_id, entity_id, event_type, is_flagged, 
                             risk_score, evidence_data, request_payload, analyzed_at
                         ) VALUES (
-                            %s, %s, %s, true, 
+                            %s, %s, %s, 'XVIGILANCE_BATCH_ANOMALY', true, 
                             99.9, %s::jsonb, '{}'::jsonb, NOW()
                         )
-                    """, (str(uuid.uuid4()), session_id, anomaly["entity_id"], evidence_json))
+                    """, (str(uuid.uuid4()), 'XVIGILANCE_FINDINGS', anomaly["entity_id"], evidence_json))
             conn.commit()
         print(f"[xVigilance-Consumer] Successfully promoted {len(anomalies)} alerts to the Postgres Dashboard!", flush=True)
     except Exception as e:
