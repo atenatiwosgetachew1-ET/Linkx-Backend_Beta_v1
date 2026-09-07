@@ -41,4 +41,8 @@ def get_xvigilance_config():
         "page_size": int(os.getenv("XVIGILANCE_PAGE_SIZE", "50000")),
         "request_timeout_seconds": int(os.getenv("XVIGILANCE_REQUEST_TIMEOUT", "60")),
         "auth_header": os.getenv("LINKX_ELASTIC_API_AUTHORIZATION"),
+        "es_direct_base_url": os.getenv("LINKX_ES_DIRECT_BASE_URL"),
+        "es_direct_index": os.getenv("LINKX_ES_DIRECT_INDEX", "mobile_banking_transactions"),
+        "es_timestamp_column": os.getenv("LINKX_ES_TIMESTAMP_COLUMN", "CREATEDDATE"),
+        "es_scroll_page_size": int(os.getenv("XVIGILANCE_SCROLL_PAGE_SIZE", "10000")),
     }
