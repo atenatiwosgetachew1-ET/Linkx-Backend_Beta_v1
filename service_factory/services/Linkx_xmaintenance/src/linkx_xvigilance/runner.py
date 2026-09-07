@@ -54,7 +54,7 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
         kafka_available = False
         kafka_producer = None
     
-    kafka_topic = "dev.xvigilance.transactions.raw.v1"
+    kafka_topic = "dev.xvigilance.transactions.raw.v2"
     # ------------------------------------------
 
 

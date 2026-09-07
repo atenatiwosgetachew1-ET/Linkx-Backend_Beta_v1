@@ -82,7 +82,7 @@ def consume_firehose():
     signal.signal(signal.SIGTERM, handle_shutdown)
     signal.signal(signal.SIGINT, handle_shutdown)
 
-    topic = "dev.xvigilance.transactions.raw.v1"
+    topic = "dev.xvigilance.transactions.raw.v2"
     brokers = os.getenv("LINKX_KAFKA_BOOTSTRAP_SERVERS", "172.27.23.106:9092")
     group_id = "linkx-xvigilance-super-final-500"
     session_id = "xvigilance-daemon"
