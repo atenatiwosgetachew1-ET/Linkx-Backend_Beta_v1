@@ -228,9 +228,8 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
                 print(f"[xvigilance] Phase failed for window [{start_str} -> {end_str}]: {fetch_exc}", flush=True)
                 time.sleep(15.0)
 
-            if once:
-                print("[xvigilance] Run-once mode finished.", flush=True)
-                break
+            print("[xvigilance] DEV LIMIT: Hard stop after 1 window.", flush=True)
+            break
 
         except Exception as loop_exc:
             print(f"[xvigilance] Daemon error: {loop_exc}", flush=True)
