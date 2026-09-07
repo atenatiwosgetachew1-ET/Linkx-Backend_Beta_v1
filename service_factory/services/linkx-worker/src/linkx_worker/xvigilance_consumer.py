@@ -154,15 +154,19 @@ def consume_firehose():
                         # --- DB-DRIVEN NORMALIZATION LAYER ---
                         db_mappings = fetch_db_mapping()
                         
-                        # Handle exact time split if mapped to TRANSACTIONDATE
-                        if "CREATEDDATE" in df.columns and db_mappings.get("CREATEDDATE") == "TRANSACTIONDATE":
-                            import pandas as pd
-                            df["TRANSACTIONTIME"] = pd.to_datetime(df["CREATEDDATE"], unit='ms').dt.strftime('%H:%M:%S')
-                            df["TRANSACTIONDATE"] = pd.to_datetime(df["CREATEDDATE"], unit='ms').dt.strftime('%Y-%m-%d')
-                            del db_mappings["CREATEDDATE"]
-                            
                         if db_mappings:
                             df = df.rename(columns=db_mappings)
+                            
+                        # Format TRANSACTIONDATE if it is an epoch millisecond timestamp
+                        if "TRANSACTIONDATE" in df.columns:
+                            import pandas as pd
+                            import numpy as np
+                            # Safely convert to numeric, coercing errors to NaN. If it's a valid timestamp string like "1772363657000", it becomes numeric.
+                            numeric_dates = pd.to_numeric(df["TRANSACTIONDATE"], errors='coerce')
+                            # If at least one row is valid numeric, and it's large enough to be a millisecond epoch (e.g. > 1 trillion)
+                            if numeric_dates.notna().any() and numeric_dates.max() > 1000000000000:
+                                df["TRANSACTIONTIME"] = pd.to_datetime(numeric_dates, unit='ms').dt.strftime('%H:%M:%S')
+                                df["TRANSACTIONDATE"] = pd.to_datetime(numeric_dates, unit='ms').dt.strftime('%Y-%m-%d')
                         
                         # Duplicate to lowercase to satisfy the analyzer's relationship mapper
                         if "ACCOUNTNO" in df.columns:
