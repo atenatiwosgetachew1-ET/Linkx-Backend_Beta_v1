@@ -60,6 +60,7 @@ def stream_window_records(
             records = [hit.get('_source', {}) for hit in hits]
             if records:
                 yield records[:500]
+                break[:500]
                 break
             
             # Fetch next batch
