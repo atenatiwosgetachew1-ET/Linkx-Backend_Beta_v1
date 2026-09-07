@@ -77,6 +77,19 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id):
         print(f"[xVigilance-Consumer] Error inserting evidence to Postgres: {e}", flush=True)
 
 
+
+def fetch_db_mapping():
+    try:
+        with psycopg.connect(os.getenv('LINKX_POSTGRES_DSN')) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT config FROM session_configs WHERE session_id = 'xvigilance_system' AND window_id = ''")
+                row = cur.fetchone()
+                if row and row[0] and "column_mapping" in row[0]:
+                    return row[0]["column_mapping"]
+    except Exception as e:
+        print(f"[xVigilance-Consumer] Failed to load DB mapping: {e}", flush=True)
+    return {}
+
 def consume_firehose():
     global RUNNING
     signal.signal(signal.SIGTERM, handle_shutdown)
@@ -138,15 +151,10 @@ def consume_firehose():
 
                         df = pd.DataFrame(buffer)
                         
-                        # --- INGESTION NORMALIZATION LAYER ---
-                        # Maps any incoming schema variations to the universal rules schema
-                        mappings = {
-                            "SENDERACCOUNTID": "ACCOUNTNO",
-                            "RECEIVERACCOUNTID": "BENACCOUNTNO",
-                            "CREATEDDATE": "TRANSACTIONDATE",
-                            "TRANSFERAMOUNT": "AMOUNTINBIRR",
-                        }
-                        df = df.rename(columns=mappings)
+                        # --- DB-DRIVEN NORMALIZATION LAYER ---
+                        db_mappings = fetch_db_mapping()
+                        if db_mappings:
+                            df = df.rename(columns=db_mappings)
                         
                         # Duplicate to lowercase to satisfy the analyzer's relationship mapper
                         if "ACCOUNTNO" in df.columns:
