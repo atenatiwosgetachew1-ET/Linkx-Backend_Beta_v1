@@ -18,9 +18,9 @@ mapping = {
 with psycopg.connect(dsn) as conn:
     with conn.cursor() as cur:
         # Ensure session exists first!
-        cur.execute("SELECT id FROM analysis_sessions WHERE id = 'xvigilance_system'")
+        cur.execute("SELECT session_id FROM analysis_sessions WHERE session_id = 'xvigilance_system'")
         if not cur.fetchone():
-            cur.execute("INSERT INTO analysis_sessions (id, status, type) VALUES ('xvigilance_system', 'completed', 'system')")
+            cur.execute("INSERT INTO analysis_sessions (session_id, status, type) VALUES ('xvigilance_system', 'completed', 'system')")
             
         cur.execute("SELECT config FROM session_configs WHERE session_id = 'xvigilance_system' AND window_id = ''")
         row = cur.fetchone()
