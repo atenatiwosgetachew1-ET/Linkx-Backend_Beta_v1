@@ -65,10 +65,10 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id):
                     cur.execute("""
                         INSERT INTO link_analysis_evidence (
                             trace_id, session_id, entity_id, event_type, is_flagged, 
-                            risk_score, evidence_data, request_payload, analyzed_at
+                            evidence_data, request_payload, analyzed_at
                         ) VALUES (
                             %s, %s, %s, 'XVIGILANCE_BATCH_ANOMALY', true, 
-                            99.9, %s::jsonb, '{}'::jsonb, NOW()
+                            %s::jsonb, '{}'::jsonb, NOW()
                         )
                     """, (str(uuid.uuid4()), 'XVIGILANCE_FINDINGS', anomaly["entity_id"], evidence_json))
             conn.commit()
