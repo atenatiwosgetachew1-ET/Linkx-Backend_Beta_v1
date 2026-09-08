@@ -153,6 +153,7 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id):
                         }
                     }
                     
+                    evidence_json = json.dumps(handoff_payload, default=str)
                     # 2. POST to Risk Scoring Async Endpoint
                     try:
                         import requests
@@ -162,7 +163,7 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id):
                         api_key = os.getenv("LINK_ANALYSIS_API_KEY") or os.getenv("LINKX_RISK_SCORING_API_KEY", "")
                         headers = {"X-API-Key": api_key, "Content-Type": "application/json"} if api_key else {"Content-Type": "application/json"}
                         
-                        resp = requests.post(api_url, json=handoff_payload, headers=headers, timeout=5)
+                        resp = requests.post(api_url, data=evidence_json, headers=headers, timeout=5)
                         print(f"[xVigilance-Escalation] Posted findings to Risk Scoring API. Response: {resp.status_code}", flush=True)
                     except Exception as e:
                         print(f"[xVigilance-Escalation] Warning: External Risk Scoring API unreachable: {e}", flush=True)
