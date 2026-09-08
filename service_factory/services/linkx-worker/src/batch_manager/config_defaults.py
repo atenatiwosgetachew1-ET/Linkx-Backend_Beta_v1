@@ -11,6 +11,8 @@ def _auto_load_dotenv():
         "/opt/linkx-worker/.env",
         "/opt/linkx-backend-update/.env",
         "/opt/linkx-api/.env",
+        "/opt/Linkx_xmaintenance/.env",
+        "/opt/Linkx_xmaintenance/src/.env",
         "/var/www/linkx-backend/.env",
     ]
     for env_path in candidate_paths:
