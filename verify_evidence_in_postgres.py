@@ -1,6 +1,9 @@
 import psycopg
 import os
 import sys
+import sys
+sys.path.append('/opt/linkx-worker/src')
+from batch_manager import config_defaults
 
 # Try to load env if available
 try:
