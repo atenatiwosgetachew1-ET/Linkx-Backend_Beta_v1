@@ -18,7 +18,7 @@ try:
     with psycopg.connect(dsn) as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT entity_id, event_type, is_flagged, analyzed_at 
+                SELECT response_payload 
                 FROM link_analysis_evidence 
                 ORDER BY analyzed_at DESC 
                 LIMIT 5;
