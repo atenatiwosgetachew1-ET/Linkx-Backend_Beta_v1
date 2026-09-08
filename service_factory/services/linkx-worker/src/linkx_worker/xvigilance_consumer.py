@@ -83,7 +83,7 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id):
         print(f"[xVigilance-Consumer] No anomalies found in window {window_id}. Graph is perfectly clean.", flush=True)
         return
         
-    print(f"[xVigilance-Consumer] 🚨 Detective detected {total_anomalies} anomalous records! Generating unified risk scoring payloads...", flush=True)
+    print(f"[xVigilance-Consumer] 🚨 Detective detected {total_anomalies} anomalous records! Executing Hand-Off to Risk Scoring...", flush=True)
     
     try:
         with psycopg.connect(os.getenv('LINKX_POSTGRES_DSN')) as conn:
@@ -92,7 +92,6 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id):
                     nodes_list = list(graph_data["nodes"].values())
                     edges_list = graph_data["edges"]
                     
-                    # Calculate node degrees to find the masterminds
                     from collections import defaultdict
                     node_degrees = defaultdict(int)
                     for edge in edges_list:
@@ -104,9 +103,8 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id):
                     top_node_str = ", ".join(top_5_nodes)
                     primary_account = top_5_nodes[0] if top_5_nodes else "UNKNOWN"
                     
-                    # Generate linked_entities array
                     linked_entities = []
-                    for edge in edges_list[:50]:  # Limit to 50
+                    for edge in edges_list[:50]:
                         linked_entities.append({
                             "accountno": edge["to"],
                             "relationship": edge["label"],
@@ -117,7 +115,8 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id):
                     trace_id = str(uuid.uuid4())
                     ts_now = datetime.now().isoformat() + "Z"
                     
-                    response_payload = {
+                    # 1. Construct EXACT hand-off payload requested by user
+                    handoff_payload = {
                         "schema_version": "1.0",
                         "event_type": "analysis.link.flagged",
                         "success": True,
@@ -154,8 +153,22 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id):
                         }
                     }
                     
-                    evidence_json = json.dumps(response_payload, default=str)
+                    # 2. POST to Risk Scoring Async Endpoint
+                    try:
+                        import requests
+                        api_host = os.getenv("LINKX_ACTIVE_STORAGE_ADDRESS", "172.27.23.43")
+                        api_port = os.getenv("LINKX_API_PORT", "5000")
+                        api_url = f"http://{api_host}:{api_port}/api/risk_scoring/analysis_request"
+                        api_key = os.getenv("LINK_ANALYSIS_API_KEY") or os.getenv("LINKX_RISK_SCORING_API_KEY", "")
+                        headers = {"X-API-Key": api_key, "Content-Type": "application/json"} if api_key else {"Content-Type": "application/json"}
+                        
+                        resp = requests.post(api_url, json=handoff_payload, headers=headers, timeout=5)
+                        print(f"[xVigilance-Escalation] Posted findings to Risk Scoring API. Response: {resp.status_code}", flush=True)
+                    except Exception as e:
+                        print(f"[xVigilance-Escalation] Warning: External Risk Scoring API unreachable: {e}", flush=True)
                     
+                    # 3. Store the graph evidence exactly once
+                    evidence_json = json.dumps(handoff_payload, default=str)
                     cur.execute("""
                         INSERT INTO link_analysis_evidence (
                             trace_id, session_id, entity_id, event_type, is_flagged, 
@@ -166,20 +179,24 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id):
                         )
                     """, (trace_id, 'XVIGILANCE_FINDINGS', primary_account, evidence_json))
                     
+                    # 4. Finalize xVigilance Summary with "reported_to" signature
                     report_payload = {
                         "trace_id": trace_id,
                         "entity_id": primary_account,
                         "anomaly_type": anomaly_type,
-                        "reason": graph_data["reason"]
+                        "reason": graph_data["reason"],
+                        "reported_to": "Risk Scoring Service"
                     }
                     cur.execute("""
                         INSERT INTO linkx_reports (report_type, source_system, external_reference_id, payload, status)
                         VALUES (%s, %s, %s, %s, %s)
                     """, ('XVIGILANCE_FINDING', 'xvigilance_worker', trace_id, json.dumps(report_payload, default=str), 'FLAGGED'))
+                    
             conn.commit()
-        print(f"[xVigilance-Consumer] Successfully promoted {len(graphs)} grouped anomaly graphs to the Postgres Dashboard!", flush=True)
+        print(f"[xVigilance-Consumer] Hand-off and database storage completed successfully for {len(graphs)} grouped anomalies!", flush=True)
     except Exception as e:
         print(f"[xVigilance-Consumer] Error inserting grouped evidence to Postgres: {e}", flush=True)
+
 
 
 
