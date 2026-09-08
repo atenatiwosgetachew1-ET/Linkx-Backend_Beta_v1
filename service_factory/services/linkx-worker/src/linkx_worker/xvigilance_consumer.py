@@ -62,6 +62,8 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id):
                         "details": anomaly["reason"],
                         "window_id": window_id
                     }, default=str)
+                    trace_id = str(uuid.uuid4())
+                    
                     cur.execute("""
                         INSERT INTO link_analysis_evidence (
                             trace_id, session_id, entity_id, event_type, is_flagged, 
@@ -70,7 +72,19 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id):
                             %s, %s, %s, 'XVIGILANCE_BATCH_ANOMALY', true, 
                             %s::jsonb, '{}'::jsonb, NOW()
                         )
-                    """, (str(uuid.uuid4()), 'XVIGILANCE_FINDINGS', anomaly["entity_id"], evidence_json))
+                    """, (trace_id, 'XVIGILANCE_FINDINGS', anomaly["entity_id"], evidence_json))
+                    
+                    # Inject into the unified linkx_reports pipeline so it shows up in the Frontend UI
+                    report_payload = {
+                        "trace_id": trace_id,
+                        "entity_id": anomaly["entity_id"],
+                        "anomaly_type": anomaly["anomaly_type"],
+                        "reason": anomaly["reason"]
+                    }
+                    cur.execute("""
+                        INSERT INTO linkx_reports (report_type, source_system, external_reference_id, payload, status)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """, ('XVIGILANCE_FINDING', 'xvigilance_worker', trace_id, json.dumps(report_payload, default=str), 'FLAGGED'))
             conn.commit()
         print(f"[xVigilance-Consumer] Successfully promoted {len(anomalies)} alerts to the Postgres Dashboard!", flush=True)
     except Exception as e:
