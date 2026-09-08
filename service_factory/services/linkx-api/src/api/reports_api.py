@@ -90,3 +90,49 @@ def bind_workspace(report_id):
     except Exception as e:
         _audit("reports.bind_workspace", target_id=str(report_id), success=False, metadata={"error": str(e)})
         return jsonify({"error": str(e)}), 500
+
+@reports_api.route('/xvigilance/health', methods=['GET'])
+def xvigilance_health():
+    """Returns the real-time heartbeat and audit logs of the xVigilance daemon."""
+    try:
+        limit = int(request.args.get('limit', 50))
+        from batch_manager.utils.postgres_utils import get_postgres_connection
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT feed_name, last_window_end, total_records_analyzed, status FROM xvigilance_checkpoints LIMIT 1")
+                cp = cur.fetchone()
+                checkpoint = {}
+                if cp:
+                    checkpoint = {
+                        "feed_name": cp[0],
+                        "last_window_end": cp[1],
+                        "total_records_analyzed": cp[2],
+                        "status": cp[3]
+                    }
+                
+                cur.execute("""
+                    SELECT id, window_start, window_end, status, records_count, duration_ms, error_message, finished_at
+                    FROM xvigilance_slice_runs
+                    ORDER BY window_end DESC
+                    LIMIT %s
+                """, (limit,))
+                runs = []
+                for r in cur.fetchall():
+                    runs.append({
+                        "run_id": r[0],
+                        "window_start": r[1],
+                        "window_end": r[2],
+                        "status": r[3],
+                        "records_count": r[4],
+                        "duration_ms": r[5],
+                        "error_message": r[6],
+                        "finished_at": r[7]
+                    })
+                
+        return jsonify({
+            "success": True,
+            "checkpoint": checkpoint,
+            "recent_runs": runs
+        })
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
