@@ -52,24 +52,31 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id):
                 m_id = str(m.get("ACCOUNTNO") or getattr(m, 'element_id', 'unknown_m'))
                 r_id = str(getattr(r, 'element_id', 'unknown_r'))
                 
+                n_props = dict(n)
+                m_props = dict(m)
+                r_props = dict(r)
+                
+                # Format node n (Flatten properties)
                 graphs[anomaly_type]["nodes"][n_id] = {
                     "id": n_id,
-                    "label": "Account",
-                    "properties": dict(n)
+                    "label": n_props.get("NodeId", n_id),
+                    **n_props
                 }
                 
+                # Format node m (Flatten properties)
                 graphs[anomaly_type]["nodes"][m_id] = {
                     "id": m_id,
-                    "label": "Account",
-                    "properties": dict(m)
+                    "label": m_props.get("NodeId", m_id),
+                    **m_props
                 }
                 
+                # Format edge r (Use 'from', 'to', 'label' and flatten properties)
                 graphs[anomaly_type]["edges"].append({
                     "id": r_id,
-                    "source": n_id,
-                    "target": m_id,
-                    "type": anomaly_type,
-                    "properties": dict(r)
+                    "from": n_id,
+                    "to": m_id,
+                    "label": anomaly_type,
+                    **r_props
                 })
     except Exception as e:
         print(f"[xVigilance-Consumer] Error querying Neo4j for anomalies: {e}", flush=True)
@@ -124,6 +131,7 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id):
         print(f"[xVigilance-Consumer] Successfully promoted {len(graphs)} grouped anomaly graphs to the Postgres Dashboard!", flush=True)
     except Exception as e:
         print(f"[xVigilance-Consumer] Error inserting grouped evidence to Postgres: {e}", flush=True)
+
 
 
 
