@@ -90,6 +90,92 @@ def fetch_db_mapping():
         print(f"[xVigilance-Consumer] Failed to load DB mapping: {e}", flush=True)
     return {}
 
+
+def normalize_transaction_dataframe(df):
+    import pandas as pd
+    import numpy as np
+    
+    # 1. DB-Driven Mapping (Safe Application)
+    db_mappings = fetch_db_mapping()
+    if db_mappings:
+        for src_col, tgt_col in db_mappings.items():
+            if src_col in df.columns:
+                if tgt_col in df.columns:
+                    conflicts = df[tgt_col].notna() & df[src_col].notna() & (df[tgt_col] != df[src_col])
+                    if conflicts.any():
+                        print(f"[xVigilance-Normalizer] WARNING: {conflicts.sum()} mapping conflicts for {src_col}->{tgt_col}", flush=True)
+                    df[tgt_col] = df[tgt_col].combine_first(df[src_col])
+                else:
+                    df[tgt_col] = df[src_col]
+                    
+    # 2. Canonical Fallback Mappings
+    fallbacks = {
+        "SENDERACCOUNTID": "ACCOUNTNO",
+        "RECEIVERACCOUNTID": "BENACCOUNTNO",
+        "TRANSFERAMOUNT": "AMOUNT"
+    }
+    for src_col, tgt_col in fallbacks.items():
+        if src_col in df.columns:
+            if tgt_col in df.columns:
+                conflicts = df[tgt_col].notna() & df[src_col].notna() & (df[tgt_col] != df[src_col])
+                if conflicts.any():
+                    print(f"[xVigilance-Normalizer] WARNING: {conflicts.sum()} canonical fallback conflicts for {src_col}->{tgt_col}", flush=True)
+                df[tgt_col] = df[tgt_col].combine_first(df[src_col])
+            else:
+                df[tgt_col] = df[src_col]
+                
+    # 3. Canonical Account Mapping (Stable String Formatting)
+    def _format_account(x):
+        if pd.isna(x):
+            return x
+        if isinstance(x, float) and x.is_integer():
+            return str(int(x))
+        return str(x)
+        
+    for col in ["ACCOUNTNO", "BENACCOUNTNO"]:
+        if col in df.columns:
+            df[col] = df[col].apply(_format_account)
+            
+    # 4. Amount Normalization
+    if "AMOUNT" in df.columns:
+        df["AMOUNT"] = pd.to_numeric(df["AMOUNT"], errors='coerce')
+        
+    # 5. Timestamp Normalization (Authoritative from CREATEDDATE)
+    if "CREATEDDATE" in df.columns:
+        numeric_dates = pd.to_numeric(df["CREATEDDATE"], errors="coerce")
+        valid_mask = numeric_dates.notna() & (numeric_dates > 1000000000000)
+        if valid_mask.any():
+            dt_series = pd.to_datetime(numeric_dates[valid_mask], unit="ms", utc=True)
+            df.loc[valid_mask, "TRANSACTIONDATE"] = dt_series.dt.strftime("%Y-%m-%d")
+            df.loc[valid_mask, "TRANSACTIONTIME"] = dt_series.dt.strftime("%H:%M:%S")
+            df.loc[valid_mask, "TRANSACTIONTIMESTAMP"] = dt_series.dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            
+    # 6. Lowercase Aliases for Graph Mapping
+    if "ACCOUNTNO" in df.columns:
+        df["accountno"] = df["ACCOUNTNO"]
+    if "BENACCOUNTNO" in df.columns:
+        df["benaccountno"] = df["BENACCOUNTNO"]
+        
+    # 7. Validation Logging
+    missing_acc = df["ACCOUNTNO"].isna().sum() if "ACCOUNTNO" in df.columns else len(df)
+    missing_ben = df["BENACCOUNTNO"].isna().sum() if "BENACCOUNTNO" in df.columns else len(df)
+    missing_amt = df["AMOUNT"].isna().sum() if "AMOUNT" in df.columns else len(df)
+    missing_tdate = df["TRANSACTIONDATE"].isna().sum() if "TRANSACTIONDATE" in df.columns else len(df)
+    missing_ttime = df["TRANSACTIONTIME"].isna().sum() if "TRANSACTIONTIME" in df.columns else len(df)
+    
+    print(
+        f"[xVigilance-Normalizer]\n"
+        f"rows={len(df)}\n"
+        f"missing ACCOUNTNO={missing_acc}\n"
+        f"missing BENACCOUNTNO={missing_ben}\n"
+        f"missing AMOUNT={missing_amt}\n"
+        f"missing TRANSACTIONDATE={missing_tdate}\n"
+        f"missing TRANSACTIONTIME={missing_ttime}", 
+        flush=True
+    )
+    
+    return df
+
 def consume_firehose():
     global RUNNING
     signal.signal(signal.SIGTERM, handle_shutdown)
@@ -151,29 +237,8 @@ def consume_firehose():
 
                         df = pd.DataFrame(buffer)
                         
-                        # --- DB-DRIVEN NORMALIZATION LAYER ---
-                        db_mappings = fetch_db_mapping()
-                        
-                        if db_mappings:
-                            df = df.rename(columns=db_mappings)
-                            
-                        # Format TRANSACTIONDATE if it is an epoch millisecond timestamp
-                        if "TRANSACTIONDATE" in df.columns:
-                            # Handle duplicate columns (e.g. mapping CREATEDDATE -> TRANSACTIONDATE when TRANSACTIONDATE already exists)
-                            df = df.loc[:,~df.columns.duplicated()].copy()
-                            
-                            # Safely convert to numeric, coercing errors to NaN. If it's a valid timestamp string like "1772363657000", it becomes numeric.
-                            numeric_dates = pd.to_numeric(df["TRANSACTIONDATE"], errors='coerce')
-                            # If at least one row is valid numeric, and it's large enough to be a millisecond epoch (e.g. > 1 trillion)
-                            if numeric_dates.notna().any() and numeric_dates.max() > 1000000000000:
-                                df["TRANSACTIONTIME"] = pd.to_datetime(numeric_dates, unit='ms').dt.strftime('%H:%M:%S')
-                                df["TRANSACTIONDATE"] = pd.to_datetime(numeric_dates, unit='ms').dt.strftime('%Y-%m-%d')
-                        
-                        # Duplicate to lowercase to satisfy the analyzer's relationship mapper
-                        if "ACCOUNTNO" in df.columns:
-                            df["accountno"] = df["ACCOUNTNO"]
-                        if "BENACCOUNTNO" in df.columns:
-                            df["benaccountno"] = df["BENACCOUNTNO"]
+                        # --- NORMALIZATION APPLIED HERE ---
+                        df = normalize_transaction_dataframe(df)
                         # -------------------------------------
 
                         print(f"[xVigilance-Consumer] Ingesting {len(df)} remaining records to Neo4j...", flush=True)
@@ -190,6 +255,11 @@ def consume_firehose():
                 
                 if len(buffer) >= batch_size:
                     df = pd.DataFrame(buffer)
+                    
+                    # --- NORMALIZATION APPLIED HERE ---
+                    df = normalize_transaction_dataframe(df)
+                    # ----------------------------------
+                    
                     print(f"[xVigilance-Consumer] Ingesting micro-batch {batch_number} ({len(df)} records) to Neo4j...", flush=True)
                     try:
                         realtime_neo4j_message_ingest(payload, df, batch_number)
