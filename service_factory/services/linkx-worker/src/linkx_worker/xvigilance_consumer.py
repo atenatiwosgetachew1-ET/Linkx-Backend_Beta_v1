@@ -27,41 +27,77 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id):
     node_label = rule_to_node_label("bank transactions", session_id)
     safe_label = f"`{str(node_label).replace('`', '')}`"
     
-    anomalies = []
+    graphs = {}
+    total_anomalies = 0
     try:
         with driver.session() as session:
-            # Find all nodes involved in anomalous relationships
-            result = session.run(f"""
-            MATCH (n:{safe_label})-[r]->(m:{safe_label})
-            WHERE r.reason IS NOT NULL
-            RETURN n.ACCOUNTNO as account, type(r) as anomaly_type, properties(r) as reason, n.TRANSACTIONDATE as date
-            """)
+            result = session.run(f"MATCH (n:{safe_label})-[r]->(m:{safe_label}) WHERE r.reason IS NOT NULL RETURN n, r, m")
             for record in result:
-                anomalies.append({
-                    "entity_id": record["account"],
-                    "anomaly_type": record["anomaly_type"],
-                    "reason": record["reason"],
-                    "date": record["date"]
+                n = record["n"]
+                r = record["r"]
+                m = record["m"]
+                
+                total_anomalies += 1
+                anomaly_type = getattr(r, 'type', 'UNKNOWN_ANOMALY')
+                reason_text = r.get("reason", "Multiple Anomalies Detected")
+                
+                if anomaly_type not in graphs:
+                    graphs[anomaly_type] = {
+                        "nodes": {},
+                        "edges": [],
+                        "reason": reason_text
+                    }
+                
+                n_id = str(n.get("ACCOUNTNO") or getattr(n, 'element_id', 'unknown_n'))
+                m_id = str(m.get("ACCOUNTNO") or getattr(m, 'element_id', 'unknown_m'))
+                r_id = str(getattr(r, 'element_id', 'unknown_r'))
+                
+                graphs[anomaly_type]["nodes"][n_id] = {
+                    "id": n_id,
+                    "label": "Account",
+                    "properties": dict(n)
+                }
+                
+                graphs[anomaly_type]["nodes"][m_id] = {
+                    "id": m_id,
+                    "label": "Account",
+                    "properties": dict(m)
+                }
+                
+                graphs[anomaly_type]["edges"].append({
+                    "id": r_id,
+                    "source": n_id,
+                    "target": m_id,
+                    "type": anomaly_type,
+                    "properties": dict(r)
                 })
     except Exception as e:
         print(f"[xVigilance-Consumer] Error querying Neo4j for anomalies: {e}", flush=True)
         return
         
-    if not anomalies:
+    if not graphs:
         print(f"[xVigilance-Consumer] No anomalies found in window {window_id}. Graph is perfectly clean.", flush=True)
         return
         
-    print(f"[xVigilance-Consumer] 🚨 Detective detected {len(anomalies)} anomalous records! Promoting to Evidence Dashboard...", flush=True)
+    print(f"[xVigilance-Consumer] 🚨 Detective detected {total_anomalies} anomalous records! Merging into {len(graphs)} distinct graph payloads...", flush=True)
     
     try:
         with psycopg.connect(os.getenv('LINKX_POSTGRES_DSN')) as conn:
             with conn.cursor() as cur:
-                for anomaly in anomalies:
-                    evidence_json = json.dumps({
-                        "anomaly_type": anomaly["anomaly_type"],
-                        "details": anomaly["reason"],
-                        "window_id": window_id
-                    }, default=str)
+                for anomaly_type, graph_data in graphs.items():
+                    nodes_list = list(graph_data["nodes"].values())
+                    edges_list = graph_data["edges"]
+                    
+                    response_payload = {
+                        "data": {
+                            "graph": {
+                                "nodes": nodes_list,
+                                "edges": edges_list
+                            }
+                        }
+                    }
+                    
+                    evidence_json = json.dumps(response_payload, default=str)
                     trace_id = str(uuid.uuid4())
                     
                     cur.execute("""
@@ -72,23 +108,23 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id):
                             %s, %s, %s, 'XVIGILANCE_BATCH_ANOMALY', true, 
                             %s::jsonb, '{}'::jsonb, NOW()
                         )
-                    """, (trace_id, 'XVIGILANCE_FINDINGS', anomaly["entity_id"], evidence_json))
+                    """, (trace_id, 'XVIGILANCE_FINDINGS', f"WINDOW_{anomaly_type}", evidence_json))
                     
-                    # Inject into the unified linkx_reports pipeline so it shows up in the Frontend UI
                     report_payload = {
                         "trace_id": trace_id,
-                        "entity_id": anomaly["entity_id"],
-                        "anomaly_type": anomaly["anomaly_type"],
-                        "reason": anomaly["reason"]
+                        "entity_id": f"{len(edges_list)} Anomalous Connections",
+                        "anomaly_type": anomaly_type,
+                        "reason": graph_data["reason"]
                     }
                     cur.execute("""
                         INSERT INTO linkx_reports (report_type, source_system, external_reference_id, payload, status)
                         VALUES (%s, %s, %s, %s, %s)
                     """, ('XVIGILANCE_FINDING', 'xvigilance_worker', trace_id, json.dumps(report_payload, default=str), 'FLAGGED'))
             conn.commit()
-        print(f"[xVigilance-Consumer] Successfully promoted {len(anomalies)} alerts to the Postgres Dashboard!", flush=True)
+        print(f"[xVigilance-Consumer] Successfully promoted {len(graphs)} grouped anomaly graphs to the Postgres Dashboard!", flush=True)
     except Exception as e:
-        print(f"[xVigilance-Consumer] Error inserting evidence to Postgres: {e}", flush=True)
+        print(f"[xVigilance-Consumer] Error inserting grouped evidence to Postgres: {e}", flush=True)
+
 
 
 
