@@ -33,7 +33,7 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id):
             # Find all nodes involved in anomalous relationships
             result = session.run(f"""
             MATCH (n:{safe_label})-[r]->(m:{safe_label})
-            WHERE type(r) IN ['SMURFING', 'CIRCULAR_FLOW']
+            WHERE r.reason IS NOT NULL
             RETURN n.ACCOUNTNO as account, type(r) as anomaly_type, properties(r) as reason, n.TRANSACTIONDATE as date
             """)
             for record in result:
