@@ -22,7 +22,7 @@ def handle_shutdown(signum, frame):
     RUNNING = False
 
 
-def promote_anomalies_to_postgres(credentials, session_id, window_id):
+def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_meta=None):
     driver = create_neo4j_driver(credentials)
     node_label = rule_to_node_label("bank transactions", session_id)
     safe_label = f"`{str(node_label).replace('`', '')}`"
@@ -186,7 +186,8 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id):
                         "entity_id": primary_account,
                         "anomaly_type": anomaly_type,
                         "reason": graph_data["reason"],
-                        "reported_to": "Risk Scoring Service"
+                        "reported_to": "Risk Scoring Service",
+                        "execution_meta": execution_meta or {}
                     }
                     cur.execute("""
                         INSERT INTO linkx_reports (report_type, source_system, external_reference_id, payload, status)
@@ -372,7 +373,7 @@ def consume_firehose():
                         buffer.clear()
                         batch_number += 1
                     print("[xVigilance-Consumer] Ingestion complete. Scanning Graph for LA_Script_rules violations (Smurfing, Circular Flow)...", flush=True)
-                    promote_anomalies_to_postgres(credentials, session_id, data.get('window_id'))
+                    promote_anomalies_to_postgres(credentials, session_id, data.get('window_id'), execution_meta={'total_records': data.get('total_records'), 'batch_id': data.get('batch_id'), 'elastic_endpoint': data.get('elastic_endpoint'), 'worker_node': data.get('worker_node')})
                     print(f"[xVigilance-Consumer] Window {data.get('window_id')} finalized successfully.", flush=True)
                     continue
 

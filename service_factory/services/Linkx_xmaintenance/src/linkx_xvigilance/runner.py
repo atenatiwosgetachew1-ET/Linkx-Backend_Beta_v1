@@ -149,7 +149,10 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
                     watermark = {
                         "event": "WINDOW_COMPLETE",
                         "window_id": window_start.isoformat(),
-                        "total_records": total_records
+                        "total_records": total_records,
+                        "batch_id": run_id,
+                        "elastic_endpoint": os.getenv("LINKX_ACTIVE_STORAGE_ADDRESS", "http://172.27.23.43:5000"),
+                        "worker_node": worker_name
                     }
                     kafka_producer.send(
                         topic=kafka_topic,
@@ -205,7 +208,10 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
                     watermark = {
                         "event": "WINDOW_COMPLETE",
                         "window_id": window_start.isoformat(),
-                        "total_records": total_records
+                        "total_records": total_records,
+                        "batch_id": run_id,
+                        "elastic_endpoint": os.getenv("LINKX_ACTIVE_STORAGE_ADDRESS", "http://172.27.23.43:5000"),
+                        "worker_node": worker_name
                     }
                     kafka_producer.send(
                         topic=kafka_topic,
