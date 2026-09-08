@@ -300,7 +300,7 @@ def consume_firehose():
             topic,
             bootstrap_servers=server_list,
             group_id=group_id,
-            auto_offset_reset="latest",
+            auto_offset_reset="earliest",
             enable_auto_commit=True,
             consumer_timeout_ms=2000,
             value_deserializer=lambda v: json.loads(v.decode("utf-8")) if v else None
