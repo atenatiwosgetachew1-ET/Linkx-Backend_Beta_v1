@@ -61,7 +61,7 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id):
                         "anomaly_type": anomaly["anomaly_type"],
                         "details": anomaly["reason"],
                         "window_id": window_id
-                    })
+                    }, default=str)
                     cur.execute("""
                         INSERT INTO link_analysis_evidence (
                             trace_id, session_id, entity_id, event_type, is_flagged, 
