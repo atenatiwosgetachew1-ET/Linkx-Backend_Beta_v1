@@ -125,7 +125,7 @@ def batch_graph_analysis_transactions(
           AND amount > 0
           AND amount < $single_tx_threshold
         WITH acc, beneficiary, tx_day, t, amount
-        ORDER BY t.transaction_date, t.TRANSACTIONTIME 
+        ORDER BY t.TRANSACTIONDATE, t.TRANSACTIONTIME 
         WITH acc, beneficiary, tx_day, collect(t) AS txns, sum(amount) AS total_amount, count(t) AS tx_count
         WHERE tx_count >= $min_tx_count
           AND total_amount >= $total_threshold
@@ -253,7 +253,7 @@ def batch_graph_analysis_transactions(
              coalesce(toFloat(t.BALANCEHELD), toFloat(t.BALANCE), toFloat(t.balance)) AS balance
         WHERE acc IS NOT NULL AND acc <> '' AND balance IS NOT NULL
         WITH t.ACCOUNTNO AS acc, t
-        ORDER BY t.transaction_date, t.TRANSACTIONTIME
+        ORDER BY t.TRANSACTIONDATE, t.TRANSACTIONTIME
         WITH acc, collect(t) AS txns
         UNWIND range(1, size(txns)-1) AS i
         WITH txns[i] AS current,
@@ -410,7 +410,7 @@ def incremental_graph_analysis_transactions(
         session.run(f"""
         MATCH (seed:{label})
         WHERE seed.batch_id = $batch_id
-        WITH DISTINCT seed.ACCOUNTNO AS acc, seed.BENACCOUNTNO AS beneficiary, seed.transaction_date AS tx_day
+        WITH DISTINCT seed.ACCOUNTNO AS acc, seed.BENACCOUNTNO AS beneficiary, seed.TRANSACTIONDATE AS tx_day
         WHERE acc IS NOT NULL AND acc <> ''
           AND beneficiary IS NOT NULL AND beneficiary <> ''
           AND tx_day IS NOT NULL AND tx_day <> ''
@@ -418,14 +418,14 @@ def incremental_graph_analysis_transactions(
         WHERE {_session_scope_clause("t")}
           AND t.ACCOUNTNO = acc
           AND t.BENACCOUNTNO = beneficiary
-          AND t.transaction_date = tx_day
+          AND t.TRANSACTIONDATE = tx_day
         WITH acc, beneficiary, tx_day, t,
              coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount)) AS amount
         WHERE amount IS NOT NULL
           AND amount > 0
           AND amount < $single_tx_threshold
         WITH acc, beneficiary, tx_day, t, amount
-        ORDER BY t.transaction_date, t.TRANSACTIONTIME
+        ORDER BY t.TRANSACTIONDATE, t.TRANSACTIONTIME
         WITH acc, beneficiary, tx_day, collect(t) AS txns, sum(amount) AS total_amount, count(t) AS tx_count
         WHERE tx_count >= $min_tx_count
           AND total_amount >= $total_threshold
@@ -547,7 +547,7 @@ def incremental_graph_analysis_transactions(
              coalesce(toFloat(t.BALANCEHELD), toFloat(t.BALANCE), toFloat(t.balance)) AS balance
         WHERE acc IS NOT NULL AND acc <> '' AND balance IS NOT NULL
         WITH acc, t
-        ORDER BY t.transaction_date, t.TRANSACTIONTIME
+        ORDER BY t.TRANSACTIONDATE, t.TRANSACTIONTIME
         WITH acc, collect(t) AS txns
         UNWIND range(1, size(txns)-1) AS i
         WITH txns[i] AS current,
@@ -585,13 +585,13 @@ def incremental_graph_analysis_transactions(
         session.run(f"""
         MATCH (seed:{label})
         WHERE seed.batch_id = $batch_id
-        WITH DISTINCT seed.ACCOUNTNO AS hub, seed.transaction_date AS tx_day
+        WITH DISTINCT seed.ACCOUNTNO AS hub, seed.TRANSACTIONDATE AS tx_day
         WHERE hub IS NOT NULL AND hub <> ''
           AND tx_day IS NOT NULL AND tx_day <> ''
         MATCH (t:{label})
         WHERE {_session_scope_clause("t")}
           AND t.ACCOUNTNO = hub
-          AND t.transaction_date = tx_day
+          AND t.TRANSACTIONDATE = tx_day
           AND t.BENACCOUNTNO IS NOT NULL
           AND t.BENACCOUNTNO <> ''
         WITH hub, tx_day, collect(t) AS txns, count(DISTINCT t.BENACCOUNTNO) AS spoke_count
@@ -612,13 +612,13 @@ def incremental_graph_analysis_transactions(
         session.run(f"""
         MATCH (seed:{label})
         WHERE seed.batch_id = $batch_id
-        WITH DISTINCT seed.BENACCOUNTNO AS hub, seed.transaction_date AS tx_day
+        WITH DISTINCT seed.BENACCOUNTNO AS hub, seed.TRANSACTIONDATE AS tx_day
         WHERE hub IS NOT NULL AND hub <> ''
           AND tx_day IS NOT NULL AND tx_day <> ''
         MATCH (t:{label})
         WHERE {_session_scope_clause("t")}
           AND t.BENACCOUNTNO = hub
-          AND t.transaction_date = tx_day
+          AND t.TRANSACTIONDATE = tx_day
           AND t.ACCOUNTNO IS NOT NULL
           AND t.ACCOUNTNO <> ''
         WITH hub, tx_day, collect(t) AS txns, count(DISTINCT t.ACCOUNTNO) AS spoke_count
