@@ -65,7 +65,7 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id):
                     cur.execute("""
                         INSERT INTO link_analysis_evidence (
                             trace_id, session_id, entity_id, event_type, is_flagged, 
-                            evidence_data, request_payload, analyzed_at
+                            response_payload, request_payload, analyzed_at
                         ) VALUES (
                             %s, %s, %s, 'XVIGILANCE_BATCH_ANOMALY', true, 
                             %s::jsonb, '{}'::jsonb, NOW()
