@@ -27,7 +27,7 @@ try:
             print('========================================')
             print('Latest 5 Anomalies in Postgres:')
             for row in rows:
-                print(f' - Entity: {row[0]}, Event: {row[1]}, Flagged: {row[2]}, Time: {row[3]}')
+                print(f' - Payload: {row[0]}')
             print('========================================')
 except Exception as e:
     print(f'Error: {e}')
