@@ -175,7 +175,7 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id):
                     cur.execute("""
                         INSERT INTO linkx_reports (report_type, source_system, external_reference_id, payload, status)
                         VALUES (%s, %s, %s, %s, %s)
-                    """, ('SERVICE_EVIDENCE', 'link-analysis-service', trace_id, json.dumps(report_payload, default=str), 'FLAGGED'))
+                    """, ('XVIGILANCE_FINDING', 'xvigilance_worker', trace_id, json.dumps(report_payload, default=str), 'FLAGGED'))
             conn.commit()
         print(f"[xVigilance-Consumer] Successfully promoted {len(graphs)} grouped anomaly graphs to the Postgres Dashboard!", flush=True)
     except Exception as e:
