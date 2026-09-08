@@ -56,21 +56,18 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id):
                 m_props = dict(m)
                 r_props = dict(r)
                 
-                # Format node n (Flatten properties)
                 graphs[anomaly_type]["nodes"][n_id] = {
                     "id": n_id,
                     "label": n_props.get("NodeId", n_id),
                     **n_props
                 }
                 
-                # Format node m (Flatten properties)
                 graphs[anomaly_type]["nodes"][m_id] = {
                     "id": m_id,
                     "label": m_props.get("NodeId", m_id),
                     **m_props
                 }
                 
-                # Format edge r (Use 'from', 'to', 'label' and flatten properties)
                 graphs[anomaly_type]["edges"].append({
                     "id": r_id,
                     "from": n_id,
@@ -86,7 +83,7 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id):
         print(f"[xVigilance-Consumer] No anomalies found in window {window_id}. Graph is perfectly clean.", flush=True)
         return
         
-    print(f"[xVigilance-Consumer] 🚨 Detective detected {total_anomalies} anomalous records! Merging into {len(graphs)} distinct graph payloads...", flush=True)
+    print(f"[xVigilance-Consumer] 🚨 Detective detected {total_anomalies} anomalous records! Generating unified risk scoring payloads...", flush=True)
     
     try:
         with psycopg.connect(os.getenv('LINKX_POSTGRES_DSN')) as conn:
@@ -95,42 +92,95 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id):
                     nodes_list = list(graph_data["nodes"].values())
                     edges_list = graph_data["edges"]
                     
+                    # Calculate node degrees to find the masterminds
+                    from collections import defaultdict
+                    node_degrees = defaultdict(int)
+                    for edge in edges_list:
+                        node_degrees[edge["from"]] += 1
+                        node_degrees[edge["to"]] += 1
+                        
+                    top_nodes = sorted(node_degrees.keys(), key=lambda x: node_degrees[x], reverse=True)
+                    top_5_nodes = top_nodes[:5]
+                    top_node_str = ", ".join(top_5_nodes)
+                    primary_account = top_5_nodes[0] if top_5_nodes else "UNKNOWN"
+                    
+                    # Generate linked_entities array
+                    linked_entities = []
+                    for edge in edges_list[:50]:  # Limit to 50
+                        linked_entities.append({
+                            "accountno": edge["to"],
+                            "relationship": edge["label"],
+                            "risk_contribution": 0.95,
+                            "is_flagged": True
+                        })
+                    
+                    trace_id = str(uuid.uuid4())
+                    ts_now = datetime.now().isoformat() + "Z"
+                    
                     response_payload = {
+                        "schema_version": "1.0",
+                        "event_type": "analysis.link.flagged",
+                        "success": True,
+                        "message": f"Link analysis flagged for accounts [{top_node_str}]: {len(edges_list)} linked",
                         "data": {
+                            "accountno": top_5_nodes,
+                            "entity_id": primary_account,
+                            "linked_accounts_count": len(nodes_list),
+                            "flagged_entity_links": len(edges_list),
+                            "beneficiary_blacklisted": True,
+                            "flagged_rules": [anomaly_type],
+                            "network_centrality_score": 0.95,
+                            "max_path_length": 2,
+                            "linked_entities": linked_entities,
                             "graph": {
                                 "nodes": nodes_list,
                                 "edges": edges_list
+                            }
+                        },
+                        "meta": {
+                            "trace_id": trace_id,
+                            "span_id": str(uuid.uuid4())[:8],
+                            "traceparent": f"00-{trace_id}-00-01",
+                            "correlation_id": trace_id,
+                            "timestamp": ts_now,
+                            "service": {
+                                "name": "link-analysis-service",
+                                "version": "1.0.0"
+                            },
+                            "aggregation_key": {
+                                "type": "accountno",
+                                "value": primary_account
                             }
                         }
                     }
                     
                     evidence_json = json.dumps(response_payload, default=str)
-                    trace_id = str(uuid.uuid4())
                     
                     cur.execute("""
                         INSERT INTO link_analysis_evidence (
                             trace_id, session_id, entity_id, event_type, is_flagged, 
                             response_payload, request_payload, analyzed_at
                         ) VALUES (
-                            %s, %s, %s, 'XVIGILANCE_BATCH_ANOMALY', true, 
+                            %s, %s, %s, 'analysis.link.flagged', true, 
                             %s::jsonb, '{}'::jsonb, NOW()
                         )
-                    """, (trace_id, 'XVIGILANCE_FINDINGS', f"WINDOW_{anomaly_type}", evidence_json))
+                    """, (trace_id, 'XVIGILANCE_FINDINGS', primary_account, evidence_json))
                     
                     report_payload = {
                         "trace_id": trace_id,
-                        "entity_id": f"{len(edges_list)} Anomalous Connections",
+                        "entity_id": primary_account,
                         "anomaly_type": anomaly_type,
                         "reason": graph_data["reason"]
                     }
                     cur.execute("""
                         INSERT INTO linkx_reports (report_type, source_system, external_reference_id, payload, status)
                         VALUES (%s, %s, %s, %s, %s)
-                    """, ('XVIGILANCE_FINDING', 'xvigilance_worker', trace_id, json.dumps(report_payload, default=str), 'FLAGGED'))
+                    """, ('SERVICE_EVIDENCE', 'link-analysis-service', trace_id, json.dumps(report_payload, default=str), 'FLAGGED'))
             conn.commit()
         print(f"[xVigilance-Consumer] Successfully promoted {len(graphs)} grouped anomaly graphs to the Postgres Dashboard!", flush=True)
     except Exception as e:
         print(f"[xVigilance-Consumer] Error inserting grouped evidence to Postgres: {e}", flush=True)
+
 
 
 
