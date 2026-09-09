@@ -422,6 +422,8 @@ def consume_firehose():
             session.run("CREATE INDEX idx_account_no IF NOT EXISTS FOR (n:bank_transactions_XVIGILANCE_FINDINGS) ON (n.ACCOUNTNO)")
             session.run("CREATE INDEX idx_ben_account_no IF NOT EXISTS FOR (n:bank_transactions_XVIGILANCE_FINDINGS) ON (n.BENACCOUNTNO)")
             session.run("CREATE INDEX idx_tx_date IF NOT EXISTS FOR (n:bank_transactions_XVIGILANCE_FINDINGS) ON (n.TRANSACTIONDATE)")
+            session.run("CREATE INDEX idx_bus_phone IF NOT EXISTS FOR (n:bank_transactions_XVIGILANCE_FINDINGS) ON (n.BUSINESSMOBILENO)")
+            session.run("CREATE INDEX idx_ben_phone IF NOT EXISTS FOR (n:bank_transactions_XVIGILANCE_FINDINGS) ON (n.BENTELNO)")
         print("[xVigilance-Consumer] Neo4j Performance Indexes Verified.", flush=True)
         driver.close()
     except Exception as e:
