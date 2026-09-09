@@ -98,8 +98,8 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
                         "reason": reason_text
                     }
                 
-                n_id = str(n.get("ACCOUNTNO") or getattr(n, 'element_id', 'unknown_n'))
-                m_id = str(m.get("ACCOUNTNO") or getattr(m, 'element_id', 'unknown_m'))
+                n_id = str(n.get("NodeId") or getattr(n, 'element_id', 'unknown_n'))
+                m_id = str(m.get("NodeId") or getattr(m, 'element_id', 'unknown_m'))
                 r_id = str(getattr(r, 'element_id', 'unknown_r'))
                 
                 n_props = dict(n)
