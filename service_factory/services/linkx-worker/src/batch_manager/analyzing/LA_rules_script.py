@@ -471,15 +471,16 @@ def incremental_graph_analysis_transactions(
         SET r2.bgcolor = '#e6e6e6', r2.provisional = true, r2.reason = 'same-day reverse transfer pair'
         """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
 
-        # Fund flow: new nodes can either precede or complete a downstream flow.
+        # Fund flow (Part 1): new node is the sender
         session.run(f"""
-        MATCH (a:{label}), (b:{label})
-        WHERE (a.batch_id = $batch_id OR b.batch_id = $batch_id)
+        MATCH (a:{label})
+        WHERE a.batch_id = $batch_id
           AND {_session_scope_clause("a")}
-          AND {_session_scope_clause("b")}
-          AND a.BENACCOUNTNO = b.ACCOUNTNO
           AND a.BENACCOUNTNO IS NOT NULL
           AND a.BENACCOUNTNO <> ''
+        MATCH (b:{label})
+        WHERE b.ACCOUNTNO = a.BENACCOUNTNO
+          AND {_session_scope_clause("b")}
           AND elementId(a) <> elementId(b)
           AND (
             coalesce(a.TRANSACTIONDATE, '') < coalesce(b.TRANSACTIONDATE, '')
@@ -490,9 +491,30 @@ def incremental_graph_analysis_transactions(
           )
           AND {_trusted_pair_clause('a', 'b')}
         MERGE (a)-[r:FUND_FLOW {{session_id:$session_id}}]->(b)
-        SET r.bgcolor = '#d8a822',
-            r.provisional = true,
-            r.reason = 'beneficiary later acts as sender'
+        SET r.bgcolor = '#d8a822', r.provisional = true, r.reason = 'beneficiary later acts as sender'
+        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
+
+        # Fund flow (Part 2): new node is the receiver
+        session.run(f"""
+        MATCH (b:{label})
+        WHERE b.batch_id = $batch_id
+          AND {_session_scope_clause("b")}
+          AND b.ACCOUNTNO IS NOT NULL
+          AND b.ACCOUNTNO <> ''
+        MATCH (a:{label})
+        WHERE a.BENACCOUNTNO = b.ACCOUNTNO
+          AND {_session_scope_clause("a")}
+          AND elementId(a) <> elementId(b)
+          AND (
+            coalesce(a.TRANSACTIONDATE, '') < coalesce(b.TRANSACTIONDATE, '')
+            OR (
+              coalesce(a.TRANSACTIONDATE, '') = coalesce(b.TRANSACTIONDATE, '')
+              AND coalesce(a.TRANSACTIONTIME, '') < coalesce(b.TRANSACTIONTIME, '')
+            )
+          )
+          AND {_trusted_pair_clause('a', 'b')}
+        MERGE (a)-[r:FUND_FLOW {{session_id:$session_id}}]->(b)
+        SET r.bgcolor = '#d8a822', r.provisional = true, r.reason = 'beneficiary later acts as sender'
         """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
 
         # Cheap row-local flags: only new batch rows.
