@@ -636,48 +636,24 @@ def incremental_graph_analysis_transactions(
             r.spoke_count = spoke_count
         """, batch_id=batch_id, session_id=session_param, min_tx_count=min_tx_count, trusted_entries=trusted_entries)
 
-        # Shared identifier: recalculate phone identifiers touched by this batch.
+        # Shared identifier: Optimized to prevent cartesian products
         session.run(f"""
         MATCH (seed:{label})
         WHERE seed.batch_id = $batch_id
-        WITH [
-               {{kind:'BUSINESSMOBILENO', value:seed.BUSINESSMOBILENO}},
-               {{kind:'BENTELNO', value:seed.BENTELNO}}
-             ] AS identifiers
-        UNWIND identifiers AS seed_identifier
-        WITH DISTINCT seed_identifier.kind AS identifier_type, trim(toString(seed_identifier.value)) AS identifier_value
-        WHERE identifier_value <> ''
+        WITH DISTINCT trim(toString(seed.BUSINESSMOBILENO)) AS phone
+        WHERE phone IS NOT NULL AND phone <> ''
         MATCH (t:{label})
         WHERE {_session_scope_clause("t")}
-        WITH identifier_type, identifier_value, t,
-             [
-               {{kind:'BUSINESSMOBILENO', value:t.BUSINESSMOBILENO, account:t.ACCOUNTNO}},
-               {{kind:'BENTELNO', value:t.BENTELNO, account:t.BENACCOUNTNO}}
-             ] AS identifiers
-        UNWIND identifiers AS identifier
-        WITH identifier_type,
-             identifier_value,
-             identifier.account AS account,
-             t,
-             identifier.kind AS matched_type,
-             trim(toString(identifier.value)) AS matched_value
-        WHERE matched_type = identifier_type
-          AND matched_value = identifier_value
-          AND account IS NOT NULL
-          AND account <> ''
-        WITH identifier_type, identifier_value, collect(DISTINCT account) AS accounts, collect(DISTINCT t) AS txns
+          AND (trim(toString(t.BUSINESSMOBILENO)) = phone OR trim(toString(t.BENTELNO)) = phone)
+        WITH phone, collect(DISTINCT t.ACCOUNTNO) AS accounts, collect(DISTINCT t) AS txns
         WHERE size(accounts) >= 2
         UNWIND range(0, size(txns)-2) AS i
-        WITH txns[i] AS a, txns[i+1] AS b, identifier_type, identifier_value, accounts
+        WITH txns[i] AS a, txns[i+1] AS b, phone, accounts
         WHERE {_trusted_pair_clause('a', 'b')}
         MERGE (a)-[r:SHARED_IDENTIFIER {{session_id:$session_id}}]->(b)
-        SET r.bgcolor = '#0b7285',
-            r.textcolor = '#eeeeee',
-            r.provisional = true,
+        SET r.bgcolor = '#0b7285', r.textcolor = '#eeeeee', r.provisional = true,
             r.reason = 'same identifier appears on multiple accounts',
-            r.identifier_type = identifier_type,
-            r.identifier_value = identifier_value,
-            r.account_count = size(accounts)
+            r.identifier_type = 'PHONE', r.identifier_value = phone, r.account_count = size(accounts)
         """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
 
         counts = _count_transaction_relationships(session, session_param)
