@@ -22,6 +22,56 @@ def handle_shutdown(signum, frame):
     RUNNING = False
 
 
+
+def calculate_fraud_score(anomaly_type, nodes, edges):
+    # 1. Base Score by Typology
+    base_scores = {
+        "CIRCULAR_FLOW": 75,
+        "HIGH_RISK_LINK": 85,
+        "SHARED_IDENTIFIER": 70,
+        "HUB_AND_SPOKE": 65,
+        "RAPID_FAN_OUT": 65,
+        "SMURFING": 60,
+        "ABNORMAL_BALANCE_CHANGE": 50
+    }
+    score = base_scores.get(anomaly_type, 50)
+    
+    # 2. Graph Size Multiplier (+2 points for every node beyond a simple pair)
+    if len(nodes) > 2:
+        score += (len(nodes) - 2) * 2
+        
+    # 3. Financial Value Multiplier
+    total_value = 0.0
+    for n in nodes:
+        amount = n.get("TRANSFERAMOUNT") or n.get("AMOUNT") or n.get("AMOUNTINBIRR") or 0.0
+        try:
+            total_value += float(amount)
+        except:
+            pass
+            
+    if total_value > 100000:
+        score += 15
+    elif total_value > 50000:
+        score += 10
+    elif total_value > 10000:
+        score += 5
+        
+    # Cap at 100
+    score = min(100, int(score))
+    
+    # 4. Banding Logic
+    if score >= 80:
+        band = "Critical"
+    elif score >= 50:
+        band = "High"
+    elif score >= 20:
+        band = "Medium"
+    else:
+        band = "Low"
+        
+    return score, band
+
+
 def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_meta=None):
     driver = create_neo4j_driver(credentials)
     node_label = rule_to_node_label("bank transactions", session_id)
