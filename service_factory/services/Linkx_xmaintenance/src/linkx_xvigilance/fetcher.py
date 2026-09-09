@@ -60,7 +60,6 @@ def stream_window_records(
             records = [hit.get('_source', {}) for hit in hits]
             if records:
                 yield records
-                break
             
             # Fetch next batch
             scroll_url = f"{es_base.rstrip('/')}/_search/scroll"
