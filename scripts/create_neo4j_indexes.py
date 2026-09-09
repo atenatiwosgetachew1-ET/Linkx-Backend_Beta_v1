@@ -1,12 +1,12 @@
 import os
 from neo4j import GraphDatabase
 
-uri = os.getenv("LINKX_NEO4J_URI", "bolt://172.27.23.43:7687")
+uri = os.getenv("LINKX_NEO4J_URI", "bolt://172.27.23.85:7687")
 user = os.getenv("LINKX_NEO4J_USER", "neo4j")
 password = os.getenv("LINKX_NEO4J_PASSWORD", "linkx")
 
 # Override to local Node 22 IP just in case
-uri = "bolt://172.27.23.43:7687"
+uri = "bolt://172.27.23.85:7687"
 
 print(f"Connecting to Neo4j at {uri}...")
 driver = GraphDatabase.driver(uri, auth=(user, password))
