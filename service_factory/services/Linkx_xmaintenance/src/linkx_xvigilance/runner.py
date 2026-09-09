@@ -151,7 +151,7 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
                         "window_id": window_start.isoformat(),
                         "total_records": total_records,
                         "batch_id": run_id,
-                        "elastic_endpoint": os.getenv("LINKX_ACTIVE_STORAGE_ADDRESS", "http://172.27.23.43:5000"),
+                        "elastic_endpoint": f"index: {config.get('es_direct_index', 'mobile_banking_transactions')}",
                         "worker_node": worker_name
                     }
                     kafka_producer.send(
@@ -210,7 +210,7 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
                         "window_id": window_start.isoformat(),
                         "total_records": total_records,
                         "batch_id": run_id,
-                        "elastic_endpoint": os.getenv("LINKX_ACTIVE_STORAGE_ADDRESS", "http://172.27.23.43:5000"),
+                        "elastic_endpoint": f"index: {config.get('es_direct_index', 'mobile_banking_transactions')}",
                         "worker_node": worker_name
                     }
                     kafka_producer.send(
