@@ -394,7 +394,6 @@ def consume_firehose():
             group_id=group_id,
             auto_offset_reset="earliest",
             enable_auto_commit=True,
-            consumer_timeout_ms=2000,
             max_poll_interval_ms=300000,
             value_deserializer=lambda v: json.loads(v.decode("utf-8")) if v else None
         )
