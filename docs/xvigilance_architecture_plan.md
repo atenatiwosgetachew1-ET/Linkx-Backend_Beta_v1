@@ -40,3 +40,14 @@ To prevent graph bloat while maintaining a safe auditing buffer, we strictly del
 2. **Dedicated Sweeping:** The `linkx-xcleanup` daemon runs on its scheduled cadence. It executes Cypher queries to safely delete unflagged background transactions that have gracefully aged past the retention period, ensuring the graph remains performant without risking accidental data loss.
 
 *Why this is optimal:* Separation of concerns. The Worker focuses entirely on catching fraud, while the Cleanup daemon ensures database health with a massive safety net for human auditors.
+
+## The Ephemeral Graph Strategy (Single-Server Optimization)
+Because the pipeline must process **1.4 Billion transactions** sequentially on a single Neo4j server, leaving all data in the graph would cause catastrophic Out-Of-Memory (OOM) crashes.
+
+To achieve maximum throughput and safety:
+1. The daemon loads exactly 1 chronological time window into Neo4j.
+2. It executes all algorithmic anomaly rules (`LA_Script_rules`) in memory.
+3. It securely exports all anomalous evidence and JSON reports to PostgreSQL.
+4. **It immediately wipes Neo4j clean (`MATCH (n) DETACH DELETE n`)**.
+
+**Note for Analysts:** If you check the Neo4j database directly, it will always appear mostly empty. This is intentional. Neo4j acts purely as a high-speed computational engine. All permanent, long-term graph evidence is safely stored in PostgreSQL (`linkx_reports` and `link_analysis_evidence`).
