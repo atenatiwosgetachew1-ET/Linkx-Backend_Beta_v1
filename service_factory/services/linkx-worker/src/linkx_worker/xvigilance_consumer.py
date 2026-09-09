@@ -466,6 +466,17 @@ def consume_firehose():
                         batch_number += 1
                     print("[xVigilance-Consumer] Ingestion complete. Scanning Graph for LA_Script_rules violations (Smurfing, Circular Flow)...", flush=True)
                     promote_anomalies_to_postgres(credentials, session_id, data.get('window_id'), execution_meta={'total_records': data.get('total_records'), 'batch_id': data.get('batch_id'), 'elastic_endpoint': data.get('elastic_endpoint'), 'worker_node': data.get('worker_node')})
+                    
+                    # EPHEMERAL GRAPH WIPE: Purge nodes for this window to protect RAM
+                    print(f"[xVigilance-Consumer] Executing Ephemeral Graph Wipe for window {data.get('window_id')}...", flush=True)
+                    try:
+                        driver = create_neo4j_driver(credentials)
+                        with driver.session() as session:
+                            session.run("MATCH (n) WHERE n.batch_id CONTAINS $window_id DETACH DELETE n", window_id=data.get('window_id', ''))
+                        driver.close()
+                    except Exception as wipe_e:
+                        print(f"[xVigilance-Consumer] Warning: Failed to execute graph wipe: {wipe_e}", flush=True)
+                        
                     print(f"[xVigilance-Consumer] Window {data.get('window_id')} finalized successfully.", flush=True)
                     continue
 
