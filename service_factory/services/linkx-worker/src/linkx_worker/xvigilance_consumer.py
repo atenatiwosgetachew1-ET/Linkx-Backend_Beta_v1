@@ -257,7 +257,10 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
                         "anomaly_type": anomaly_type,
                         "reason": graph_data["reason"],
                         "reported_to": "Risk Scoring Service",
-                        "execution_meta": execution_meta or {}
+                        "execution_meta": execution_meta or {},
+                        "fraud_score": score,
+                        "score_band": band,
+                        "top_5_accounts": top_5_accounts
                     }
                     cur.execute("""
                         INSERT INTO linkx_reports (report_type, source_system, external_reference_id, payload, status)
