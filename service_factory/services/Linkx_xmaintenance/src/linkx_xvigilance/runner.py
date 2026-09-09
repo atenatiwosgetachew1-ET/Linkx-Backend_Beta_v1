@@ -151,8 +151,8 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
                         "window_id": window_start.isoformat(),
                         "total_records": total_records,
                         "batch_id": run_id,
-                        "elastic_endpoint": f"index: {config.get('es_direct_index', 'mobile_banking_transactions')}",
-                        "worker_node": worker_name
+                        "elastic_endpoint": config.get('es_direct_index', 'mobile_banking_transactions'),
+                        "worker_node": "Linkx_xmaintenance"
                     }
                     kafka_producer.send(
                         topic=kafka_topic,
@@ -210,8 +210,8 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
                         "window_id": window_start.isoformat(),
                         "total_records": total_records,
                         "batch_id": run_id,
-                        "elastic_endpoint": f"index: {config.get('es_direct_index', 'mobile_banking_transactions')}",
-                        "worker_node": worker_name
+                        "elastic_endpoint": config.get('es_direct_index', 'mobile_banking_transactions'),
+                        "worker_node": "Linkx_xmaintenance"
                     }
                     kafka_producer.send(
                         topic=kafka_topic,
