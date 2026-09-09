@@ -142,6 +142,26 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
                     nodes_list = list(graph_data["nodes"].values())
                     edges_list = graph_data["edges"]
                     
+                    # --- CUSTOM SCORING INJECTION ---
+                    try:
+                        score, band = calculate_fraud_score(anomaly_type, nodes_list, edges_list)
+                    except:
+                        score, band = 50, "Medium"
+                        
+                    # --- TOP 5 ACCOUNTS EXTRACTION ---
+                    account_volumes = {}
+                    for n in nodes_list:
+                        acc = n.get("ACCOUNTNO") or n.get("accountno")
+                        try:
+                            amt = float(n.get("TRANSFERAMOUNT") or n.get("AMOUNT") or n.get("AMOUNTINBIRR") or 0.0)
+                        except:
+                            amt = 0.0
+                        if acc:
+                            account_volumes[acc] = account_volumes.get(acc, 0.0) + amt
+                    
+                    top_5_accounts = [acc for acc, vol in sorted(account_volumes.items(), key=lambda item: item[1], reverse=True)[:5]]
+                    # --------------------------------
+                    
                     from collections import defaultdict
                     node_degrees = defaultdict(int)
                     for edge in edges_list:
