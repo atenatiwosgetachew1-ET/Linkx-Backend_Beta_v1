@@ -322,6 +322,7 @@ def consume_firehose():
             auto_offset_reset="earliest",
             enable_auto_commit=True,
             consumer_timeout_ms=2000,
+            max_poll_interval_ms=300000,
             value_deserializer=lambda v: json.loads(v.decode("utf-8")) if v else None
         )
     except Exception as e:
@@ -334,7 +335,7 @@ def consume_firehose():
     print("=" * 70, flush=True)
 
     buffer = []
-    batch_size = 500
+    batch_size = 10000
     batch_number = 1
 
     credentials = _neo4j_credentials(session_id)
