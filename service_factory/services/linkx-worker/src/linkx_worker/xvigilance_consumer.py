@@ -208,7 +208,7 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
                     try:
                         import requests
                         api_host = os.getenv("LINKX_API_HOST", "172.27.23.95")
-                        api_port = os.getenv("LINKX_API_PORT", "5000")
+                        api_port = os.getenv("LINKX_API_PORT", "8000")
                         api_url = f"http://{api_host}:{api_port}/api/risk_scoring/analysis_request"
                         api_key = os.getenv("LINK_ANALYSIS_API_KEY") or os.getenv("LINKX_RISK_SCORING_API_KEY", "")
                         headers = {"X-API-Key": api_key, "Content-Type": "application/json"} if api_key else {"Content-Type": "application/json"}
