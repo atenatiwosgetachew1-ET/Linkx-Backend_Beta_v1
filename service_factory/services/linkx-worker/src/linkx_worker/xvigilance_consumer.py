@@ -411,6 +411,23 @@ def consume_firehose():
     batch_number = 1
 
     credentials = _neo4j_credentials(session_id)
+    
+    # --- ENSURE NEO4J INDEXES EXIST ON STARTUP ---
+    try:
+        from batch_manager.analyzing.analyzer import create_neo4j_driver
+        driver = create_neo4j_driver(credentials)
+        with driver.session() as session:
+            session.run("CREATE INDEX idx_node_id IF NOT EXISTS FOR (n:bank_transactions_xvigilance_daemon) ON (n.NodeId)")
+            session.run("CREATE INDEX idx_batch_id IF NOT EXISTS FOR (n:bank_transactions_xvigilance_daemon) ON (n.batch_id)")
+            session.run("CREATE INDEX idx_account_no IF NOT EXISTS FOR (n:bank_transactions_xvigilance_daemon) ON (n.ACCOUNTNO)")
+            session.run("CREATE INDEX idx_ben_account_no IF NOT EXISTS FOR (n:bank_transactions_xvigilance_daemon) ON (n.BENACCOUNTNO)")
+            session.run("CREATE INDEX idx_tx_date IF NOT EXISTS FOR (n:bank_transactions_xvigilance_daemon) ON (n.TRANSACTIONDATE)")
+        print("[xVigilance-Consumer] Neo4j Performance Indexes Verified.", flush=True)
+        driver.close()
+    except Exception as e:
+        print(f"[xVigilance-Consumer] Warning: Could not verify Neo4j indexes: {e}", flush=True)
+    # ---------------------------------------------
+    
     payload = _base_analyzer_payload(session_id, credentials)
     payload["rule"] = "bank transactions"
 
