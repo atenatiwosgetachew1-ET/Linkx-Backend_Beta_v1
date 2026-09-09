@@ -1,7 +1,7 @@
 import psycopg, os
 
 dsn = None
-with open('/opt/linkx-worker/src/.env', 'r') as f:
+with open('/opt/linkx-worker/.env', 'r') as f:
     for line in f:
         if line.startswith('LINKX_POSTGRES_DSN='):
             dsn = line.strip().split('=', 1)[1].strip(' "\'')
