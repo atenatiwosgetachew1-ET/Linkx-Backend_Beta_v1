@@ -23,31 +23,57 @@ def handle_shutdown(signum, frame):
 
 
 
-def calculate_fraud_score(anomaly_type, nodes, edges):
-    # 1. Base Score by Typology (Severely reduced)
-    base_scores = {
-        "HIGH_RISK_LINK": 50,  # Explicitly configured risky accounts still start High
-        "CIRCULAR_FLOW": 30,   
-        "SMURFING": 20,        
-        "SHARED_IDENTIFIER": 20,
-        "HUB_AND_SPOKE": 10,   # Massive reduction for airtime/bill-pay noise
-        "RAPID_FAN_OUT": 10,
-        "ABNORMAL_BALANCE_CHANGE": 10 
+def calculate_fraud_score(anomaly_type, nodes, edges, config=None, version_id="hardcoded"):
+    # Fallback default configuration
+    default_config = {
+        "base_scores": {
+            "HIGH_RISK_LINK": 50, "CIRCULAR_FLOW": 30, "SMURFING": 20, 
+            "SHARED_IDENTIFIER": 20, "HUB_AND_SPOKE": 10, "RAPID_FAN_OUT": 10, "ABNORMAL_BALANCE_CHANGE": 10
+        },
+        "node_thresholds": [
+            {"min_nodes": 10000, "add_points": 30},
+            {"min_nodes": 5000, "add_points": 20},
+            {"min_nodes": 1000, "add_points": 10},
+            {"min_nodes": 100, "add_points": 5}
+        ],
+        "money_thresholds": [
+            {"min_amount": 10000000, "add_points": 40},
+            {"min_amount": 5000000, "add_points": 30},
+            {"min_amount": 1000000, "add_points": 20},
+            {"min_amount": 500000, "add_points": 10}
+        ]
     }
-    score = base_scores.get(anomaly_type, 10)
     
-    # 2. Graph Size Multiplier (Pushed thresholds WAY up)
-    node_count = len(nodes)
-    if node_count >= 10000:
-        score += 30
-    elif node_count >= 5000:
-        score += 20
-    elif node_count >= 1000:
-        score += 10
-    elif node_count >= 100:
-        score += 5
+    if not config:
+        config = default_config
         
-    # 3. Financial Value Multiplier (Scaled for millions of Birr)
+    score_evidence = {
+        "config_version": version_id,
+        "base_score_applied": 0,
+        "node_count_bonus": 0,
+        "financial_bonus": 0,
+        "total_nodes_evaluated": len(nodes),
+        "total_value_evaluated": 0.0
+    }
+
+    # 1. Base Score
+    base_scores = config.get("base_scores", default_config["base_scores"])
+    score = base_scores.get(anomaly_type, 10)
+    score_evidence["base_score_applied"] = score
+    
+    # 2. Graph Size Multiplier
+    node_count = len(nodes)
+    node_bonus = 0
+    node_thresholds = config.get("node_thresholds", default_config["node_thresholds"])
+    for bucket in sorted(node_thresholds, key=lambda x: x["min_nodes"], reverse=True):
+        if node_count >= bucket["min_nodes"]:
+            node_bonus = bucket["add_points"]
+            break
+            
+    score += node_bonus
+    score_evidence["node_count_bonus"] = node_bonus
+        
+    # 3. Financial Value Multiplier
     total_value = 0.0
     for n in nodes:
         amount = n.get("TRANSFERAMOUNT") or n.get("AMOUNT") or n.get("AMOUNTINBIRR") or 0.0
@@ -56,14 +82,17 @@ def calculate_fraud_score(anomaly_type, nodes, edges):
         except:
             pass
             
-    if total_value > 10000000:  # 10 Million
-        score += 40
-    elif total_value > 5000000: # 5 Million
-        score += 30
-    elif total_value > 1000000: # 1 Million
-        score += 20
-    elif total_value > 500000:  # 500k
-        score += 10
+    score_evidence["total_value_evaluated"] = total_value
+            
+    money_bonus = 0
+    money_thresholds = config.get("money_thresholds", default_config["money_thresholds"])
+    for bucket in sorted(money_thresholds, key=lambda x: x["min_amount"], reverse=True):
+        if total_value >= bucket["min_amount"]:
+            money_bonus = bucket["add_points"]
+            break
+            
+    score += money_bonus
+    score_evidence["financial_bonus"] = money_bonus
         
     # Cap at 100
     score = min(100, int(score))
@@ -78,7 +107,7 @@ def calculate_fraud_score(anomaly_type, nodes, edges):
     else:
         band = "Low"
         
-    return score, band
+    return score, band, score_evidence
 
 
 def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_meta=None):
@@ -147,15 +176,31 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
     try:
         with psycopg.connect(os.getenv('LINKX_POSTGRES_DSN')) as conn:
             with conn.cursor() as cur:
+                # --- FETCH DYNAMIC SCORING CONFIG ---
+                scoring_config = None
+                config_version = "hardcoded_fallback"
+                try:
+                    cur.execute("SELECT config_data, version_id FROM risk_scoring_config ORDER BY created_at DESC LIMIT 1;")
+                    row = cur.fetchone()
+                    if row:
+                        scoring_config = row[0]
+                        config_version = f"v{row[1]}"
+                except Exception as e:
+                    print(f"[xVigilance-Consumer] Warning: Could not fetch dynamic scoring config (falling back to default): {e}", flush=True)
+                    conn.rollback() # Crucial: rollback the failed select so subsequent inserts don't fail
+                # ------------------------------------
+                
                 for anomaly_type, graph_data in graphs.items():
                     nodes_list = list(graph_data["nodes"].values())
                     edges_list = graph_data["edges"]
                     
                     # --- CUSTOM SCORING INJECTION ---
                     try:
-                        score, band = calculate_fraud_score(anomaly_type, nodes_list, edges_list)
-                    except:
+                        score, band, score_evidence = calculate_fraud_score(anomaly_type, nodes_list, edges_list, scoring_config, config_version)
+                    except Exception as e:
+                        print(f"[xVigilance-Consumer] Warning: Scoring failed ({e}), falling back to Medium.", flush=True)
                         score, band = 50, "Medium"
+                        score_evidence = {"error": str(e), "config_version": config_version}
                         
                     # --- TOP 5 ACCOUNTS EXTRACTION ---
                     account_volumes = {}
@@ -233,6 +278,10 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
                             "network_centrality_score": 0.95,
                             "max_path_length": 2,
                             "linked_entities": linked_entities,
+                            "fraud_score": score,
+                            "score_band": band,
+                            "score_evidence": score_evidence,
+                            "top_5_accounts": [{"account": k, "volume": v} for k, v in account_volumes.items() if k in top_5_accounts],
                             "graph": {
                                 "nodes": render_nodes,
                                 "edges": render_edges
