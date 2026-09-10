@@ -202,8 +202,8 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
                             "max_path_length": 2,
                             "linked_entities": linked_entities,
                             "graph": {
-                                "nodes": nodes_list,
-                                "edges": edges_list
+                                "nodes": nodes_list[:1000],
+                                "edges": edges_list[:1000]
                             }
                         },
                         "meta": {
