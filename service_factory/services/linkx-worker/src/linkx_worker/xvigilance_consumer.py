@@ -24,23 +24,30 @@ def handle_shutdown(signum, frame):
 
 
 def calculate_fraud_score(anomaly_type, nodes, edges):
-    # 1. Base Score by Typology
+    # 1. Base Score by Typology (Lowered to allow for Low/Medium bands)
     base_scores = {
-        "CIRCULAR_FLOW": 75,
-        "HIGH_RISK_LINK": 85,
-        "SHARED_IDENTIFIER": 70,
-        "HUB_AND_SPOKE": 65,
-        "RAPID_FAN_OUT": 65,
-        "SMURFING": 60,
-        "ABNORMAL_BALANCE_CHANGE": 50
+        "HIGH_RISK_LINK": 50,  # Starts High
+        "CIRCULAR_FLOW": 40,   # Starts Medium
+        "HUB_AND_SPOKE": 30,   # Starts Low/Medium
+        "SMURFING": 30,        # Starts Low/Medium
+        "SHARED_IDENTIFIER": 30,
+        "RAPID_FAN_OUT": 30,
+        "ABNORMAL_BALANCE_CHANGE": 20 # Starts Low
     }
-    score = base_scores.get(anomaly_type, 50)
+    score = base_scores.get(anomaly_type, 30)
     
-    # 2. Graph Size Multiplier (+2 points for every node beyond a simple pair)
-    if len(nodes) > 2:
-        score += (len(nodes) - 2) * 2
+    # 2. Graph Size Multiplier (Logarithmic bucketing instead of linear +2 per node)
+    node_count = len(nodes)
+    if node_count >= 1000:
+        score += 40
+    elif node_count >= 100:
+        score += 30
+    elif node_count >= 21:
+        score += 20
+    elif node_count >= 5:
+        score += 10
         
-    # 3. Financial Value Multiplier
+    # 3. Financial Value Multiplier (Scaled up for enterprise volumes)
     total_value = 0.0
     for n in nodes:
         amount = n.get("TRANSFERAMOUNT") or n.get("AMOUNT") or n.get("AMOUNTINBIRR") or 0.0
@@ -49,12 +56,12 @@ def calculate_fraud_score(anomaly_type, nodes, edges):
         except:
             pass
             
-    if total_value > 100000:
-        score += 15
-    elif total_value > 50000:
+    if total_value > 1000000:
+        score += 30
+    elif total_value > 500000:
+        score += 20
+    elif total_value > 100000:
         score += 10
-    elif total_value > 10000:
-        score += 5
         
     # Cap at 100
     score = min(100, int(score))
