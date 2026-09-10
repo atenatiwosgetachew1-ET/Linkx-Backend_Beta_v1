@@ -331,21 +331,244 @@ def fast_ingest_batch(credentials, session_id, df, batch_number, node_label):
 
 def run_full_graph_analysis(credentials, session_id, node_label):
     """
-    Run the FULL batch LA rules (Smurfing, Circular Flow, etc.) 
-    on the complete hourly graph ONCE, after all micro-batches are ingested.
+    Run ALL LA rules on the complete hourly graph.
+    Each rule runs in its own transaction with error isolation,
+    so one failure doesn't kill the rest.
+    CIRCULAR_FLOW and FUND_FLOW use optimized index-assisted queries
+    instead of cartesian products.
     """
-    from batch_manager.analyzing.LA_rules_script import batch_graph_analysis_transactions
-    
     driver = create_neo4j_driver(credentials)
+    label = f"`{str(node_label).replace('`', '')}`"
+    sp = str(session_id) if session_id else ""
+    rules_completed = []
+    rules_failed = []
+
     try:
-        batch_graph_analysis_transactions(
-            driver=driver,
-            log_file="xvigilance_batch_analysis.log",
-            session_id=session_id,
-            nodes_label=node_label,
-        )
+        # ---- 1. SMURFING ----
+        try:
+            with driver.session() as s:
+                s.run(f"""
+                MATCH (t:{label})
+                WHERE ($session_id IS NULL OR t.session_id = $session_id)
+                WITH t.ACCOUNTNO AS acc, t.BENACCOUNTNO AS beneficiary,
+                     t.TRANSACTIONDATE AS tx_day, t,
+                     coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount)) AS amount
+                WHERE acc IS NOT NULL AND acc <> ''
+                  AND beneficiary IS NOT NULL AND beneficiary <> ''
+                  AND tx_day IS NOT NULL AND tx_day <> ''
+                  AND amount IS NOT NULL AND amount > 0 AND amount < 10000
+                WITH acc, beneficiary, tx_day, t, amount
+                ORDER BY t.TRANSACTIONDATE, t.TRANSACTIONTIME
+                WITH acc, beneficiary, tx_day, collect(t) AS txns, sum(amount) AS total_amount, count(t) AS tx_count
+                WHERE tx_count >= 3 AND total_amount >= 30000
+                UNWIND range(0, size(txns)-2) AS i
+                WITH txns[i] AS a, txns[i+1] AS b, acc, beneficiary, tx_day, tx_count, total_amount
+                MERGE (a)-[r:SMURFING {{session_id:$session_id}}]->(b)
+                SET r.bgcolor = '#d5d276', r.provisional = false,
+                    r.reason = 'multiple small same-day transfers below threshold',
+                    r.account = acc, r.beneficiary = beneficiary, r.tx_day = tx_day,
+                    r.tx_count = tx_count, r.total_amount = total_amount,
+                    r.single_tx_threshold = 10000, r.total_threshold = 30000
+                """, session_id=sp)
+            rules_completed.append("SMURFING")
+            print(f"  [Rule] SMURFING ✓", flush=True)
+        except Exception as e:
+            rules_failed.append(("SMURFING", str(e)[:100]))
+            print(f"  [Rule] SMURFING ✗ {str(e)[:100]}", flush=True)
+
+        # ---- 2. CIRCULAR_FLOW (OPTIMIZED: index-assisted, no cartesian product) ----
+        try:
+            with driver.session() as s:
+                s.run(f"""
+                MATCH (a:{label})
+                WHERE ($session_id IS NULL OR a.session_id = $session_id)
+                  AND a.ACCOUNTNO IS NOT NULL AND a.ACCOUNTNO <> ''
+                  AND a.BENACCOUNTNO IS NOT NULL AND a.BENACCOUNTNO <> ''
+                WITH a, a.ACCOUNTNO AS acc, a.BENACCOUNTNO AS ben
+                MATCH (b:{label} {{ACCOUNTNO: ben, BENACCOUNTNO: acc}})
+                WHERE ($session_id IS NULL OR b.session_id = $session_id)
+                  AND elementId(a) < elementId(b)
+                  AND coalesce(a.TRANSACTIONDATE, '') = coalesce(b.TRANSACTIONDATE, '')
+                MERGE (a)-[r1:CIRCULAR_FLOW {{session_id:$session_id}}]->(b)
+                SET r1.bgcolor = '#e6e6e6', r1.provisional = false, r1.reason = 'same-day reverse transfer pair'
+                MERGE (b)-[r2:CIRCULAR_FLOW {{session_id:$session_id}}]->(a)
+                SET r2.bgcolor = '#e6e6e6', r2.provisional = false, r2.reason = 'same-day reverse transfer pair'
+                """, session_id=sp)
+            rules_completed.append("CIRCULAR_FLOW")
+            print(f"  [Rule] CIRCULAR_FLOW ✓", flush=True)
+        except Exception as e:
+            rules_failed.append(("CIRCULAR_FLOW", str(e)[:100]))
+            print(f"  [Rule] CIRCULAR_FLOW ✗ {str(e)[:100]}", flush=True)
+
+        # ---- 3. FUND_FLOW (OPTIMIZED: index-assisted, no cartesian product) ----
+        try:
+            with driver.session() as s:
+                s.run(f"""
+                MATCH (a:{label})
+                WHERE ($session_id IS NULL OR a.session_id = $session_id)
+                  AND a.BENACCOUNTNO IS NOT NULL AND a.BENACCOUNTNO <> ''
+                WITH a, a.BENACCOUNTNO AS ben_acc
+                MATCH (b:{label} {{ACCOUNTNO: ben_acc}})
+                WHERE ($session_id IS NULL OR b.session_id = $session_id)
+                  AND elementId(a) <> elementId(b)
+                  AND (
+                    coalesce(a.TRANSACTIONDATE, '') < coalesce(b.TRANSACTIONDATE, '')
+                    OR (
+                      coalesce(a.TRANSACTIONDATE, '') = coalesce(b.TRANSACTIONDATE, '')
+                      AND coalesce(a.TRANSACTIONTIME, '') < coalesce(b.TRANSACTIONTIME, '')
+                    )
+                  )
+                WITH a, b
+                ORDER BY a.TRANSACTIONDATE, a.TRANSACTIONTIME, b.TRANSACTIONDATE, b.TRANSACTIONTIME
+                With a, collect(b)[0] AS b
+                WHERE b IS NOT NULL
+                MERGE (a)-[r:FUND_FLOW {{session_id:$session_id}}]->(b)
+                SET r.bgcolor = '#d8a822', r.provisional = false,
+                    r.reason = 'beneficiary later acts as sender'
+                """, session_id=sp)
+            rules_completed.append("FUND_FLOW")
+            print(f"  [Rule] FUND_FLOW ✓", flush=True)
+        except Exception as e:
+            rules_failed.append(("FUND_FLOW", str(e)[:100]))
+            print(f"  [Rule] FUND_FLOW ✗ {str(e)[:100]}", flush=True)
+
+        # ---- 4. DORMANT_TO_ACTIVE ----
+        try:
+            with driver.session() as s:
+                s.run(f"""
+                MATCH (t:{label})
+                WHERE ($session_id IS NULL OR t.session_id = $session_id)
+                  AND toLower(coalesce(t.ACCOUNTSTATE, '')) = 'dormant'
+                  AND toLower(coalesce(t.BENACCOUNTSTATE, '')) = 'active'
+                MERGE (t)-[r:DORMANT_TO_ACTIVE {{session_id:$session_id}}]->(t)
+                SET r.bgcolor = '#c20f0f', r.textcolor = '#eeeeee', r.provisional = false,
+                    r.reason = 'dormant source account transacts with active beneficiary'
+                """, session_id=sp)
+            rules_completed.append("DORMANT_TO_ACTIVE")
+            print(f"  [Rule] DORMANT_TO_ACTIVE ✓", flush=True)
+        except Exception as e:
+            rules_failed.append(("DORMANT_TO_ACTIVE", str(e)[:100]))
+            print(f"  [Rule] DORMANT_TO_ACTIVE ✗ {str(e)[:100]}", flush=True)
+
+        # ---- 5. ABNORMAL_BALANCE_CHANGE ----
+        try:
+            with driver.session() as s:
+                s.run(f"""
+                MATCH (t:{label})
+                WHERE ($session_id IS NULL OR t.session_id = $session_id)
+                WITH t.ACCOUNTNO AS acc, t,
+                     coalesce(toFloat(t.BALANCEHELD), toFloat(t.BALANCE), toFloat(t.balance)) AS balance
+                WHERE acc IS NOT NULL AND acc <> '' AND balance IS NOT NULL
+                WITH t.ACCOUNTNO AS acc, t
+                ORDER BY t.TRANSACTIONDATE, t.TRANSACTIONTIME
+                With acc, collect(t) AS txns
+                UNWIND range(1, size(txns)-1) AS i
+                WITH txns[i] AS current, txns[i-1] AS previous,
+                     txns[CASE WHEN i-11 < 0 THEN 0 ELSE i-11 END .. i] AS history
+                WITH current, previous,
+                     abs(coalesce(toFloat(current.BALANCEHELD), toFloat(current.BALANCE), toFloat(current.balance)) -
+                         coalesce(toFloat(previous.BALANCEHELD), toFloat(previous.BALANCE), toFloat(previous.balance))) AS current_change,
+                     [j IN range(1, size(history)-1) |
+                       abs(coalesce(toFloat(history[j].BALANCEHELD), toFloat(history[j].BALANCE), toFloat(history[j].balance)) -
+                           coalesce(toFloat(history[j-1].BALANCEHELD), toFloat(history[j-1].BALANCE), toFloat(history[j-1].balance)))] AS changes
+                WITH current, previous, current_change, [c IN changes WHERE c IS NOT NULL AND c > 0] AS valid_changes
+                WHERE size(valid_changes) >= 3
+                WITH current, previous, current_change,
+                     reduce(s = 0.0, c IN valid_changes | s + c) / size(valid_changes) AS avg_change
+                WHERE avg_change > 0 AND current_change >= avg_change * 3
+                MERGE (previous)-[r:ABNORMAL_BALANCE_CHANGE {{session_id:$session_id}}]->(current)
+                SET r.bgcolor = '#196e08', r.textcolor = '#eeeeee', r.provisional = false,
+                    r.reason = 'balance change exceeds recent account baseline',
+                    r.change = current_change, r.average_recent_change = avg_change, r.threshold_multiplier = 3
+                """, session_id=sp)
+            rules_completed.append("ABNORMAL_BALANCE_CHANGE")
+            print(f"  [Rule] ABNORMAL_BALANCE_CHANGE ✓", flush=True)
+        except Exception as e:
+            rules_failed.append(("ABNORMAL_BALANCE_CHANGE", str(e)[:100]))
+            print(f"  [Rule] ABNORMAL_BALANCE_CHANGE ✗ {str(e)[:100]}", flush=True)
+
+        # ---- 6. HUB_AND_SPOKE (outgoing) ----
+        try:
+            with driver.session() as s:
+                s.run(f"""
+                MATCH (t:{label})
+                WHERE ($session_id IS NULL OR t.session_id = $session_id)
+                  AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> ''
+                  AND t.BENACCOUNTNO IS NOT NULL AND t.BENACCOUNTNO <> ''
+                WITH t.ACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day, collect(t) AS txns, count(DISTINCT t.BENACCOUNTNO) AS spoke_count
+                WHERE hub IS NOT NULL AND hub <> '' AND spoke_count >= 3
+                UNWIND range(0, size(txns)-2) AS i
+                WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
+                MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
+                SET r.bgcolor = '#6f42c1', r.textcolor = '#eeeeee', r.provisional = false,
+                    r.reason = 'account connects with multiple counterparties on same day',
+                    r.hub_account = hub, r.direction = 'outgoing', r.tx_day = tx_day, r.spoke_count = spoke_count
+                """, session_id=sp)
+            rules_completed.append("HUB_AND_SPOKE_OUT")
+            print(f"  [Rule] HUB_AND_SPOKE (outgoing) ✓", flush=True)
+        except Exception as e:
+            rules_failed.append(("HUB_AND_SPOKE_OUT", str(e)[:100]))
+            print(f"  [Rule] HUB_AND_SPOKE (outgoing) ✗ {str(e)[:100]}", flush=True)
+
+        # ---- 7. HUB_AND_SPOKE (incoming) ----
+        try:
+            with driver.session() as s:
+                s.run(f"""
+                MATCH (t:{label})
+                WHERE ($session_id IS NULL OR t.session_id = $session_id)
+                  AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> ''
+                  AND t.ACCOUNTNO IS NOT NULL AND t.ACCOUNTNO <> ''
+                WITH t.BENACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day, collect(t) AS txns, count(DISTINCT t.ACCOUNTNO) AS spoke_count
+                WHERE hub IS NOT NULL AND hub <> '' AND spoke_count >= 3
+                UNWIND range(0, size(txns)-2) AS i
+                WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
+                MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
+                SET r.bgcolor = '#6f42c1', r.textcolor = '#eeeeee', r.provisional = false,
+                    r.reason = 'account connects with multiple counterparties on same day',
+                    r.hub_account = hub, r.direction = 'incoming', r.tx_day = tx_day, r.spoke_count = spoke_count
+                """, session_id=sp)
+            rules_completed.append("HUB_AND_SPOKE_IN")
+            print(f"  [Rule] HUB_AND_SPOKE (incoming) ✓", flush=True)
+        except Exception as e:
+            rules_failed.append(("HUB_AND_SPOKE_IN", str(e)[:100]))
+            print(f"  [Rule] HUB_AND_SPOKE (incoming) ✗ {str(e)[:100]}", flush=True)
+
+        # ---- 8. SHARED_IDENTIFIER ----
+        try:
+            with driver.session() as s:
+                s.run(f"""
+                MATCH (t:{label})
+                WHERE ($session_id IS NULL OR t.session_id = $session_id)
+                WITH t,
+                     [{{kind:'BUSINESSMOBILENO', value:t.BUSINESSMOBILENO, account:t.ACCOUNTNO}},
+                      {{kind:'BENTELNO', value:t.BENTELNO, account:t.BENACCOUNTNO}}] AS identifiers
+                UNWIND identifiers AS identifier
+                WITH identifier.kind AS identifier_type,
+                     trim(toString(identifier.value)) AS identifier_value,
+                     identifier.account AS account, t
+                WHERE identifier_value <> '' AND account IS NOT NULL AND account <> ''
+                WITH identifier_type, identifier_value, collect(DISTINCT account) AS accounts, collect(DISTINCT t) AS txns
+                WHERE size(accounts) >= 2
+                UNWIND range(0, size(txns)-2) AS i
+                WITH txns[i] AS a, txns[i+1] AS b, identifier_type, identifier_value, accounts
+                MERGE (a)-[r:SHARED_IDENTIFIER {{session_id:$session_id}}]->(b)
+                SET r.bgcolor = '#0b7285', r.textcolor = '#eeeeee', r.provisional = false,
+                    r.reason = 'same identifier appears on multiple accounts',
+                    r.identifier_type = identifier_type, r.identifier_value = identifier_value,
+                    r.account_count = size(accounts)
+                """, session_id=sp)
+            rules_completed.append("SHARED_IDENTIFIER")
+            print(f"  [Rule] SHARED_IDENTIFIER ✓", flush=True)
+        except Exception as e:
+            rules_failed.append(("SHARED_IDENTIFIER", str(e)[:100]))
+            print(f"  [Rule] SHARED_IDENTIFIER ✗ {str(e)[:100]}", flush=True)
+
     finally:
         driver.close()
+
+    print(f"[xVigilance-Consumer] Analysis summary: {len(rules_completed)} passed ({', '.join(rules_completed)})", flush=True)
+    if rules_failed:
+        print(f"[xVigilance-Consumer] {len(rules_failed)} failed: {', '.join(r[0] for r in rules_failed)}", flush=True)
 # =====================================================================
 
 
