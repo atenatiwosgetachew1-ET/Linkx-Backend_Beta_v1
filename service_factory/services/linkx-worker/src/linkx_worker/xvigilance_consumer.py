@@ -24,30 +24,30 @@ def handle_shutdown(signum, frame):
 
 
 def calculate_fraud_score(anomaly_type, nodes, edges):
-    # 1. Base Score by Typology (Lowered to allow for Low/Medium bands)
+    # 1. Base Score by Typology (Severely reduced)
     base_scores = {
-        "HIGH_RISK_LINK": 50,  # Starts High
-        "CIRCULAR_FLOW": 40,   # Starts Medium
-        "HUB_AND_SPOKE": 30,   # Starts Low/Medium
-        "SMURFING": 30,        # Starts Low/Medium
-        "SHARED_IDENTIFIER": 30,
-        "RAPID_FAN_OUT": 30,
-        "ABNORMAL_BALANCE_CHANGE": 20 # Starts Low
+        "HIGH_RISK_LINK": 50,  # Explicitly configured risky accounts still start High
+        "CIRCULAR_FLOW": 30,   
+        "SMURFING": 20,        
+        "SHARED_IDENTIFIER": 20,
+        "HUB_AND_SPOKE": 10,   # Massive reduction for airtime/bill-pay noise
+        "RAPID_FAN_OUT": 10,
+        "ABNORMAL_BALANCE_CHANGE": 10 
     }
-    score = base_scores.get(anomaly_type, 30)
+    score = base_scores.get(anomaly_type, 10)
     
-    # 2. Graph Size Multiplier (Logarithmic bucketing instead of linear +2 per node)
+    # 2. Graph Size Multiplier (Pushed thresholds WAY up)
     node_count = len(nodes)
-    if node_count >= 1000:
-        score += 40
-    elif node_count >= 100:
+    if node_count >= 10000:
         score += 30
-    elif node_count >= 21:
+    elif node_count >= 5000:
         score += 20
-    elif node_count >= 5:
+    elif node_count >= 1000:
         score += 10
+    elif node_count >= 100:
+        score += 5
         
-    # 3. Financial Value Multiplier (Scaled up for enterprise volumes)
+    # 3. Financial Value Multiplier (Scaled for millions of Birr)
     total_value = 0.0
     for n in nodes:
         amount = n.get("TRANSFERAMOUNT") or n.get("AMOUNT") or n.get("AMOUNTINBIRR") or 0.0
@@ -56,11 +56,13 @@ def calculate_fraud_score(anomaly_type, nodes, edges):
         except:
             pass
             
-    if total_value > 1000000:
+    if total_value > 10000000:  # 10 Million
+        score += 40
+    elif total_value > 5000000: # 5 Million
         score += 30
-    elif total_value > 500000:
+    elif total_value > 1000000: # 1 Million
         score += 20
-    elif total_value > 100000:
+    elif total_value > 500000:  # 500k
         score += 10
         
     # Cap at 100
