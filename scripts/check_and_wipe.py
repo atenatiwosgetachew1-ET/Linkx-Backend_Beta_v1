@@ -1,8 +1,13 @@
 import psycopg, os
-from dotenv import load_dotenv
 from neo4j import GraphDatabase
 
-load_dotenv('/opt/linkx-worker/src/.env')
+# Load .env manually
+with open('/opt/linkx-worker/src/.env') as f:
+    for line in f:
+        line = line.strip()
+        if line and not line.startswith('#') and '=' in line:
+            k, v = line.split('=', 1)
+            os.environ.setdefault(k.strip(), v.strip())
 
 # Check reports
 conn = psycopg.connect(os.getenv('LINKX_POSTGRES_DSN'))
