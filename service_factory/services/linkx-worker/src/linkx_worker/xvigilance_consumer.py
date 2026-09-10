@@ -319,11 +319,11 @@ def fast_ingest_batch(credentials, session_id, df, batch_number, node_label):
     driver = create_neo4j_driver(credentials)
     try:
         with driver.session() as session:
+            # CREATE instead of MERGE: NodeIds are unique UUIDs, no duplicates possible
             session.run(f"""
                 UNWIND $rows AS row
-                MERGE (n:`{node_label}` {{ NodeId: row.NodeId }})
-                ON CREATE SET n.node_identity = 'Entity Node'
-                SET n += row
+                CREATE (n:`{node_label}`)
+                SET n = row, n.node_identity = 'Entity Node'
             """, rows=clean_rows)
     finally:
         driver.close()
@@ -340,7 +340,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
     try:
         batch_graph_analysis_transactions(
             driver=driver,
-            log_file=None,
+            log_file="xvigilance_batch_analysis.log",
             session_id=session_id,
             nodes_label=node_label,
         )
