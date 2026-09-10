@@ -69,3 +69,17 @@ When the Engine detects fraud, the alerts are instantly pushed here. We have rec
 }
 ```
 **Score Bands:** Low (0–19), Medium (20–49), High (50–79), Critical (80+).
+
+## Graph Subgraph Extraction (For UI Rendering)
+When an anomaly contains tens of thousands of nodes (e.g., an 89,000 node Hub-and-Spoke ring), sending the entire graph to the frontend would crash the browser and hit PostgreSQL limits.
+
+The backend now uses an **Edge-Centric Subgraph Extraction** algorithm before saving the report:
+1. It analyzes the "degree of influence" of every node in the massive anomaly.
+2. It sorts all edges by the combined influence of the two nodes they connect.
+3. It takes a strict limit of the **top 1,000 most influential edges**.
+4. It extracts exactly the nodes required to render those 1,000 edges.
+
+**What this means for the Frontend:**
+- You will receive a `graph: { nodes: [...], edges: [...] }` payload that is capped at 1,000 edges and roughly ~2,000 nodes maximum.
+- **100% Intact Guarantee:** There will never be an "orphan node" (a node with no edges) or a "dangling edge" (an edge pointing to a node that isn't in the payload). The subgraph is mathematically intact and ready to render in libraries like Cytoscape.js or Vis.js perfectly out-of-the-box.
+- The `records_count` and `fraud_score` math are still accurately calculated against the *full* 89,000 node dataset before this truncation happens.
