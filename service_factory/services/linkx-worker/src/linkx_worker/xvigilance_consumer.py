@@ -173,6 +173,19 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
                     top_node_str = ", ".join(top_5_nodes)
                     primary_account = top_5_nodes[0] if top_5_nodes else "UNKNOWN"
                     
+                    # --- EVIDENCE SUBGRAPH EXTRACTION ---
+                    # The user is right: random slicing creates garbage graphs. 
+                    # We must extract the top 1000 most influential nodes to show the core of the ring.
+                    MAX_RENDER_NODES = 1000
+                    core_node_ids = set(top_nodes[:MAX_RENDER_NODES])
+                    
+                    render_nodes = [n for n in nodes_list if n["id"] in core_node_ids]
+                    # Keep edges where AT LEAST ONE node is in the core, up to a sane limit
+                    render_edges = [e for e in edges_list if e["from"] in core_node_ids or e["to"] in core_node_ids]
+                    # Cap edges to prevent massive JSON if the core nodes are hyper-connected
+                    render_edges = render_edges[:MAX_RENDER_NODES * 2]
+                    # ------------------------------------
+                    
                     linked_entities = []
                     for edge in edges_list[:50]:
                         linked_entities.append({
@@ -202,8 +215,8 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
                             "max_path_length": 2,
                             "linked_entities": linked_entities,
                             "graph": {
-                                "nodes": nodes_list[:1000],
-                                "edges": edges_list[:1000]
+                                "nodes": render_nodes,
+                                "edges": render_edges
                             }
                         },
                         "meta": {
