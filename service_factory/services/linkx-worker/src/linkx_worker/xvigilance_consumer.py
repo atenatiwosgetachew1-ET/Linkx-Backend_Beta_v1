@@ -470,10 +470,14 @@ def consume_firehose():
                     # EPHEMERAL GRAPH WIPE: Purge nodes for this window to protect RAM
                     print(f"[xVigilance-Consumer] Executing Ephemeral Graph Wipe for window {data.get('window_id')}...", flush=True)
                     try:
+                        wipe_label = rule_to_node_label("bank transactions", session_id)
+                        safe_wipe_label = f"`{str(wipe_label).replace('`', '')}`"
                         driver = create_neo4j_driver(credentials)
                         with driver.session() as session:
-                            session.run("MATCH (n) WHERE n.batch_id CONTAINS $window_id DETACH DELETE n", window_id=data.get('window_id', ''))
+                            result = session.run(f"MATCH (n:{safe_wipe_label}) DETACH DELETE n RETURN count(n) AS deleted")
+                            deleted = result.single()["deleted"]
                         driver.close()
+                        print(f"[xVigilance-Consumer] Ephemeral Wipe complete: {deleted} nodes purged.", flush=True)
                     except Exception as wipe_e:
                         print(f"[xVigilance-Consumer] Warning: Failed to execute graph wipe: {wipe_e}", flush=True)
                         
