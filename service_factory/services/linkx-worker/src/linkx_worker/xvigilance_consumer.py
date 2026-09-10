@@ -275,6 +275,78 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
 
 
 
+# =====================================================================
+# FAST INGEST: Direct Neo4j node insertion WITHOUT incremental rules
+# =====================================================================
+def _neo4j_property_value(value):
+    """Convert a Python value into a Neo4j-safe property value."""
+    if value is None:
+        return ""
+    if isinstance(value, float) and value != value:
+        return ""
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (dict, list, tuple, set)):
+        return json.dumps(value, default=str, sort_keys=True)
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+def fast_ingest_batch(credentials, session_id, df, batch_number, node_label):
+    """
+    Ingest a DataFrame of transactions directly into Neo4j as nodes.
+    This is a FAST path that skips all incremental rule analysis.
+    Rules are run ONCE at the WATERMARK for the full-hour picture.
+    """
+    rows = df.to_dict(orient="records") if hasattr(df, "to_dict") else []
+    if not rows:
+        return
+
+    batch_id = f"{session_id}_rt_{batch_number}"
+    clean_rows = []
+    for row in rows:
+        clean = {key: _neo4j_property_value(value) for key, value in row.items()}
+        clean.setdefault("NodeId", str(uuid.uuid4()))
+        clean["session_id"] = str(session_id or "")
+        clean["created_by"] = "linkx"
+        clean["linkx_managed"] = True
+        clean["created_at"] = datetime.utcnow().isoformat()
+        clean["batch_id"] = str(batch_id)
+        clean["nodes_label"] = node_label
+        clean_rows.append(clean)
+
+    driver = create_neo4j_driver(credentials)
+    try:
+        with driver.session() as session:
+            session.run(f"""
+                UNWIND $rows AS row
+                MERGE (n:`{node_label}` {{ NodeId: row.NodeId }})
+                ON CREATE SET n.node_identity = 'Entity Node'
+                SET n += row
+            """, rows=clean_rows)
+    finally:
+        driver.close()
+
+
+def run_full_graph_analysis(credentials, session_id, node_label):
+    """
+    Run the FULL batch LA rules (Smurfing, Circular Flow, etc.) 
+    on the complete hourly graph ONCE, after all micro-batches are ingested.
+    """
+    from batch_manager.analyzing.LA_rules_script import batch_graph_analysis_transactions
+    
+    driver = create_neo4j_driver(credentials)
+    try:
+        batch_graph_analysis_transactions(
+            driver=driver,
+            log_file=None,
+            session_id=session_id,
+            nodes_label=node_label,
+        )
+    finally:
+        driver.close()
+# =====================================================================
 
 
 
@@ -404,6 +476,7 @@ def consume_firehose():
     print("=" * 70, flush=True)
     print(f" xVigilance Governed Ingestion Consumer Online", flush=True)
     print(f" Listening to: {topic}", flush=True)
+    print(f" Mode: FAST INGEST → BATCH ANALYSIS at WATERMARK", flush=True)
     print("=" * 70, flush=True)
 
     buffer = []
@@ -411,27 +484,24 @@ def consume_firehose():
     batch_number = 1
 
     credentials = _neo4j_credentials(session_id)
+    node_label = rule_to_node_label("bank transactions", session_id)
     
     # --- ENSURE NEO4J INDEXES EXIST ON STARTUP ---
     try:
-        from batch_manager.analyzing.analyzer import create_neo4j_driver
         driver = create_neo4j_driver(credentials)
         with driver.session() as session:
-            session.run("CREATE INDEX idx_node_id IF NOT EXISTS FOR (n:bank_transactions_XVIGILANCE_FINDINGS) ON (n.NodeId)")
-            session.run("CREATE INDEX idx_batch_id IF NOT EXISTS FOR (n:bank_transactions_XVIGILANCE_FINDINGS) ON (n.batch_id)")
-            session.run("CREATE INDEX idx_account_no IF NOT EXISTS FOR (n:bank_transactions_XVIGILANCE_FINDINGS) ON (n.ACCOUNTNO)")
-            session.run("CREATE INDEX idx_ben_account_no IF NOT EXISTS FOR (n:bank_transactions_XVIGILANCE_FINDINGS) ON (n.BENACCOUNTNO)")
-            session.run("CREATE INDEX idx_tx_date IF NOT EXISTS FOR (n:bank_transactions_XVIGILANCE_FINDINGS) ON (n.TRANSACTIONDATE)")
-            session.run("CREATE INDEX idx_bus_phone IF NOT EXISTS FOR (n:bank_transactions_XVIGILANCE_FINDINGS) ON (n.BUSINESSMOBILENO)")
-            session.run("CREATE INDEX idx_ben_phone IF NOT EXISTS FOR (n:bank_transactions_XVIGILANCE_FINDINGS) ON (n.BENTELNO)")
-        print("[xVigilance-Consumer] Neo4j Performance Indexes Verified.", flush=True)
+            session.run(f"CREATE INDEX idx_node_id IF NOT EXISTS FOR (n:`{node_label}`) ON (n.NodeId)")
+            session.run(f"CREATE INDEX idx_batch_id IF NOT EXISTS FOR (n:`{node_label}`) ON (n.batch_id)")
+            session.run(f"CREATE INDEX idx_account_no IF NOT EXISTS FOR (n:`{node_label}`) ON (n.ACCOUNTNO)")
+            session.run(f"CREATE INDEX idx_ben_account_no IF NOT EXISTS FOR (n:`{node_label}`) ON (n.BENACCOUNTNO)")
+            session.run(f"CREATE INDEX idx_tx_date IF NOT EXISTS FOR (n:`{node_label}`) ON (n.TRANSACTIONDATE)")
+            session.run(f"CREATE INDEX idx_bus_phone IF NOT EXISTS FOR (n:`{node_label}`) ON (n.BUSINESSMOBILENO)")
+            session.run(f"CREATE INDEX idx_ben_phone IF NOT EXISTS FOR (n:`{node_label}`) ON (n.BENTELNO)")
+        print(f"[xVigilance-Consumer] Neo4j Performance Indexes Verified (label: {node_label}).", flush=True)
         driver.close()
     except Exception as e:
         print(f"[xVigilance-Consumer] Warning: Could not verify Neo4j indexes: {e}", flush=True)
     # ---------------------------------------------
-    
-    payload = _base_analyzer_payload(session_id, credentials)
-    payload["rule"] = "bank transactions"
 
     while RUNNING:
         try:
@@ -460,18 +530,33 @@ def consume_firehose():
                         df = normalize_transaction_dataframe(df)
                         # -------------------------------------
 
-                        print(f"[xVigilance-Consumer] Ingesting {len(df)} remaining records to Neo4j...", flush=True)
-                        realtime_neo4j_message_ingest(payload, df, batch_number)
+                        print(f"[xVigilance-Consumer] Fast-ingesting {len(df)} remaining records to Neo4j...", flush=True)
+                        fast_ingest_batch(credentials, session_id, df, batch_number, node_label)
                         buffer.clear()
                         batch_number += 1
-                    print("[xVigilance-Consumer] Ingestion complete. Scanning Graph for LA_Script_rules violations (Smurfing, Circular Flow)...", flush=True)
+
+                    # ============================================================
+                    # FULL BATCH ANALYSIS: Run ALL rules on the complete hour graph
+                    # ============================================================
+                    print("[xVigilance-Consumer] Ingestion complete. Running FULL batch LA rules (Smurfing, Circular Flow, Hub&Spoke, etc.)...", flush=True)
+                    t0 = time.time()
+                    try:
+                        run_full_graph_analysis(credentials, session_id, node_label)
+                        analysis_time = time.time() - t0
+                        print(f"[xVigilance-Consumer] Full batch analysis completed in {analysis_time:.1f}s.", flush=True)
+                    except Exception as analysis_err:
+                        print(f"[xVigilance-Consumer] Error during batch analysis: {analysis_err}", flush=True)
+                        import traceback
+                        traceback.print_exc()
+                    # ============================================================
+
+                    # PROMOTE: Read anomaly relationships and save to PostgreSQL
                     promote_anomalies_to_postgres(credentials, session_id, data.get('window_id'), execution_meta={'total_records': data.get('total_records'), 'batch_id': data.get('batch_id'), 'elastic_endpoint': data.get('elastic_endpoint'), 'worker_node': data.get('worker_node')})
                     
                     # EPHEMERAL GRAPH WIPE: Purge nodes for this window to protect RAM
                     print(f"[xVigilance-Consumer] Executing Ephemeral Graph Wipe for window {data.get('window_id')}...", flush=True)
                     try:
-                        wipe_label = rule_to_node_label("bank transactions", session_id)
-                        safe_wipe_label = f"`{str(wipe_label).replace('`', '')}`"
+                        safe_wipe_label = f"`{str(node_label).replace('`', '')}`"
                         driver = create_neo4j_driver(credentials)
                         with driver.session() as session:
                             result = session.run(f"MATCH (n:{safe_wipe_label}) DETACH DELETE n RETURN count(n) AS deleted")
@@ -482,9 +567,10 @@ def consume_firehose():
                         print(f"[xVigilance-Consumer] Warning: Failed to execute graph wipe: {wipe_e}", flush=True)
                         
                     print(f"[xVigilance-Consumer] Window {data.get('window_id')} finalized successfully.", flush=True)
+                    batch_number = 1  # Reset batch counter for next window
                     continue
 
-                # It's a standard transaction
+                # It's a standard transaction — buffer it
                 buffer.append(data)
                 
                 if len(buffer) >= batch_size:
@@ -494,9 +580,12 @@ def consume_firehose():
                     df = normalize_transaction_dataframe(df)
                     # ----------------------------------
                     
-                    print(f"[xVigilance-Consumer] Ingesting micro-batch {batch_number} ({len(df)} records) to Neo4j...", flush=True)
+                    print(f"[xVigilance-Consumer] Fast-ingesting micro-batch {batch_number} ({len(df)} records) to Neo4j...", flush=True)
+                    t0 = time.time()
                     try:
-                        realtime_neo4j_message_ingest(payload, df, batch_number)
+                        fast_ingest_batch(credentials, session_id, df, batch_number, node_label)
+                        ingest_time = time.time() - t0
+                        print(f"[xVigilance-Consumer] Micro-batch {batch_number} ingested in {ingest_time:.1f}s.", flush=True)
                     except Exception as e:
                         print(f"[xVigilance-Consumer] Error during Neo4j insertion: {e}", flush=True)
                     buffer.clear()
