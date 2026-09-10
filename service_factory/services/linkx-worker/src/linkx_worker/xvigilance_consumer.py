@@ -180,17 +180,27 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
                     top_node_str = ", ".join(top_5_nodes)
                     primary_account = top_5_nodes[0] if top_5_nodes else "UNKNOWN"
                     
-                    # --- EVIDENCE SUBGRAPH EXTRACTION ---
-                    # The user is right: random slicing creates garbage graphs. 
-                    # We must extract the top 1000 most influential nodes to show the core of the ring.
-                    MAX_RENDER_NODES = 1000
-                    core_node_ids = set(top_nodes[:MAX_RENDER_NODES])
+                    # --- EVIDENCE SUBGRAPH EXTRACTION (Edge-Centric) ---
+                    # To prevent "orphan nodes" or "dangling edges" in the UI, we must ensure 
+                    # that every edge we send has BOTH of its nodes included.
+                    # 1. Sort all edges by the combined degree of their endpoints (keeps the hub activity).
+                    sorted_edges = sorted(edges_list, key=lambda e: node_degrees[e["from"]] + node_degrees[e["to"]], reverse=True)
                     
-                    render_nodes = [n for n in nodes_list if n["id"] in core_node_ids]
-                    # Keep edges where AT LEAST ONE node is in the core, up to a sane limit
-                    render_edges = [e for e in edges_list if e["from"] in core_node_ids or e["to"] in core_node_ids]
-                    # Cap edges to prevent massive JSON if the core nodes are hyper-connected
-                    render_edges = render_edges[:MAX_RENDER_NODES * 2]
+                    # 2. Take the top N edges
+                    MAX_EDGES = 1000
+                    render_edges = sorted_edges[:MAX_EDGES]
+                    
+                    # 3. Extract the exact set of nodes used by these edges
+                    rendered_node_ids = set()
+                    for e in render_edges:
+                        rendered_node_ids.add(e["from"])
+                        rendered_node_ids.add(e["to"])
+                        
+                    # 4. Include those nodes, plus the absolute top 5 accounts just in case they were somehow missed
+                    for top_acc in top_5_nodes:
+                        rendered_node_ids.add(top_acc)
+                        
+                    render_nodes = [n for n in nodes_list if n["id"] in rendered_node_ids]
                     # ------------------------------------
                     
                     linked_entities = []
