@@ -561,7 +561,7 @@ def _normalize_configuration(config):
     return normalized
 
 
-SENSITIVE_CONFIG_KEY_PARTS = ("password", "secret", "token", "credential", "authorization", "x-api-key", "client_secret")
+SENSITIVE_CONFIG_KEY_PARTS = ("password", "secret", "token", "credential", "authorization", "x-api-key", "client_secret", "trusted_entities", "risk_entities", "pep_entities", "sanction_entities")
 
 
 def _sensitive_config_paths(value, prefix=""):
@@ -1239,6 +1239,8 @@ def configuration():
                     success=True,
                     metadata={"sensitive_paths": sensitive_paths},
                 )
+                from batch_manager.config_defaults import update_global_entities
+                update_global_entities(incoming_config, actor)
             for key, value in incoming_config.items():
                 if key == "active_rule":
                     config_dict[key] = value if isinstance(value, list) else [value]
