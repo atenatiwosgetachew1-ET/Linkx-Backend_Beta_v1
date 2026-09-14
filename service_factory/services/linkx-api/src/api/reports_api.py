@@ -24,10 +24,24 @@ def _get_paginated_reports(report_type):
         limit = int(request.args.get('limit', 50))
         offset = int(request.args.get('offset', 0))
         status = request.args.get('status')
+        score_band = request.args.get('score_band')
         
-        reports, total_count = get_reports(report_type=report_type, status=status, limit=limit, offset=offset)
+        min_fraud_score_str = request.args.get('min_fraud_score')
+        min_fraud_score = float(min_fraud_score_str) if min_fraud_score_str is not None else None
         
-        _audit(f"reports.list_{report_type.lower()}", success=True, metadata={"status": status, "limit": limit, "offset": offset})
+        q = request.args.get('q')
+        
+        reports, total_count = get_reports(
+            report_type=report_type, 
+            status=status, 
+            limit=limit, 
+            offset=offset,
+            score_band=score_band,
+            min_fraud_score=min_fraud_score,
+            q=q
+        )
+        
+        _audit(f"reports.list_{report_type.lower()}", success=True, metadata={"status": status, "limit": limit, "offset": offset, "score_band": score_band, "min_fraud_score": min_fraud_score, "q": q})
         
         # Return structured pagination format
         return jsonify({

@@ -16,7 +16,7 @@ def insert_report(report_type, source_system, payload, external_reference_id=Non
             conn.commit()
             return report_id
 
-def get_reports(report_type=None, status=None, limit=50, offset=0):
+def get_reports(report_type=None, status=None, limit=50, offset=0, score_band=None, min_fraud_score=None, q=None):
     with get_postgres_connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             query = "SELECT *, COUNT(*) OVER() as _total_count FROM linkx_reports WHERE 1=1"
@@ -25,8 +25,28 @@ def get_reports(report_type=None, status=None, limit=50, offset=0):
                 query += " AND report_type = %s"
                 params.append(report_type)
             if status:
-                query += " AND status = %s"
-                params.append(status)
+                status_lower = status.lower()
+                if status_lower in ['success', 'completed', 'succeeded']:
+                    query += " AND LOWER(status) IN ('success', 'completed', 'succeeded')"
+                elif status_lower in ['error', 'failed']:
+                    query += " AND LOWER(status) IN ('error', 'failed')"
+                else:
+                    query += " AND LOWER(status) = %s"
+                    params.append(status_lower)
+            if score_band:
+                query += " AND LOWER(payload->>'score_band') = LOWER(%s)"
+                params.append(score_band)
+            if min_fraud_score is not None:
+                query += """ AND (
+                    COALESCE(payload->>'fraud_score', payload->>'fraudScore', payload->>'score') IS NOT NULL
+                    AND CAST(COALESCE(payload->>'fraud_score', payload->>'fraudScore', payload->>'score') AS NUMERIC) >= %s
+                )"""
+                params.append(min_fraud_score)
+            if q:
+                search_term = f"%{q}%"
+                query += " AND payload::text ILIKE %s"
+                params.append(search_term)
+                
             query += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
             params.extend([limit, offset])
             
