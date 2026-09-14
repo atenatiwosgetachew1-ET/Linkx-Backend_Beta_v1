@@ -410,6 +410,30 @@ def fast_ingest_batch(credentials, session_id, df, batch_number, node_label):
         driver.close()
 
 
+def fetch_global_entities():
+    try:
+        from batch_manager.utils.postgres_utils import get_postgres_connection
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT config_data FROM global_entity_classification ORDER BY created_at DESC LIMIT 1")
+                row = cur.fetchone()
+                if row and row[0]:
+                    return row[0]
+    except Exception as e:
+        print(f"[xVigilance] Failed to fetch global entities: {e}")
+    return {}
+
+def format_cypher_entries(entities):
+    if not entities or not isinstance(entities, list):
+        return []
+    return [{str(k): str(v) for k, v in entry.items()} for entry in entities if isinstance(entry, dict)]
+
+def _trusted_entry_match(alias):
+    return f'all(k IN keys(entry) WHERE toString(coalesce({alias}[k], "")) = toString(entry[k]))'
+
+def _trusted_node_clause(alias):
+    return f'NOT any(entry IN $trusted_entries WHERE {_trusted_entry_match(alias)})'
+
 def run_full_graph_analysis(credentials, session_id, node_label):
     """
     Run ALL LA rules on the complete hourly graph.
@@ -424,6 +448,11 @@ def run_full_graph_analysis(credentials, session_id, node_label):
     rules_completed = []
     rules_failed = []
 
+    # Fetch and format global entities
+    global_config = fetch_global_entities()
+    trusted_entries = format_cypher_entries(global_config.get("trusted_entities", []))
+    risk_entries = format_cypher_entries(global_config.get("risk_entities", []))
+
     try:
         # ---- 1. SMURFING ----
         try:
@@ -431,6 +460,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 s.run(f"""
                 MATCH (t:{label})
                 WHERE ($session_id IS NULL OR t.session_id = $session_id)
+                  AND {_trusted_node_clause('t')}
                 WITH t.ACCOUNTNO AS acc, t.BENACCOUNTNO AS beneficiary,
                      t.TRANSACTIONDATE AS tx_day, t,
                      coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount)) AS amount
@@ -450,7 +480,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                     r.account = acc, r.beneficiary = beneficiary, r.tx_day = tx_day,
                     r.tx_count = tx_count, r.total_amount = total_amount,
                     r.single_tx_threshold = 10000, r.total_threshold = 30000
-                """, session_id=sp)
+                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
             rules_completed.append("SMURFING")
             print(f"  [Rule] SMURFING ✓", flush=True)
         except Exception as e:
@@ -463,6 +493,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 s.run(f"""
                 MATCH (a:{label})
                 WHERE ($session_id IS NULL OR a.session_id = $session_id)
+                  AND {_trusted_node_clause('a')}
                   AND a.ACCOUNTNO IS NOT NULL AND a.ACCOUNTNO <> ''
                   AND a.BENACCOUNTNO IS NOT NULL AND a.BENACCOUNTNO <> ''
                 WITH a, a.ACCOUNTNO AS acc, a.BENACCOUNTNO AS ben
@@ -474,7 +505,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 SET r1.bgcolor = '#e6e6e6', r1.provisional = false, r1.reason = 'same-day reverse transfer pair'
                 MERGE (b)-[r2:CIRCULAR_FLOW {{session_id:$session_id}}]->(a)
                 SET r2.bgcolor = '#e6e6e6', r2.provisional = false, r2.reason = 'same-day reverse transfer pair'
-                """, session_id=sp)
+                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
             rules_completed.append("CIRCULAR_FLOW")
             print(f"  [Rule] CIRCULAR_FLOW ✓", flush=True)
         except Exception as e:
@@ -487,6 +518,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 s.run(f"""
                 MATCH (a:{label})
                 WHERE ($session_id IS NULL OR a.session_id = $session_id)
+                  AND {_trusted_node_clause('a')}
                   AND a.BENACCOUNTNO IS NOT NULL AND a.BENACCOUNTNO <> ''
                 WITH a, a.BENACCOUNTNO AS ben_acc
                 MATCH (b:{label} {{ACCOUNTNO: ben_acc}})
@@ -506,7 +538,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 MERGE (a)-[r:FUND_FLOW {{session_id:$session_id}}]->(b)
                 SET r.bgcolor = '#d8a822', r.provisional = false,
                     r.reason = 'beneficiary later acts as sender'
-                """, session_id=sp)
+                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
             rules_completed.append("FUND_FLOW")
             print(f"  [Rule] FUND_FLOW ✓", flush=True)
         except Exception as e:
@@ -519,12 +551,13 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 s.run(f"""
                 MATCH (t:{label})
                 WHERE ($session_id IS NULL OR t.session_id = $session_id)
+                  AND {_trusted_node_clause('t')}
                   AND toLower(coalesce(t.ACCOUNTSTATE, '')) = 'dormant'
                   AND toLower(coalesce(t.BENACCOUNTSTATE, '')) = 'active'
                 MERGE (t)-[r:DORMANT_TO_ACTIVE {{session_id:$session_id}}]->(t)
                 SET r.bgcolor = '#c20f0f', r.textcolor = '#eeeeee', r.provisional = false,
                     r.reason = 'dormant source account transacts with active beneficiary'
-                """, session_id=sp)
+                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
             rules_completed.append("DORMANT_TO_ACTIVE")
             print(f"  [Rule] DORMANT_TO_ACTIVE ✓", flush=True)
         except Exception as e:
@@ -537,6 +570,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 s.run(f"""
                 MATCH (t:{label})
                 WHERE ($session_id IS NULL OR t.session_id = $session_id)
+                  AND {_trusted_node_clause('t')}
                 WITH t.ACCOUNTNO AS acc, t,
                      coalesce(toFloat(t.BALANCEHELD), toFloat(t.BALANCE), toFloat(t.balance)) AS balance
                 WHERE acc IS NOT NULL AND acc <> '' AND balance IS NOT NULL
@@ -561,7 +595,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 SET r.bgcolor = '#196e08', r.textcolor = '#eeeeee', r.provisional = false,
                     r.reason = 'balance change exceeds recent account baseline',
                     r.change = current_change, r.average_recent_change = avg_change, r.threshold_multiplier = 3
-                """, session_id=sp)
+                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
             rules_completed.append("ABNORMAL_BALANCE_CHANGE")
             print(f"  [Rule] ABNORMAL_BALANCE_CHANGE ✓", flush=True)
         except Exception as e:
@@ -574,6 +608,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 s.run(f"""
                 MATCH (t:{label})
                 WHERE ($session_id IS NULL OR t.session_id = $session_id)
+                  AND {_trusted_node_clause('t')}
                   AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> ''
                   AND t.BENACCOUNTNO IS NOT NULL AND t.BENACCOUNTNO <> ''
                 WITH t.ACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day, collect(t) AS txns, count(DISTINCT t.BENACCOUNTNO) AS spoke_count
@@ -584,7 +619,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 SET r.bgcolor = '#6f42c1', r.textcolor = '#eeeeee', r.provisional = false,
                     r.reason = 'account connects with multiple counterparties on same day',
                     r.hub_account = hub, r.direction = 'outgoing', r.tx_day = tx_day, r.spoke_count = spoke_count
-                """, session_id=sp)
+                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
             rules_completed.append("HUB_AND_SPOKE_OUT")
             print(f"  [Rule] HUB_AND_SPOKE (outgoing) ✓", flush=True)
         except Exception as e:
@@ -597,6 +632,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 s.run(f"""
                 MATCH (t:{label})
                 WHERE ($session_id IS NULL OR t.session_id = $session_id)
+                  AND {_trusted_node_clause('t')}
                   AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> ''
                   AND t.ACCOUNTNO IS NOT NULL AND t.ACCOUNTNO <> ''
                 WITH t.BENACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day, collect(t) AS txns, count(DISTINCT t.ACCOUNTNO) AS spoke_count
@@ -607,7 +643,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 SET r.bgcolor = '#6f42c1', r.textcolor = '#eeeeee', r.provisional = false,
                     r.reason = 'account connects with multiple counterparties on same day',
                     r.hub_account = hub, r.direction = 'incoming', r.tx_day = tx_day, r.spoke_count = spoke_count
-                """, session_id=sp)
+                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
             rules_completed.append("HUB_AND_SPOKE_IN")
             print(f"  [Rule] HUB_AND_SPOKE (incoming) ✓", flush=True)
         except Exception as e:
@@ -637,7 +673,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                     r.reason = 'same identifier appears on multiple accounts',
                     r.identifier_type = identifier_type, r.identifier_value = identifier_value,
                     r.account_count = size(accounts)
-                """, session_id=sp)
+                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
             rules_completed.append("SHARED_IDENTIFIER")
             print(f"  [Rule] SHARED_IDENTIFIER ✓", flush=True)
         except Exception as e:
