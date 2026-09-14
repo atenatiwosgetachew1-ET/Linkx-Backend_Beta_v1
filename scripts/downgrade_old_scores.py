@@ -1,11 +1,15 @@
 import os
 import psycopg
-from dotenv import load_dotenv
 
-# Load credentials from Node 21 worker environment
-load_dotenv("/opt/linkx-worker/.env")
-
-dsn = os.environ.get("LINKX_POSTGRES_DSN")
+# Parse the .env file manually so we don't need the 'dotenv' pip package!
+env_path = "/opt/linkx-worker/.env"
+dsn = None
+if os.path.exists(env_path):
+    with open(env_path, "r") as f:
+        for line in f:
+            if line.startswith("LINKX_POSTGRES_DSN="):
+                dsn = line.strip().split("=", 1)[1].strip('"').strip("'")
+                break
 if not dsn:
     print("Error: LINKX_POSTGRES_DSN not found. Make sure you are running this on Node-21.")
     exit(1)
