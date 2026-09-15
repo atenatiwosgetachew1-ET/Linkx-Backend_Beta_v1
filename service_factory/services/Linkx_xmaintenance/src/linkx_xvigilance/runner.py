@@ -35,26 +35,40 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
 
     # --- Phase 1: Initialize Kafka Producer ---
     kafka_brokers = os.getenv("LINKX_KAFKA_BOOTSTRAP_SERVERS", "172.27.23.106:9092")
-    try:
-        from kafka import KafkaProducer as Producer
-        import json
-        kafka_producer = Producer(
-            bootstrap_servers=kafka_brokers.split(',') if ',' in kafka_brokers else kafka_brokers,
-            value_serializer=lambda v: json.dumps(v).encode('utf-8')
-        )
-        kafka_available = True
-        print(f"[xvigilance] Successfully connected to Kafka Brokers: {kafka_brokers}", flush=True)
-    except ImportError:
-        print("[xvigilance] Warning: kafka-python not installed. Kafka streaming disabled.", flush=True)
-        kafka_available = False
-        kafka_producer = None
-    except Exception as e:
-        print(f"[xvigilance] CRITICAL: Could not connect to Kafka broker at {kafka_brokers}. Error: {e}", flush=True)
-        print("[xvigilance] Streaming is temporarily disabled until broker recovers.", flush=True)
-        kafka_available = False
-        kafka_producer = None
-    
     kafka_topic = "dev.xvigilance.transactions.raw.v2"
+    kafka_import_available = True  # tracks whether kafka-python is installed at all
+
+    def _connect_kafka(max_retries=5):
+        """Attempt to connect to Kafka with exponential backoff.
+        Returns (producer, True) on success or (None, False) on failure."""
+        nonlocal kafka_import_available
+        if not kafka_import_available:
+            return None, False
+        try:
+            from kafka import KafkaProducer as Producer
+        except ImportError:
+            print("[xvigilance] Warning: kafka-python not installed. Kafka streaming permanently disabled.", flush=True)
+            kafka_import_available = False
+            return None, False
+
+        import json as _json
+        broker_list = kafka_brokers.split(',') if ',' in kafka_brokers else kafka_brokers
+        for attempt in range(1, max_retries + 1):
+            try:
+                producer = Producer(
+                    bootstrap_servers=broker_list,
+                    value_serializer=lambda v: _json.dumps(v).encode('utf-8')
+                )
+                print(f"[xvigilance] Successfully connected to Kafka Brokers: {kafka_brokers} (attempt {attempt})", flush=True)
+                return producer, True
+            except Exception as e:
+                wait = min(2 ** attempt, 30)
+                print(f"[xvigilance] Kafka connection attempt {attempt}/{max_retries} failed: {e}. Retrying in {wait}s...", flush=True)
+                time.sleep(wait)
+        print("[xvigilance] CRITICAL: All Kafka connection attempts exhausted. Will retry next loop iteration.", flush=True)
+        return None, False
+
+    kafka_producer, kafka_available = _connect_kafka()
     # ------------------------------------------
 
 
@@ -73,6 +87,11 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
 
     while RUNNING:
         try:
+            # --- Auto-reconnect Kafka if previously disconnected ---
+            if not kafka_available and kafka_import_available:
+                print("[xvigilance] Kafka is disconnected. Attempting to reconnect...", flush=True)
+                kafka_producer, kafka_available = _connect_kafka(max_retries=3)
+
             # 2. Get current high-water mark checkpoint
             checkpoint = get_or_init_checkpoint(feed_name=feed_name, default_lookback_hours=1)
             window_start = checkpoint["last_window_end"]
