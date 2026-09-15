@@ -907,11 +907,16 @@ def consume_firehose():
                     try:
                         safe_wipe_label = f"`{str(node_label).replace('`', '')}`"
                         driver = create_neo4j_driver(credentials)
+                        deleted_total = 0
                         with driver.session() as session:
-                            result = session.run(f"MATCH (n:{safe_wipe_label}) DETACH DELETE n RETURN count(n) AS deleted")
-                            deleted = result.single()["deleted"]
+                            while True:
+                                result = session.run(f"MATCH (n:{safe_wipe_label}) WITH n LIMIT 10000 DETACH DELETE n RETURN count(n) AS deleted")
+                                deleted_batch = result.single()["deleted"]
+                                deleted_total += deleted_batch
+                                if deleted_batch == 0:
+                                    break
                         driver.close()
-                        print(f"[xVigilance-Consumer] Ephemeral Wipe complete: {deleted} nodes purged.", flush=True)
+                        print(f"[xVigilance-Consumer] Ephemeral Wipe complete: {deleted_total} nodes purged.", flush=True)
                     except Exception as wipe_e:
                         print(f"[xVigilance-Consumer] Warning: Failed to execute graph wipe: {wipe_e}", flush=True)
                         
