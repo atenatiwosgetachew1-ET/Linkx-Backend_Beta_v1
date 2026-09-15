@@ -525,25 +525,27 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 WHERE ($session_id IS NULL OR a.session_id = $session_id)
                   AND {_trusted_node_clause('a')}
                   AND a.BENACCOUNTNO IS NOT NULL AND a.BENACCOUNTNO <> ''
-                WITH a, a.BENACCOUNTNO AS ben_acc
-                MATCH (b:{label} {{ACCOUNTNO: ben_acc}})
-                WHERE ($session_id IS NULL OR b.session_id = $session_id)
-                  AND elementId(a) <> elementId(b)
-                  AND (
-                    coalesce(a.TRANSACTIONDATE, '') < coalesce(b.TRANSACTIONDATE, '')
-                    OR (
-                      coalesce(a.TRANSACTIONDATE, '') = coalesce(b.TRANSACTIONDATE, '')
-                      AND coalesce(a.TRANSACTIONTIME, '') < coalesce(b.TRANSACTIONTIME, '')
+                CALL {{
+                  WITH a
+                  MATCH (b:{label} {{ACCOUNTNO: a.BENACCOUNTNO}})
+                  WHERE ($session_id IS NULL OR b.session_id = $session_id)
+                    AND elementId(a) <> elementId(b)
+                    AND (
+                      coalesce(a.TRANSACTIONDATE, '') < coalesce(b.TRANSACTIONDATE, '')
+                      OR (
+                        coalesce(a.TRANSACTIONDATE, '') = coalesce(b.TRANSACTIONDATE, '')
+                        AND coalesce(a.TRANSACTIONTIME, '') < coalesce(b.TRANSACTIONTIME, '')
+                      )
                     )
-                  )
-                WITH a, b
-                ORDER BY a.TRANSACTIONDATE, a.TRANSACTIONTIME, b.TRANSACTIONDATE, b.TRANSACTIONTIME
-                With a, collect(b)[0] AS b
-                WHERE b IS NOT NULL
-                MERGE (a)-[r:FUND_FLOW {{session_id:$session_id}}]->(b)
-                SET r.bgcolor = '#d8a822', r.provisional = false,
-                    r.reason = 'beneficiary later acts as sender',
-                    r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
+                  WITH a, b
+                  ORDER BY a.TRANSACTIONDATE, a.TRANSACTIONTIME, b.TRANSACTIONDATE, b.TRANSACTIONTIME
+                  WITH a, collect(b)[0] AS target_b
+                  WHERE target_b IS NOT NULL
+                  MERGE (a)-[r:FUND_FLOW {{session_id:$session_id}}]->(target_b)
+                  SET r.bgcolor = '#d8a822', r.provisional = false,
+                      r.reason = 'beneficiary later acts as sender',
+                      r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
+                }} IN TRANSACTIONS OF 1000 ROWS
                 """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
             rules_completed.append("FUND_FLOW")
             print(f"  [Rule] FUND_FLOW ✓", flush=True)
@@ -621,13 +623,16 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                   AND t.BENACCOUNTNO IS NOT NULL AND t.BENACCOUNTNO <> ''
                 WITH t.ACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day, collect(t) AS txns, count(DISTINCT t.BENACCOUNTNO) AS spoke_count
                 WHERE hub IS NOT NULL AND hub <> '' AND spoke_count >= 3
-                UNWIND range(0, size(txns)-2) AS i
-                WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
-                MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
-                SET r.bgcolor = '#6f42c1', r.textcolor = '#eeeeee', r.provisional = false,
-                    r.reason = 'account connects with multiple counterparties on same day',
-                    r.hub_account = hub, r.direction = 'outgoing', r.tx_day = tx_day, r.spoke_count = spoke_count,
-                    r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
+                CALL {{
+                  WITH txns, hub, tx_day, spoke_count
+                  UNWIND range(0, size(txns)-2) AS i
+                  WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
+                  MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
+                  SET r.bgcolor = '#6f42c1', r.textcolor = '#eeeeee', r.provisional = false,
+                      r.reason = 'account connects with multiple counterparties on same day',
+                      r.hub_account = hub, r.direction = 'outgoing', r.tx_day = tx_day, r.spoke_count = spoke_count,
+                      r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
+                }} IN TRANSACTIONS OF 1000 ROWS
                 """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
             rules_completed.append("HUB_AND_SPOKE_OUT")
             print(f"  [Rule] HUB_AND_SPOKE (outgoing) ✓", flush=True)
@@ -646,13 +651,16 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                   AND t.ACCOUNTNO IS NOT NULL AND t.ACCOUNTNO <> ''
                 WITH t.BENACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day, collect(t) AS txns, count(DISTINCT t.ACCOUNTNO) AS spoke_count
                 WHERE hub IS NOT NULL AND hub <> '' AND spoke_count >= 3
-                UNWIND range(0, size(txns)-2) AS i
-                WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
-                MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
-                SET r.bgcolor = '#6f42c1', r.textcolor = '#eeeeee', r.provisional = false,
-                    r.reason = 'account connects with multiple counterparties on same day',
-                    r.hub_account = hub, r.direction = 'incoming', r.tx_day = tx_day, r.spoke_count = spoke_count,
-                    r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
+                CALL {{
+                  WITH txns, hub, tx_day, spoke_count
+                  UNWIND range(0, size(txns)-2) AS i
+                  WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
+                  MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
+                  SET r.bgcolor = '#6f42c1', r.textcolor = '#eeeeee', r.provisional = false,
+                      r.reason = 'account connects with multiple counterparties on same day',
+                      r.hub_account = hub, r.direction = 'incoming', r.tx_day = tx_day, r.spoke_count = spoke_count,
+                      r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
+                }} IN TRANSACTIONS OF 1000 ROWS
                 """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
             rules_completed.append("HUB_AND_SPOKE_IN")
             print(f"  [Rule] HUB_AND_SPOKE (incoming) ✓", flush=True)
@@ -676,14 +684,17 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 WHERE identifier_value <> '' AND account IS NOT NULL AND account <> ''
                 WITH identifier_type, identifier_value, collect(DISTINCT account) AS accounts, collect(DISTINCT t) AS txns
                 WHERE size(accounts) >= 2
-                UNWIND range(0, size(txns)-2) AS i
-                WITH txns[i] AS a, txns[i+1] AS b, identifier_type, identifier_value, accounts
-                MERGE (a)-[r:SHARED_IDENTIFIER {{session_id:$session_id}}]->(b)
-                SET r.bgcolor = '#0b7285', r.textcolor = '#eeeeee', r.provisional = false,
-                    r.reason = 'same identifier appears on multiple accounts',
-                    r.identifier_type = identifier_type, r.identifier_value = identifier_value,
-                    r.account_count = size(accounts),
-                    r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
+                CALL {{
+                  WITH txns, identifier_type, identifier_value, accounts
+                  UNWIND range(0, size(txns)-2) AS i
+                  WITH txns[i] AS a, txns[i+1] AS b, identifier_type, identifier_value, accounts
+                  MERGE (a)-[r:SHARED_IDENTIFIER {{session_id:$session_id}}]->(b)
+                  SET r.bgcolor = '#0b7285', r.textcolor = '#eeeeee', r.provisional = false,
+                      r.reason = 'same identifier appears on multiple accounts',
+                      r.identifier_type = identifier_type, r.identifier_value = identifier_value,
+                      r.account_count = size(accounts),
+                      r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
+                }} IN TRANSACTIONS OF 1000 ROWS
                 """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
             rules_completed.append("SHARED_IDENTIFIER")
             print(f"  [Rule] SHARED_IDENTIFIER ✓", flush=True)
