@@ -497,17 +497,19 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                   AND {_trusted_node_clause('a')}
                   AND a.ACCOUNTNO IS NOT NULL AND a.ACCOUNTNO <> ''
                   AND a.BENACCOUNTNO IS NOT NULL AND a.BENACCOUNTNO <> ''
-                WITH a, a.ACCOUNTNO AS acc, a.BENACCOUNTNO AS ben
-                MATCH (b:{label} {{ACCOUNTNO: ben, BENACCOUNTNO: acc}})
-                WHERE ($session_id IS NULL OR b.session_id = $session_id)
-                  AND elementId(a) < elementId(b)
-                  AND coalesce(a.TRANSACTIONDATE, '') = coalesce(b.TRANSACTIONDATE, '')
-                MERGE (a)-[r1:CIRCULAR_FLOW {{session_id:$session_id}}]->(b)
-                SET r1.bgcolor = '#e6e6e6', r1.provisional = false, r1.reason = 'same-day reverse transfer pair',
-                    r1.edge_semantic = 'OBSERVED_FLOW', r1.financial_flow = true, r1.directed_display = true
-                MERGE (b)-[r2:CIRCULAR_FLOW {{session_id:$session_id}}]->(a)
-                SET r2.bgcolor = '#e6e6e6', r2.provisional = false, r2.reason = 'same-day reverse transfer pair',
-                    r2.edge_semantic = 'OBSERVED_FLOW', r2.financial_flow = true, r2.directed_display = true
+                CALL {{
+                  WITH a
+                  MATCH (b:{label} {{ACCOUNTNO: a.BENACCOUNTNO, BENACCOUNTNO: a.ACCOUNTNO}})
+                  WHERE ($session_id IS NULL OR b.session_id = $session_id)
+                    AND elementId(a) < elementId(b)
+                    AND coalesce(a.TRANSACTIONDATE, '') = coalesce(b.TRANSACTIONDATE, '')
+                  MERGE (a)-[r1:CIRCULAR_FLOW {{session_id:$session_id}}]->(b)
+                  SET r1.bgcolor = '#e6e6e6', r1.provisional = false, r1.reason = 'same-day reverse transfer pair',
+                      r1.edge_semantic = 'OBSERVED_FLOW', r1.financial_flow = true, r1.directed_display = true
+                  MERGE (b)-[r2:CIRCULAR_FLOW {{session_id:$session_id}}]->(a)
+                  SET r2.bgcolor = '#e6e6e6', r2.provisional = false, r2.reason = 'same-day reverse transfer pair',
+                      r2.edge_semantic = 'OBSERVED_FLOW', r2.financial_flow = true, r2.directed_display = true
+                }} IN TRANSACTIONS OF 1000 ROWS
                 """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
             rules_completed.append("CIRCULAR_FLOW")
             print(f"  [Rule] CIRCULAR_FLOW ✓", flush=True)
