@@ -521,13 +521,18 @@ def run_full_graph_analysis(credentials, session_id, node_label):
         try:
             with driver.session() as s:
                 s.run(f"""
-                MATCH (a:{label})
+                MATCH (t:{label})
+                WHERE ($session_id IS NULL OR t.session_id = $session_id)
+                  AND t.ACCOUNTNO IS NOT NULL AND t.ACCOUNTNO <> ''
+                WITH t.ACCOUNTNO AS acc, count(t) AS out_count
+                WHERE out_count < 1000
+
+                MATCH (a:{label} {{BENACCOUNTNO: acc}})
                 WHERE ($session_id IS NULL OR a.session_id = $session_id)
                   AND {_trusted_node_clause('a')}
-                  AND a.BENACCOUNTNO IS NOT NULL AND a.BENACCOUNTNO <> ''
                 CALL {{
-                  WITH a
-                  MATCH (b:{label} {{ACCOUNTNO: a.BENACCOUNTNO}})
+                  WITH a, acc
+                  MATCH (b:{label} {{ACCOUNTNO: acc}})
                   WHERE ($session_id IS NULL OR b.session_id = $session_id)
                     AND elementId(a) <> elementId(b)
                     AND (
@@ -538,10 +543,9 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                       )
                     )
                   WITH a, b
-                  ORDER BY a.TRANSACTIONDATE, a.TRANSACTIONTIME, b.TRANSACTIONDATE, b.TRANSACTIONTIME
-                  WITH a, collect(b)[0] AS target_b
-                  WHERE target_b IS NOT NULL
-                  MERGE (a)-[r:FUND_FLOW {{session_id:$session_id}}]->(target_b)
+                  ORDER BY b.TRANSACTIONDATE ASC, b.TRANSACTIONTIME ASC
+                  LIMIT 1
+                  MERGE (a)-[r:FUND_FLOW {{session_id:$session_id}}]->(b)
                   SET r.bgcolor = '#d8a822', r.provisional = false,
                       r.reason = 'beneficiary later acts as sender',
                       r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
