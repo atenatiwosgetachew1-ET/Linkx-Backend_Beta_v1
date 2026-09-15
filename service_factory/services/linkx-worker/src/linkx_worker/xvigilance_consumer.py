@@ -479,7 +479,8 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                     r.reason = 'multiple small same-day transfers below threshold',
                     r.account = acc, r.beneficiary = beneficiary, r.tx_day = tx_day,
                     r.tx_count = tx_count, r.total_amount = total_amount,
-                    r.single_tx_threshold = 10000, r.total_threshold = 30000
+                    r.single_tx_threshold = 10000, r.total_threshold = 30000,
+                    r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
                 """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
             rules_completed.append("SMURFING")
             print(f"  [Rule] SMURFING ✓", flush=True)
@@ -502,9 +503,11 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                   AND elementId(a) < elementId(b)
                   AND coalesce(a.TRANSACTIONDATE, '') = coalesce(b.TRANSACTIONDATE, '')
                 MERGE (a)-[r1:CIRCULAR_FLOW {{session_id:$session_id}}]->(b)
-                SET r1.bgcolor = '#e6e6e6', r1.provisional = false, r1.reason = 'same-day reverse transfer pair'
+                SET r1.bgcolor = '#e6e6e6', r1.provisional = false, r1.reason = 'same-day reverse transfer pair',
+                    r1.edge_semantic = 'OBSERVED_FLOW', r1.financial_flow = true, r1.directed_display = true
                 MERGE (b)-[r2:CIRCULAR_FLOW {{session_id:$session_id}}]->(a)
-                SET r2.bgcolor = '#e6e6e6', r2.provisional = false, r2.reason = 'same-day reverse transfer pair'
+                SET r2.bgcolor = '#e6e6e6', r2.provisional = false, r2.reason = 'same-day reverse transfer pair',
+                    r2.edge_semantic = 'OBSERVED_FLOW', r2.financial_flow = true, r2.directed_display = true
                 """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
             rules_completed.append("CIRCULAR_FLOW")
             print(f"  [Rule] CIRCULAR_FLOW ✓", flush=True)
@@ -537,7 +540,8 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 WHERE b IS NOT NULL
                 MERGE (a)-[r:FUND_FLOW {{session_id:$session_id}}]->(b)
                 SET r.bgcolor = '#d8a822', r.provisional = false,
-                    r.reason = 'beneficiary later acts as sender'
+                    r.reason = 'beneficiary later acts as sender',
+                    r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
                 """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
             rules_completed.append("FUND_FLOW")
             print(f"  [Rule] FUND_FLOW ✓", flush=True)
@@ -556,7 +560,8 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                   AND toLower(coalesce(t.BENACCOUNTSTATE, '')) = 'active'
                 MERGE (t)-[r:DORMANT_TO_ACTIVE {{session_id:$session_id}}]->(t)
                 SET r.bgcolor = '#c20f0f', r.textcolor = '#eeeeee', r.provisional = false,
-                    r.reason = 'dormant source account transacts with active beneficiary'
+                    r.reason = 'dormant source account transacts with active beneficiary',
+                    r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
                 """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
             rules_completed.append("DORMANT_TO_ACTIVE")
             print(f"  [Rule] DORMANT_TO_ACTIVE ✓", flush=True)
@@ -594,7 +599,8 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 MERGE (previous)-[r:ABNORMAL_BALANCE_CHANGE {{session_id:$session_id}}]->(current)
                 SET r.bgcolor = '#196e08', r.textcolor = '#eeeeee', r.provisional = false,
                     r.reason = 'balance change exceeds recent account baseline',
-                    r.change = current_change, r.average_recent_change = avg_change, r.threshold_multiplier = 3
+                    r.change = current_change, r.average_recent_change = avg_change, r.threshold_multiplier = 3,
+                    r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
                 """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
             rules_completed.append("ABNORMAL_BALANCE_CHANGE")
             print(f"  [Rule] ABNORMAL_BALANCE_CHANGE ✓", flush=True)
@@ -618,7 +624,8 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
                 SET r.bgcolor = '#6f42c1', r.textcolor = '#eeeeee', r.provisional = false,
                     r.reason = 'account connects with multiple counterparties on same day',
-                    r.hub_account = hub, r.direction = 'outgoing', r.tx_day = tx_day, r.spoke_count = spoke_count
+                    r.hub_account = hub, r.direction = 'outgoing', r.tx_day = tx_day, r.spoke_count = spoke_count,
+                    r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
                 """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
             rules_completed.append("HUB_AND_SPOKE_OUT")
             print(f"  [Rule] HUB_AND_SPOKE (outgoing) ✓", flush=True)
@@ -642,7 +649,8 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
                 SET r.bgcolor = '#6f42c1', r.textcolor = '#eeeeee', r.provisional = false,
                     r.reason = 'account connects with multiple counterparties on same day',
-                    r.hub_account = hub, r.direction = 'incoming', r.tx_day = tx_day, r.spoke_count = spoke_count
+                    r.hub_account = hub, r.direction = 'incoming', r.tx_day = tx_day, r.spoke_count = spoke_count,
+                    r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
                 """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
             rules_completed.append("HUB_AND_SPOKE_IN")
             print(f"  [Rule] HUB_AND_SPOKE (incoming) ✓", flush=True)
@@ -672,7 +680,8 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 SET r.bgcolor = '#0b7285', r.textcolor = '#eeeeee', r.provisional = false,
                     r.reason = 'same identifier appears on multiple accounts',
                     r.identifier_type = identifier_type, r.identifier_value = identifier_value,
-                    r.account_count = size(accounts)
+                    r.account_count = size(accounts),
+                    r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
                 """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
             rules_completed.append("SHARED_IDENTIFIER")
             print(f"  [Rule] SHARED_IDENTIFIER ✓", flush=True)
