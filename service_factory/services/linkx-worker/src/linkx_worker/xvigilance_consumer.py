@@ -492,10 +492,15 @@ def run_full_graph_analysis(credentials, session_id, node_label):
         try:
             with driver.session() as s:
                 s.run(f"""
-                MATCH (a:{label})
+                MATCH (t:{label})
+                WHERE ($session_id IS NULL OR t.session_id = $session_id)
+                  AND t.ACCOUNTNO IS NOT NULL AND t.ACCOUNTNO <> ''
+                WITH t.ACCOUNTNO AS acc, count(t) AS out_count
+                WHERE out_count < 1000
+
+                MATCH (a:{label} {ACCOUNTNO: acc})
                 WHERE ($session_id IS NULL OR a.session_id = $session_id)
                   AND {_trusted_node_clause('a')}
-                  AND a.ACCOUNTNO IS NOT NULL AND a.ACCOUNTNO <> ''
                   AND a.BENACCOUNTNO IS NOT NULL AND a.BENACCOUNTNO <> ''
                 CALL {{
                   WITH a
