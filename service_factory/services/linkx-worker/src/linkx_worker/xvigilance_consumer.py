@@ -502,8 +502,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 WHERE ($session_id IS NULL OR a.session_id = $session_id)
                   AND {_trusted_node_clause('a')}
                   AND a.BENACCOUNTNO IS NOT NULL AND a.BENACCOUNTNO <> ''
-                CALL {{
-                  WITH a
+                CALL (a) {{
                   MATCH (b:{label} {{ACCOUNTNO: a.BENACCOUNTNO, BENACCOUNTNO: a.ACCOUNTNO}})
                   WHERE ($session_id IS NULL OR b.session_id = $session_id)
                     AND elementId(a) < elementId(b)
@@ -535,8 +534,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 MATCH (a:{label} {{BENACCOUNTNO: acc}})
                 WHERE ($session_id IS NULL OR a.session_id = $session_id)
                   AND {_trusted_node_clause('a')}
-                CALL {{
-                  WITH a, acc
+                CALL (a, acc) {{
                   MATCH (b:{label} {{ACCOUNTNO: acc}})
                   WHERE ($session_id IS NULL OR b.session_id = $session_id)
                     AND elementId(a) <> elementId(b)
@@ -632,8 +630,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                   AND t.BENACCOUNTNO IS NOT NULL AND t.BENACCOUNTNO <> ''
                 WITH t.ACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day, collect(t) AS txns, count(DISTINCT t.BENACCOUNTNO) AS spoke_count
                 WHERE hub IS NOT NULL AND hub <> '' AND spoke_count >= 3 AND size(txns) < 1000
-                CALL {{
-                  WITH txns, hub, tx_day, spoke_count
+                CALL (txns, hub, tx_day, spoke_count) {{
                   UNWIND range(0, size(txns)-2) AS i
                   WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
                   MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
@@ -660,8 +657,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                   AND t.ACCOUNTNO IS NOT NULL AND t.ACCOUNTNO <> ''
                 WITH t.BENACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day, collect(t) AS txns, count(DISTINCT t.ACCOUNTNO) AS spoke_count
                 WHERE hub IS NOT NULL AND hub <> '' AND spoke_count >= 3 AND size(txns) < 1000
-                CALL {{
-                  WITH txns, hub, tx_day, spoke_count
+                CALL (txns, hub, tx_day, spoke_count) {{
                   UNWIND range(0, size(txns)-2) AS i
                   WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
                   MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
@@ -693,8 +689,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 WHERE identifier_value <> '' AND account IS NOT NULL AND account <> ''
                 WITH identifier_type, identifier_value, collect(DISTINCT account) AS accounts, collect(DISTINCT t) AS txns
                 WHERE size(accounts) >= 2 AND size(txns) < 1000
-                CALL {{
-                  WITH txns, identifier_type, identifier_value, accounts
+                CALL (txns, identifier_type, identifier_value, accounts) {{
                   UNWIND range(0, size(txns)-2) AS i
                   WITH txns[i] AS a, txns[i+1] AS b, identifier_type, identifier_value, accounts
                   MERGE (a)-[r:SHARED_IDENTIFIER {{session_id:$session_id}}]->(b)
