@@ -35,11 +35,21 @@ def _auto_load_dotenv():
 _auto_load_dotenv()
 
 
+def _normalize_search_columns(value):
+    if isinstance(value, (list, tuple, set)):
+        return [column for column in value if column]
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        return [col.strip() for col in value.split(",") if col.strip()]
+    return [value]
+
+
 def _env_list(name, default):
     value = os.getenv(name)
     if value is None or not str(value).strip():
         return default
-    return [item.strip() for item in str(value).split(",") if item.strip()]
+    return _normalize_search_columns(value)
 
 
 def _fetch_global_entities():
