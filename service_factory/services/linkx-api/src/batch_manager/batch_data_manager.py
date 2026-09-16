@@ -122,6 +122,8 @@ def _normalize_search_columns(value):
         return [column for column in value if column]
     if value in (None, ""):
         return []
+    if isinstance(value, str):
+        return [col.strip() for col in value.split(",") if col.strip()]
     return [value]
 
 
@@ -421,7 +423,7 @@ def batch_data_manager(payload):
             api_search_endpoint = "" #To be updated below
             API_URL = ""
             api_port = load_temp_config("api_port",session_id)
-            fetch_columns = load_temp_config("fetch_columns", session_id)
+            fetch_columns = _normalize_search_columns(load_temp_config("fetch_columns", session_id))
             date_column = load_temp_config("date_column", session_id)
             hive_search_endpoint_strict = load_temp_config("search_api_endpoint_hive_strict", session_id)
             hive_search_endpoint_fuzzy = load_temp_config("search_api_endpoint_hive_fuzzy", session_id)
