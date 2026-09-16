@@ -59,10 +59,17 @@ def _hive_metastore_uri(session_id, fallback=None):
 
 def _elastic_api_url(session_id, endpoint, fallback_storage=None):
     base_url = load_temp_config("elastic_api_base_url", session_id)
-    if not base_url:
+    api_port = load_temp_config("api_port", session_id)
+    if base_url:
+        if api_port:
+            from urllib.parse import urlparse
+            parsed = urlparse(base_url if "://" in base_url else f"http://{base_url}")
+            host = parsed.hostname or base_url.split(":", 1)[0]
+            scheme = parsed.scheme or "http"
+            base_url = f"{scheme}://{host}:{api_port}"
+    else:
         host = _storage_host(session_id, fallback_storage)
-        api_port = load_temp_config("api_port", session_id) or "5000"
-        base_url = f"http://{host}:{api_port}" if host else ""
+        base_url = f"http://{host}:{api_port or '5000'}" if host else ""
     return _join_url(base_url, endpoint) if base_url else ""
 
 
