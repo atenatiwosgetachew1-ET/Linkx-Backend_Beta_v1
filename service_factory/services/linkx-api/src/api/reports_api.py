@@ -113,7 +113,7 @@ def xvigilance_health():
         from batch_manager.utils.postgres_utils import get_postgres_connection
         with get_postgres_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT feed_name, last_window_end, total_records_analyzed, status FROM xvigilance_checkpoints LIMIT 1")
+                cur.execute("SELECT feed_name, last_window_end, total_records_analyzed, status, total_graph_analyzed FROM xvigilance_checkpoints LIMIT 1")
                 cp = cur.fetchone()
                 checkpoint = {}
                 if cp:
@@ -121,7 +121,8 @@ def xvigilance_health():
                         "feed_name": cp[0],
                         "last_window_end": cp[1],
                         "total_records_analyzed": cp[2],
-                        "status": cp[3]
+                        "status": cp[3],
+                        "total_graph_analyzed": cp[4] if len(cp) > 4 else cp[2]
                     }
                 
                 cur.execute("""

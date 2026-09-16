@@ -626,7 +626,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                   AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> ''
                   AND t.BENACCOUNTNO IS NOT NULL AND t.BENACCOUNTNO <> ''
                 WITH t.ACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day, collect(t) AS txns, count(DISTINCT t.BENACCOUNTNO) AS spoke_count
-                WHERE hub IS NOT NULL AND hub <> '' AND spoke_count >= 3
+                WHERE hub IS NOT NULL AND hub <> '' AND spoke_count >= 3 AND size(txns) < 1000
                 CALL {{
                   WITH txns, hub, tx_day, spoke_count
                   UNWIND range(0, size(txns)-2) AS i
@@ -654,7 +654,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                   AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> ''
                   AND t.ACCOUNTNO IS NOT NULL AND t.ACCOUNTNO <> ''
                 WITH t.BENACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day, collect(t) AS txns, count(DISTINCT t.ACCOUNTNO) AS spoke_count
-                WHERE hub IS NOT NULL AND hub <> '' AND spoke_count >= 3
+                WHERE hub IS NOT NULL AND hub <> '' AND spoke_count >= 3 AND size(txns) < 1000
                 CALL {{
                   WITH txns, hub, tx_day, spoke_count
                   UNWIND range(0, size(txns)-2) AS i
@@ -687,7 +687,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                      identifier.account AS account, t
                 WHERE identifier_value <> '' AND account IS NOT NULL AND account <> ''
                 WITH identifier_type, identifier_value, collect(DISTINCT account) AS accounts, collect(DISTINCT t) AS txns
-                WHERE size(accounts) >= 2
+                WHERE size(accounts) >= 2 AND size(txns) < 1000
                 CALL {{
                   WITH txns, identifier_type, identifier_value, accounts
                   UNWIND range(0, size(txns)-2) AS i
@@ -936,6 +936,16 @@ def consume_firehose():
                         print(f"[xVigilance-Consumer] Ephemeral Wipe complete: {deleted_total} nodes purged.", flush=True)
                     except Exception as wipe_e:
                         print(f"[xVigilance-Consumer] Warning: Failed to execute graph wipe: {wipe_e}", flush=True)
+                        
+                    # UPDATE POSTGRES CHECKPOINT FOR FRONTEND UI
+                    try:
+                        with psycopg.connect(os.getenv('LINKX_POSTGRES_DSN')) as conn:
+                            with conn.cursor() as cur:
+                                cur.execute("UPDATE xvigilance_checkpoints SET total_graph_analyzed = total_graph_analyzed + %s", (data.get('total_records', 0),))
+                            conn.commit()
+                        print(f"[xVigilance-Consumer] Checkpoint total_graph_analyzed advanced by {data.get('total_records', 0)}.", flush=True)
+                    except Exception as pg_e:
+                        print(f"[xVigilance-Consumer] Failed to update PostgreSQL graph checkpoint: {pg_e}", flush=True)
                         
                     print(f"[xVigilance-Consumer] Window {data.get('window_id')} finalized successfully.", flush=True)
                     batch_number = 1  # Reset batch counter for next window

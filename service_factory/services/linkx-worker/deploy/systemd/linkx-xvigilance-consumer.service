@@ -1,0 +1,14 @@
+[Unit]
+Description=LinkX xVigilance Graph Consumer Daemon
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/linkx-worker/src
+EnvironmentFile=/opt/linkx-worker/.env
+ExecStart=/opt/linkx-worker/.venv/bin/python -m linkx_worker.xvigilance_consumer
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
