@@ -87,6 +87,7 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
                 if strict_mood:
                     used_payload = {column: keyword}
                     _log_es_request("DF payload ES", API_URL, used_payload)
+                    print(f"\n[DEBUG-PAYLOAD] URL={API_URL} | PAYLOAD={used_payload}\n", flush=True)
                     response = requests.post(API_URL, json=used_payload, headers=_elastic_request_headers(auth_header), timeout=timeout)
                     response.raise_for_status()
                     result = response.json()
@@ -118,6 +119,7 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
                     request_offset = max(0, request_offset)
                     payload.update({"limit": request_limit, "offset": request_offset, "size": request_limit, "from": request_offset})
                 _log_es_request("DF payload ES", API_URL, payload)
+                print(f"\n[DEBUG-PAYLOAD] URL={API_URL} | PAYLOAD={payload}\n", flush=True)
                 response = requests.post(API_URL, json=payload, headers=_elastic_request_headers(auth_header), timeout=timeout)
                 response.raise_for_status()
                 result = response.json()
