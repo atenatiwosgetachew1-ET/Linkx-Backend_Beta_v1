@@ -110,10 +110,7 @@ def get_default_session_config(session_id):
     if not storage_addr:
         logger.warning("[CONFIG DIAGNOSTIC] 'LINKX_ACTIVE_STORAGE_ADDRESS' is not set in environment.")
 
-    es_base_url = os.getenv(
-        "LINKX_ELASTIC_API_BASE_URL",
-        f"http://{storage_addr}:5000" if storage_addr else "",
-    ).strip()
+    es_base_url = os.getenv("LINKX_ELASTIC_API_BASE_URL", "").strip()
 
     neo4j_url = os.getenv("LINKX_ACTIVE_TOOL_PROTOCOL") or os.getenv("LINKX_NEO4J_URL", "")
     if not neo4j_url:
