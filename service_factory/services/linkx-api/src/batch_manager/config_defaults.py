@@ -174,6 +174,13 @@ def get_default_session_config(session_id):
             "LINKX_FETCH_COLUMNS",
             ["TRANSACTIONID", "BRANCHNAME", "TRANSACTIONDATE", "TRANSACTIONTIME", "TRANSACTIONTYPE", "AMOUNTINBIRR", "ACCOWNERNAME", "BUSINESSMOBILENO", "ACCOUNTNO", "BALANCEHELD", "BENFULLNAME", "BENACCOUNTNO", "BENTELNO"],
         ),
+        "column_mapping": {
+            "SENDERACCOUNTID": "ACCOUNTNO",
+            "RECEIVERACCOUNTID": "BENACCOUNTNO",
+            "TRANSFERAMOUNT": "AMOUNTINBIRR",
+            "CREATEDDATE": "TRANSACTIONDATE",
+            "TRANSACTION_DATE": "TRANSACTIONDATE"
+        },
         "date_column": os.getenv("LINKX_DATE_COLUMN", "transactiondate"),
         "default_source_col": os.getenv("LINKX_DEFAULT_SOURCE_COL", "accountno"),
         "default_target_col": os.getenv("LINKX_DEFAULT_TARGET_COL", "benaccountno"),
