@@ -498,7 +498,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 WITH t.ACCOUNTNO AS acc, count(t) AS out_count
                 WHERE out_count < 1000
 
-                MATCH (a:{label} {ACCOUNTNO: acc})
+                MATCH (a:{label} {{ACCOUNTNO: acc}})
                 WHERE ($session_id IS NULL OR a.session_id = $session_id)
                   AND {_trusted_node_clause('a')}
                   AND a.BENACCOUNTNO IS NOT NULL AND a.BENACCOUNTNO <> ''
