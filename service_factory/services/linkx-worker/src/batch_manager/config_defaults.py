@@ -35,12 +35,69 @@ def _auto_load_dotenv():
 _auto_load_dotenv()
 
 
+def _normalize_search_columns(value):
+    if isinstance(value, (list, tuple, set)):
+        return [column for column in value if column]
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        return [col.strip() for col in value.split(",") if col.strip()]
+    return [value]
+
+
 def _env_list(name, default):
     value = os.getenv(name)
     if value is None or not str(value).strip():
         return default
-    return [item.strip() for item in str(value).split(",") if item.strip()]
+    return _normalize_search_columns(value)
 
+
+def _fetch_global_entities():
+    try:
+        from batch_manager.utils.postgres_utils import get_postgres_connection
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT config_data FROM global_entity_classification ORDER BY created_at DESC LIMIT 1")
+                row = cur.fetchone()
+                if row and row[0]:
+                    return row[0]
+    except Exception as e:
+        logger.warning(f"Failed to fetch global entity classification: {e}")
+    return {}
+
+def update_global_entities(config_dict, actor):
+    try:
+        from batch_manager.utils.postgres_utils import get_postgres_connection
+        import json
+        
+        # Check if they actually provided entity configurations to update
+        entity_keys = ["trusted_entities", "risk_entities", "pep_entities", "sanction_entities"]
+        has_entities = any(k in config_dict for k in entity_keys)
+                
+        if not has_entities:
+            return
+            
+        global_entities = _fetch_global_entities()
+        updated = False
+        
+        for k in entity_keys:
+            if k in config_dict and config_dict[k] != global_entities.get(k):
+                global_entities[k] = config_dict[k]
+                updated = True
+                
+        if updated:
+            actor_name = actor.get('username') or actor.get('id') or 'system'
+            with get_postgres_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO global_entity_classification (config_data, updated_by)
+                        VALUES (%s, %s)
+                    """, (json.dumps(global_entities), str(actor_name)))
+                conn.commit()
+            logger.info(f"Global entity classification updated by {actor_name}")
+            
+    except Exception as e:
+        logger.warning(f"Failed to update global entity classification: {e}")
 
 def get_default_session_config(session_id):
     _auto_load_dotenv()
@@ -53,21 +110,26 @@ def get_default_session_config(session_id):
     if not storage_addr:
         logger.warning("[CONFIG DIAGNOSTIC] 'LINKX_ACTIVE_STORAGE_ADDRESS' is not set in environment.")
 
-    es_base_url = os.getenv(
-        "LINKX_ELASTIC_API_BASE_URL",
-        f"http://{storage_addr}:5000" if storage_addr else "",
-    ).strip()
+    es_base_url = os.getenv("LINKX_ELASTIC_API_BASE_URL", "").strip()
 
     neo4j_url = os.getenv("LINKX_ACTIVE_TOOL_PROTOCOL") or os.getenv("LINKX_NEO4J_URL", "")
     if not neo4j_url:
         logger.warning("[CONFIG DIAGNOSTIC] 'LINKX_ACTIVE_TOOL_PROTOCOL' / 'LINKX_NEO4J_URL' is not set in environment.")
 
+    global_entities = _fetch_global_entities()
+
     return {
         "session_id": session_id,
+        "trusted_entities": global_entities.get("trusted_entities", []),
+        "risk_entities": global_entities.get("risk_entities", []),
+        "pep_entities": global_entities.get("pep_entities", []),
+        "sanction_entities": global_entities.get("sanction_entities", []),
         "user_id": os.getenv("LINKX_DEFAULT_USER_ID", "Unknown"),
         "kafka_addresses": kafka_list,
         "active_kafka_adress": kafka_servers,
         "kafka_bootstrap_servers": kafka_servers,
+        "kafka_topics": _env_list("LINKX_KAFKA_TOPICS", []),
+        "active_kafka_topic": os.getenv("LINKX_ACTIVE_KAFKA_TOPIC", ""),
         "kafka_risk_scoring_input_topic": os.getenv(
             "LINKX_KAFKA_RISK_SCORING_INPUT_TOPIC", "dev.scoring.score.calculated.v1"
         ),
@@ -112,6 +174,13 @@ def get_default_session_config(session_id):
             "LINKX_FETCH_COLUMNS",
             ["TRANSACTIONID", "BRANCHNAME", "TRANSACTIONDATE", "TRANSACTIONTIME", "TRANSACTIONTYPE", "AMOUNTINBIRR", "ACCOWNERNAME", "BUSINESSMOBILENO", "ACCOUNTNO", "BALANCEHELD", "BENFULLNAME", "BENACCOUNTNO", "BENTELNO"],
         ),
+        "column_mapping": {
+            "SENDERACCOUNTID": "ACCOUNTNO",
+            "RECEIVERACCOUNTID": "BENACCOUNTNO",
+            "TRANSFERAMOUNT": "AMOUNTINBIRR",
+            "CREATEDDATE": "TRANSACTIONDATE",
+            "TRANSACTION_DATE": "TRANSACTIONDATE"
+        },
         "date_column": os.getenv("LINKX_DATE_COLUMN", "transactiondate"),
         "default_source_col": os.getenv("LINKX_DEFAULT_SOURCE_COL", "accountno"),
         "default_target_col": os.getenv("LINKX_DEFAULT_TARGET_COL", "benaccountno"),

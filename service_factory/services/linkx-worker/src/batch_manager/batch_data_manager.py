@@ -10,10 +10,7 @@ from batch_manager.utils.hdfs_utils import stream_hdfs_metadata,load_hdfs_files
 
 from batch_manager.utils.hive_utils import run_hive_query, hive_keyword_search, load_hive_rows
 from batch_manager.utils.elastic_utils import es_keyword_search, es_keyword_search_spark_chunks
-try:
-    from py4j.java_gateway import java_import
-except ImportError:
-    java_import = None
+from py4j.java_gateway import java_import
 import os, pickle
 from datetime import datetime, timedelta
 from globals import load_temp_config, save_temp_config
@@ -62,10 +59,17 @@ def _hive_metastore_uri(session_id, fallback=None):
 
 def _elastic_api_url(session_id, endpoint, fallback_storage=None):
     base_url = load_temp_config("elastic_api_base_url", session_id)
-    if not base_url:
+    api_port = load_temp_config("api_port", session_id)
+    if base_url:
+        if api_port:
+            from urllib.parse import urlparse
+            parsed = urlparse(base_url if "://" in base_url else f"http://{base_url}")
+            host = parsed.hostname or base_url.split(":", 1)[0]
+            scheme = parsed.scheme or "http"
+            base_url = f"{scheme}://{host}:{api_port}"
+    else:
         host = _storage_host(session_id, fallback_storage)
-        api_port = load_temp_config("api_port", session_id) or "5000"
-        base_url = f"http://{host}:{api_port}" if host else ""
+        base_url = f"http://{host}:{api_port or '5000'}" if host else ""
     return _join_url(base_url, endpoint) if base_url else ""
 
 
@@ -75,6 +79,8 @@ def _truthy_config(value):
     if value is None:
         return False
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 
 def _search_diagnostic_logs_enabled():
     return str(os.getenv("LINKX_SEARCH_DIAGNOSTIC_LOGS", "false")).lower() in {"1", "true", "yes", "on"}
@@ -134,7 +140,6 @@ def _resolve_search_columns(session_id, search_columns, strict):
         return normalized
     configured = _configured_search_columns(session_id, strict)
     return configured or normalized
-
 
 
 def batch_data_manager(payload):
@@ -561,8 +566,7 @@ def batch_data_manager(payload):
                     try:
                         fetch_limit = load_temp_config("elastic_scroll_limit", session_id) or load_temp_config("dataframes_limit", session_id)
                         fetch_batch_size = load_temp_config("elastic_scroll_batch_size", session_id) or 10000
-                        strict_mood = _truthy_config(file.get('strict', False))
-                        search_columns = _resolve_search_columns(session_id, search_column, strict_mood)
+                        search_columns = _resolve_search_columns(session_id, search_column, _truthy_config(file.get('strict', False)))
                         search_columns = [{"field": col} for col in search_columns]
                         df = load_hive_rows(
                             storage_address,
@@ -679,7 +683,7 @@ def batch_data_manager(payload):
             #--------------------------------------------------------------------------
             #print("search params:","keyword:",keyword,"date:",date,"offset:",offset,"limit:",limit,"hybrid:",hybrid,"strict:",strict,"api_search_endpoint:",api_search_endpoint,"search_columns_elastic:",search_columns_elastic,"search_columns_hive:",search_columns_hive)
             if _search_diagnostic_logs_enabled():
-                print("[worker-search-exec] endpoint", {
+                print("[api-search-exec] endpoint", {
                     "session_id": session_id,
                     "strict": bool(strict),
                     "hybrid": bool(hybrid),
@@ -692,7 +696,7 @@ def batch_data_manager(payload):
             response = es_keyword_search(action_id, API_URL, keyword, search_columns_elastic, strict, date_column, date, limit=limit, offset=offset, auth_header=elastic_auth_header) #Overrides to hive (Result out of bound)
             if _search_diagnostic_logs_enabled():
                 response_results = response.get("results") if isinstance(response, dict) else None
-                print("[worker-search-exec] response", {
+                print("[api-search-exec] response", {
                     "session_id": session_id,
                     "strict": bool(strict),
                     "api": API_URL,
