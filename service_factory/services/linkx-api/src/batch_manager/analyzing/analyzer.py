@@ -360,8 +360,34 @@ def _neo4j_property_value(value):
     return str(value)
 
 
-def _clean_neo4j_props(row):
-    return {key: _neo4j_property_value(value) for key, value in row.items()}
+def _clean_neo4j_props(row, column_mapping=None):
+    cleaned = {key: _neo4j_property_value(value) for key, value in row.items()}
+    cleaned_lower = {k.lower(): k for k in cleaned.keys()}
+    if column_mapping:
+        for src_col, tgt_col in column_mapping.items():
+            src_lower = src_col.lower()
+            tgt_lower = tgt_col.lower()
+            if src_lower in cleaned_lower and tgt_lower not in cleaned_lower:
+                actual_src_key = cleaned_lower[src_lower]
+                cleaned[tgt_col] = cleaned[actual_src_key]
+                cleaned_lower[tgt_lower] = tgt_col
+    
+    fallbacks = {
+        "SENDERACCOUNTID": "ACCOUNTNO",
+        "RECEIVERACCOUNTID": "BENACCOUNTNO",
+        "TRANSFERAMOUNT": "AMOUNTINBIRR",
+        "CREATEDDATE": "TRANSACTIONDATE",
+        "TRANSACTION_DATE": "TRANSACTIONDATE"
+    }
+    for src_col, tgt_col in fallbacks.items():
+        src_lower = src_col.lower()
+        tgt_lower = tgt_col.lower()
+        if src_lower in cleaned_lower and tgt_lower not in cleaned_lower:
+            actual_src_key = cleaned_lower[src_lower]
+            cleaned[tgt_col] = cleaned[actual_src_key]
+            cleaned_lower[tgt_lower] = tgt_col
+
+    return cleaned
 
 
 def _relationship_node_props(row):
@@ -418,8 +444,9 @@ def neo4j_row_data_injector(payload, batch_size=500):
         if action == "Store data":
             log_writer(log_file, f"[{datetime.now()}] [Info] - Storing nodes in Neo4j batches of {batch_size}")
 
+            column_mapping = load_temp_config("column_mapping", session_id) or {}
             def prepare_store_row(row):
-                clean = _clean_neo4j_props(row)
+                clean = _clean_neo4j_props(row, column_mapping)
                 clean.setdefault("NodeId", str(uuid.uuid4()))
                 clean.update(_graph_metadata(session_id, run_id=run_id))
                 return clean
@@ -477,8 +504,8 @@ def neo4j_row_data_injector(payload, batch_size=500):
             def sanitize_props(d):
                 return {k.replace(" ", "_").replace(".", "_"): v for k, v in d.items() if v is not None}
 
-            # Collect rows (NO dropDuplicates -> we need frequency). This path must
             # support both pandas and Spark dataframes, so filtering is done in Python.
+            column_mapping = load_temp_config("column_mapping", session_id) or {}
             from collections import defaultdict
 
             rel_counter = defaultdict(lambda: {
@@ -503,7 +530,7 @@ def neo4j_row_data_injector(payload, batch_size=500):
                         skipped_self += 1
                         continue
 
-                    row_dict = _relationship_node_props(_clean_neo4j_props(sanitize_props(raw_row)))
+                    row_dict = _relationship_node_props(_clean_neo4j_props(sanitize_props(raw_row), column_mapping))
                     row_dict.update(_graph_metadata(session_id, run_id=run_id))
                     key = (source_value, target_value)
 
@@ -660,8 +687,9 @@ def neo4j_row_data_injector(payload, batch_size=500):
                 _session_store[session_id]["node_label"] = node_label
             # Insert nodes in batches; run cheap incremental rules after every batch.
 
+            column_mapping = load_temp_config("column_mapping", session_id) or {}
             def prepare_link_row(row):
-                clean = _clean_neo4j_props(row)
+                clean = _clean_neo4j_props(row, column_mapping)
                 clean.setdefault("NodeId", str(uuid.uuid4()))
                 return clean
 
@@ -880,9 +908,10 @@ def realtime_neo4j_message_ingest(payload, df, batch_number):
     batch_id = f"{session_id}_rt_{batch_number}"
     try:
         set_session_status(driver, session_id, "INGESTING", rule=rule, run_id=run_id)
+        column_mapping = load_temp_config("column_mapping", session_id) or {}
         clean_rows = []
         for row in rows:
-            clean = _clean_neo4j_props(row)
+            clean = _clean_neo4j_props(row, column_mapping)
             clean.setdefault("NodeId", str(uuid.uuid4()))
             clean.update(_graph_metadata(session_id, run_id=run_id, batch_id=batch_id))
             clean_rows.append(clean)
