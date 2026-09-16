@@ -1,8 +1,12 @@
 import psycopg, os
-from dotenv import load_dotenv
 
-load_dotenv("/opt/linkx-worker/.env")
 dsn = os.getenv("LINKX_POSTGRES_DSN")
+if not dsn:
+    with open("/opt/linkx-worker/.env") as f:
+        for line in f:
+            if line.startswith("LINKX_POSTGRES_DSN="):
+                dsn = line.strip().split("=", 1)[1].strip('"').strip("'")
+                break
 
 if dsn:
     with psycopg.connect(dsn) as conn:
