@@ -259,11 +259,7 @@ def _split_parent_scoped_config(config):
 
 
 def _merge_window_config(base_config, window_config):
-    merged = _merge_config(base_config or {}, window_config or {})
-    for key in PARENT_SCOPED_CONFIG_KEYS:
-        if isinstance(base_config, dict) and key in base_config:
-            merged[key] = base_config[key]
-    return merged
+    return _merge_config(base_config or {}, window_config or {})
 
 
 def _resolve_config_secrets(value, cur):
@@ -484,7 +480,7 @@ def save_session_config(session_id, config, window_id=None, merge=True):
     with _connect() as conn:
         with conn.cursor() as cur:
             if target_window:
-                parent_incoming, incoming = _split_parent_scoped_config(incoming)
+                parent_incoming = incoming
                 if parent_incoming:
                     cur.execute(
                         "SELECT config FROM session_configs WHERE session_id = %s AND window_id = ''",
