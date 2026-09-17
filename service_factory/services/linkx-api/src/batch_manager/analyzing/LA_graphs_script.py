@@ -58,50 +58,85 @@ def build_node_properties_full(node):
 def prepare_graph_data_full(records):
     nodes_dict = {}
     edges = []
+    seen_edges = set()
+
+    def add_node(node_id, label, title=None, color='#97C2FC'):
+        if not node_id: return
+        node_id = str(node_id)
+        if node_id not in nodes_dict:
+            nodes_dict[node_id] = {
+                'id': node_id,
+                'label': str(label),
+                'title': title or str(label),
+                'color': color
+            }
 
     for rec in records:
-        a_node = rec['a']
-        b_node = rec['b']
-        rel = rec['r']
-
-        # Access properties directly from Neo4j Node objects
-        a_props = a_node.properties if hasattr(a_node, 'properties') else {}
-        b_props = b_node.properties if hasattr(b_node, 'properties') else {}
-
-        a_id = a_props.get('element_id') or getattr(a_node, 'element_id', None)
-        b_id = b_props.get('element_id') or getattr(b_node, 'element_id', None)
-
-        # Use 'element_id' property or fallback to node ID
-        a_element_id = a_props.get('element_id') or getattr(a_node, 'element_id', None)
-        b_element_id = b_props.get('element_id') or getattr(b_node, 'element_id', None)
-
-        # Make sure IDs are valid
-        if not a_element_id or not b_element_id:
+        a_node = rec.get('a')
+        b_node = rec.get('b')
+        rel = rec.get('r')
+        if not a_node or not b_node or not rel:
             continue
 
-        # Build nodes
-        if a_element_id not in nodes_dict:
-            title_str = build_node_properties_full(a_node)
-            label_value = a_props.get('BENACCOUNTNO', a_element_id)
-            nodes_dict[a_element_id] = {
-                'id': a_element_id,
-                'label': label_value,
-                'title': title_str,
-                'color': '#97C2FC'
-            }
+        a_props = a_node.properties if hasattr(a_node, 'properties') else {}
+        b_props = b_node.properties if hasattr(b_node, 'properties') else {}
+        rel_props = rel.properties if hasattr(rel, 'properties') else {}
+        rel_type = getattr(rel, 'type', 'UNKNOWN')
 
-        if b_element_id not in nodes_dict:
-            title_str_b = build_node_properties_full(b_node)
-            label_value_b = b_props.get('BENACCOUNTNO', b_element_id)
-            nodes_dict[b_element_id] = {
-                'id': b_element_id,
-                'label': label_value_b,
-                'title': title_str_b,
-                'color': '#97C2FC'
-            }
+        # Visual Formatting based on Rule/Type
+        bgcolor = rel_props.get('bgcolor', '#848484')
+        reason = rel_props.get('reason', rel_type)
+        is_anomaly = rel_type not in ['TRANSACTION', 'FUNDS_TRANSFER', 'CREATED']
+        
+        edge_style = {
+            'color': {'color': bgcolor},
+            'dashes': True if is_anomaly else False,
+            'arrows': '' if rel_type in ['HUB_AND_SPOKE', 'SHARED_IDENTIFIER', 'CIRCULAR_FLOW'] else 'to',
+            'label': rel_type,
+            'title': f"{rel_type}: {reason}"
+        }
 
-        # Build edges
-        edges.append({'from': a_element_id, 'to': b_element_id})
+        def process_entity(node, props):
+            sender = props.get('ACCOUNTNO') or props.get('SENDERACCOUNTNO') or props.get('CALLING_NO')
+            receiver = props.get('BENACCOUNTNO') or props.get('RECEIVERACCOUNTNO') or props.get('CALLED_NO')
+            
+            if sender and receiver:
+                add_node(sender, sender, title=f"Account {sender}")
+                add_node(receiver, receiver, title=f"Account {receiver}")
+                return str(sender), str(receiver), True
+            else:
+                n_id = props.get('element_id') or getattr(node, 'element_id', None)
+                if n_id:
+                    title_str = build_node_properties_full(node)
+                    label_val = props.get('NAME') or props.get('ACCOUNTNO') or props.get('BENACCOUNTNO') or str(n_id)
+                    add_node(n_id, label_val, title=title_str)
+                return str(n_id), None, False
+
+        a_src, a_tgt, a_is_tx = process_entity(a_node, a_props)
+        b_src, b_tgt, b_is_tx = process_entity(b_node, b_props)
+
+        if a_is_tx and b_is_tx:
+            edge_a_key = f"{a_src}-{a_tgt}-{rel_type}"
+            if edge_a_key not in seen_edges:
+                edges.append({'from': a_src, 'to': a_tgt, **edge_style})
+                seen_edges.add(edge_a_key)
+            
+            edge_b_key = f"{b_src}-{b_tgt}-{rel_type}"
+            if edge_b_key not in seen_edges:
+                edges.append({'from': b_src, 'to': b_tgt, **edge_style})
+                seen_edges.add(edge_b_key)
+                
+        elif not a_is_tx and not b_is_tx:
+            if a_src and b_src:
+                edge_key = f"{a_src}-{b_src}-{rel_type}"
+                if edge_key not in seen_edges:
+                    edges.append({'from': a_src, 'to': b_src, **edge_style})
+                    seen_edges.add(edge_key)
+        else:
+            acc_id = a_src if not a_is_tx else b_src
+            tx_src, tx_tgt = (b_src, b_tgt) if not a_is_tx else (a_src, a_tgt)
+            if acc_id and tx_src and tx_tgt:
+                edges.append({'from': acc_id, 'to': tx_src, **edge_style})
 
     return list(nodes_dict.values()), edges
 
@@ -240,40 +275,77 @@ def fetch_graph(id,action,source_id,value,batch, chunk_callback=None, chunk_size
                         a_props = _json_safe_properties(dict(a))
                         b_props = _json_safe_properties(dict(b))
                         r_props = _json_safe_properties(dict(r))
-                        a_node = {
-                            "id": a.id,
-                            "label": a_props.get("NodeId", str(a.id)),
-                            **a_props
-                        }
-                        b_node = {
-                            "id": b.id,
-                            "label": b_props.get("NodeId", str(b.id)),
-                            **b_props
-                        }
-                        edge = {
-                            "from": a.id,
-                            "to": b.id,
-                            "label": r.type,
+                        
+                        r_type = r.type
+                        is_anomaly = r_type not in ['TRANSACTION', 'FUNDS_TRANSFER', 'CREATED']
+                        bgcolor = r_props.get('bgcolor', '#848484')
+                        reason = r_props.get('reason', r_type)
+                        
+                        edge_base = {
+                            "label": r_type,
+                            "title": f"{r_type}: {reason}",
+                            "color": {"color": bgcolor},
+                            "dashes": True if is_anomaly else False,
+                            "arrows": '' if r_type in ['HUB_AND_SPOKE', 'SHARED_IDENTIFIER', 'CIRCULAR_FLOW'] else 'to',
                             **r_props
                         }
 
+                        def process_entity(node, props):
+                            sender = props.get('ACCOUNTNO') or props.get('SENDERACCOUNTNO') or props.get('CALLING_NO')
+                            receiver = props.get('BENACCOUNTNO') or props.get('RECEIVERACCOUNTNO') or props.get('CALLED_NO')
+                            if sender and receiver:
+                                return str(sender), str(receiver), True
+                            return str(node.id), None, False
+
+                        def make_node(nid, label_hint):
+                            return {"id": nid, "label": str(nid), "title": str(label_hint), "color": "#97C2FC"}
+
+                        a_src, a_tgt, a_is_tx = process_entity(a, a_props)
+                        b_src, b_tgt, b_is_tx = process_entity(b, b_props)
+                        
+                        gen_nodes = {}
+                        gen_edges = []
+                        
+                        if a_is_tx and b_is_tx:
+                            if r_type in ['SHARED_IDENTIFIER', 'CIRCULAR_FLOW']:
+                                gen_edges.append({"from": a_src, "to": b_src, **edge_base})
+                                gen_nodes[a_src] = make_node(a_src, f"Account {a_src}")
+                                gen_nodes[b_src] = make_node(b_src, f"Account {b_src}")
+                            else:
+                                gen_edges.append({"from": a_src, "to": a_tgt, **edge_base})
+                                gen_edges.append({"from": b_src, "to": b_tgt, **edge_base})
+                                gen_nodes[a_src] = make_node(a_src, f"Account {a_src}")
+                                gen_nodes[a_tgt] = make_node(a_tgt, f"Account {a_tgt}")
+                                gen_nodes[b_src] = make_node(b_src, f"Account {b_src}")
+                                gen_nodes[b_tgt] = make_node(b_tgt, f"Account {b_tgt}")
+                        elif not a_is_tx and not b_is_tx:
+                            gen_edges.append({"from": a.id, "to": b.id, **edge_base})
+                            gen_nodes[a.id] = {"id": a.id, "label": a_props.get("NodeId", str(a.id)), **a_props}
+                            gen_nodes[b.id] = {"id": b.id, "label": b_props.get("NodeId", str(b.id)), **b_props}
+                        else:
+                            acc_id = a.id if not a_is_tx else b.id
+                            tx_src, tx_tgt = (b_src, b_tgt) if not a_is_tx else (a_src, a_tgt)
+                            gen_edges.append({"from": acc_id, "to": tx_src, **edge_base})
+                            gen_nodes[acc_id] = {"id": acc_id, "label": acc_id}
+                            gen_nodes[tx_src] = make_node(tx_src, f"Account {tx_src}")
+
                         if chunk_callback:
-                            node_ids.add(a.id)
-                            node_ids.add(b.id)
-                            if a.id not in emitted_node_ids:
-                                chunk_nodes[a.id] = a_node
-                                emitted_node_ids.add(a.id)
-                            if b.id not in emitted_node_ids:
-                                chunk_nodes[b.id] = b_node
-                                emitted_node_ids.add(b.id)
-                            chunk_edges.append(edge)
+                            for nid, n_obj in gen_nodes.items():
+                                node_ids.add(nid)
+                                if nid not in emitted_node_ids:
+                                    chunk_nodes[nid] = n_obj
+                                    emitted_node_ids.add(nid)
+                            for e in gen_edges:
+                                chunk_edges.append(e)
+                                
                             target_chunk_size = first_chunk_size if chunk_count == 0 and first_chunk_size else chunk_size
                             if len(chunk_edges) >= max(1, int(target_chunk_size or 250)):
                                 flush_chunk(partial=True)
                         else:
-                            nodes[a.id] = a_node
-                            nodes[b.id] = b_node
-                            edges.append(edge)
+                            for nid, n_obj in gen_nodes.items():
+                                nodes[nid] = n_obj
+                            for e in gen_edges:
+                                edges.append(e)
 
                         total_edges += 1
                         if graph_limit > 0 and total_edges >= graph_limit:
