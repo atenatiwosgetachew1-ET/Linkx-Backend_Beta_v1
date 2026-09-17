@@ -429,10 +429,16 @@ def format_cypher_entries(entities):
     return [{str(k): str(v) for k, v in entry.items()} for entry in entities if isinstance(entry, dict)]
 
 def _trusted_entry_match(alias):
-    return f'all(k IN keys(entry) WHERE toString(coalesce({alias}[k], "")) = toString(entry[k]))'
+    return f"all(k IN keys(entry) WHERE toLower(k) IN ['category', 'type', 'reason'] OR toString(coalesce({alias}[k], \"\")) = toString(entry[k]))"
 
 def _trusted_node_clause(alias):
     return f'NOT any(entry IN $trusted_entries WHERE {_trusted_entry_match(alias)})'
+
+def _trusted_pair_clause(left_alias, right_alias):
+    return (
+        "NOT any(entry IN $trusted_entries WHERE "
+        f"({_trusted_entry_match(left_alias)} OR {_trusted_entry_match(right_alias)}))"
+    )
 
 def run_full_graph_analysis(credentials, session_id, node_label):
     """
@@ -705,6 +711,151 @@ def run_full_graph_analysis(credentials, session_id, node_label):
         except Exception as e:
             rules_failed.append(("SHARED_IDENTIFIER", str(e)[:100]))
             print(f"  [Rule] SHARED_IDENTIFIER ✗ {str(e)[:100]}", flush=True)
+
+        # ---- 9. LATE_NIGHT_TX ----
+        try:
+            with driver.session() as s:
+                s.run(f"""
+                MATCH (t:{label})
+                WHERE ($session_id IS NULL OR t.session_id = $session_id)
+                  AND t.TRANSACTIONTIME IS NOT NULL
+                  AND toString(t.TRANSACTIONTIME) <> ''
+                  AND {_trusted_node_clause('t')}
+                WITH t, toInteger(substring(replace(toString(t.TRANSACTIONTIME), ':', ''), 0, 4)) AS t_time
+                WHERE t_time >= 2300 OR t_time <= 400
+                MERGE (t)-[r:LATE_NIGHT_TX {{session_id:$session_id}}]->(t)
+                SET r.bgcolor = '#00c1a2', r.provisional = false,
+                    r.reason = 'transaction occurred outside typical business hours',
+                    r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
+                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
+            rules_completed.append("LATE_NIGHT_TX")
+            print(f"  [Rule] LATE_NIGHT_TX ✓", flush=True)
+        except Exception as e:
+            rules_failed.append(("LATE_NIGHT_TX", str(e)[:100]))
+            print(f"  [Rule] LATE_NIGHT_TX ✗ {str(e)[:100]}", flush=True)
+
+        # ---- 10. JUST_BELOW_THRESHOLD ----
+        try:
+            single_tx_threshold = 10000
+            with driver.session() as s:
+                s.run(f"""
+                MATCH (t:{label})
+                WHERE ($session_id IS NULL OR t.session_id = $session_id)
+                  AND coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) > 0
+                  AND {_trusted_node_clause('t')}
+                WITH t, coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) AS amt
+                WHERE amt >= ($single_tx_threshold * 0.9) AND amt < $single_tx_threshold
+                MERGE (t)-[r:JUST_BELOW_THRESHOLD {{session_id:$session_id}}]->(t)
+                SET r.bgcolor = '#dba124', r.provisional = false,
+                    r.reason = 'transaction amount is suspiciously close to reporting threshold',
+                    r.amount = amt, r.threshold = $single_tx_threshold,
+                    r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
+                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries,
+                     single_tx_threshold=single_tx_threshold)
+            rules_completed.append("JUST_BELOW_THRESHOLD")
+            print(f"  [Rule] JUST_BELOW_THRESHOLD ✓", flush=True)
+        except Exception as e:
+            rules_failed.append(("JUST_BELOW_THRESHOLD", str(e)[:100]))
+            print(f"  [Rule] JUST_BELOW_THRESHOLD ✗ {str(e)[:100]}", flush=True)
+
+        # ---- 11. RAPID_WITHDRAWAL ----
+        try:
+            with driver.session() as s:
+                s.run(f"""
+                MATCH (t:{label})
+                WHERE ($session_id IS NULL OR t.session_id = $session_id)
+                  AND t.BENACCOUNTNO IS NOT NULL AND t.BENACCOUNTNO <> ''
+                WITH t.BENACCOUNTNO AS acc, count(t) AS out_count
+                WHERE out_count < 1000
+
+                MATCH (a:{label} {{BENACCOUNTNO: acc}})
+                WHERE ($session_id IS NULL OR a.session_id = $session_id)
+                CALL (a, acc) {{
+                  MATCH (b:{label} {{ACCOUNTNO: acc}})
+                  WHERE ($session_id IS NULL OR b.session_id = $session_id)
+                    AND elementId(a) <> elementId(b)
+                    AND coalesce(toString(a.TRANSACTIONDATE), '') = coalesce(toString(b.TRANSACTIONDATE), '')
+                    AND coalesce(toString(a.TRANSACTIONTIME), '') < coalesce(toString(b.TRANSACTIONTIME), '')
+                    AND {_trusted_pair_clause('a', 'b')}
+                  WITH a, b,
+                       coalesce(toFloat(a.AMOUNTINBIRR), toFloat(a.AMOUNT), toFloat(a.amount), toFloat(a.LOCAL_AMOUNT), 0.0) AS in_amt,
+                       coalesce(toFloat(b.AMOUNTINBIRR), toFloat(b.AMOUNT), toFloat(b.amount), toFloat(b.LOCAL_AMOUNT), 0.0) AS out_amt
+                  WHERE in_amt > 0 AND out_amt >= (in_amt * 0.9) AND out_amt <= (in_amt * 1.1)
+                  MERGE (a)-[r:RAPID_WITHDRAWAL {{session_id:$session_id}}]->(b)
+                  SET r.bgcolor = '#d5d276', r.provisional = false,
+                      r.reason = 'funds rapidly withdrawn or passed through on same day',
+                      r.in_amount = in_amt, r.out_amount = out_amt,
+                      r.edge_semantic = 'OBSERVED_FLOW', r.financial_flow = true, r.directed_display = true
+                }} IN TRANSACTIONS OF 1000 ROWS
+                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
+            rules_completed.append("RAPID_WITHDRAWAL")
+            print(f"  [Rule] RAPID_WITHDRAWAL ✓", flush=True)
+        except Exception as e:
+            rules_failed.append(("RAPID_WITHDRAWAL", str(e)[:100]))
+            print(f"  [Rule] RAPID_WITHDRAWAL ✗ {str(e)[:100]}", flush=True)
+
+        # ---- 12. ACCOUNT_ACTIVITY_SPIKE ----
+        try:
+            with driver.session() as s:
+                s.run(f"""
+                MATCH (t:{label})
+                WHERE ($session_id IS NULL OR t.session_id = $session_id)
+                  AND coalesce(toString(t.ACCOUNTNO), '') <> ''
+                  AND coalesce(toString(t.TRANSACTIONDATE), '') <> ''
+                WITH t.ACCOUNTNO AS acc, t.TRANSACTIONDATE AS tx_day, count(t) AS daily_count, collect(t) AS day_txns
+                WHERE daily_count >= 10
+                MATCH (all_t:{label})
+                WHERE all_t.ACCOUNTNO = acc AND coalesce(toString(all_t.TRANSACTIONDATE), '') <> ''
+                WITH acc, tx_day, daily_count, day_txns, count(all_t) AS total_count, count(DISTINCT all_t.TRANSACTIONDATE) AS total_days
+                WITH acc, tx_day, daily_count, day_txns, (toFloat(total_count) / toFloat(CASE WHEN total_days = 0 THEN 1 ELSE total_days END)) AS avg_daily
+                WHERE daily_count >= (avg_daily * 3)
+                UNWIND day_txns AS t
+                WITH t, acc, tx_day, daily_count, avg_daily
+                WHERE {_trusted_node_clause('t')}
+                MERGE (t)-[r:ACCOUNT_ACTIVITY_SPIKE {{session_id:$session_id}}]->(t)
+                SET r.bgcolor = '#e6e6e6', r.provisional = false,
+                    r.reason = 'unusually high transaction volume for this account on this day',
+                    r.daily_count = daily_count, r.avg_daily = avg_daily,
+                    r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
+                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
+            rules_completed.append("ACCOUNT_ACTIVITY_SPIKE")
+            print(f"  [Rule] ACCOUNT_ACTIVITY_SPIKE ✓", flush=True)
+        except Exception as e:
+            rules_failed.append(("ACCOUNT_ACTIVITY_SPIKE", str(e)[:100]))
+            print(f"  [Rule] ACCOUNT_ACTIVITY_SPIKE ✗ {str(e)[:100]}", flush=True)
+
+        # ---- 13. HIGH_RISK_LINK (from risk_entities) ----
+        try:
+            with driver.session() as s:
+                s.run(f"""
+                UNWIND $risk_entries AS entry
+                MATCH (t:{label})
+                WHERE ($session_id IS NULL OR t.session_id = $session_id)
+                  AND {_trusted_node_clause('t')}
+                  AND {_trusted_entry_match('t')}
+                WITH t, entry, toUpper(coalesce(entry.category, entry.CATEGORY, entry.type, entry.TYPE, 'RISK')) AS cat
+
+                FOREACH (ignore IN CASE WHEN cat = 'PEP' THEN [1] ELSE [] END |
+                    MERGE (t)-[r:PEP_INVOLVED {{session_id:$session_id}}]->(t)
+                    SET r.bgcolor = '#0099ff', r.provisional = false, r.reason = 'PEP matched', r.risk_source = 'risk_entities',
+                        r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
+                )
+                FOREACH (ignore IN CASE WHEN cat IN ['SANCTION', 'SANCTIONS', 'SANCTIONED'] THEN [1] ELSE [] END |
+                    MERGE (t)-[r:SANCTIONED_ENTITY_MATCH {{session_id:$session_id}}]->(t)
+                    SET r.bgcolor = '#ff3b3b', r.provisional = false, r.reason = 'Sanctioned entity matched', r.risk_source = 'risk_entities',
+                        r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
+                )
+                FOREACH (ignore IN CASE WHEN NOT cat IN ['PEP', 'SANCTION', 'SANCTIONS', 'SANCTIONED'] THEN [1] ELSE [] END |
+                    MERGE (t)-[r:HIGH_RISK_LINK {{session_id:$session_id}}]->(t)
+                    SET r.bgcolor = '#de7d07', r.provisional = false, r.reason = 'Configured risk entity matched', r.risk_source = 'risk_entities', r.category = cat,
+                        r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
+                )
+                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
+            rules_completed.append("HIGH_RISK_LINK")
+            print(f"  [Rule] HIGH_RISK_LINK / PEP / SANCTION ✓", flush=True)
+        except Exception as e:
+            rules_failed.append(("HIGH_RISK_LINK", str(e)[:100]))
+            print(f"  [Rule] HIGH_RISK_LINK / PEP / SANCTION ✗ {str(e)[:100]}", flush=True)
 
     finally:
         driver.close()
