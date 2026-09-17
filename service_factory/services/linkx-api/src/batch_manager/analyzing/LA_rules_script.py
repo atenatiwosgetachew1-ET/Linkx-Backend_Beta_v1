@@ -120,7 +120,7 @@ def batch_graph_analysis_transactions(
             t.BENACCOUNTNO AS beneficiary,
             t.TRANSACTIONDATE AS tx_day,
             t,
-            coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount)) AS amount
+            coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) AS amount
         WHERE acc IS NOT NULL
           AND acc <> ''
           AND beneficiary IS NOT NULL
@@ -142,6 +142,7 @@ def batch_graph_analysis_transactions(
         SET r.bgcolor = '#d5d276',
             r.provisional = false,
             r.reason = 'multiple small same-day transfers below threshold',
+            r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true,
             r.account = acc,
             r.beneficiary = beneficiary,
             r.tx_day = tx_day,
@@ -195,13 +196,16 @@ def batch_graph_analysis_transactions(
           )
         WITH a, b
         ORDER BY a.TRANSACTIONDATE, a.TRANSACTIONTIME, b.TRANSACTIONDATE, b.TRANSACTIONTIME
-        WITH a, collect(b)[0] AS b
+        WITH a, collect(b) AS downstream
+        WITH a, downstream[..5] AS limited_downstream
+        UNWIND limited_downstream AS b
         WHERE b IS NOT NULL
           AND {_trusted_pair_clause('a', 'b')}
         MERGE (a)-[r:FUND_FLOW {{session_id:$session_id}}]->(b)
         SET r.bgcolor = '#d8a822',
             r.provisional = false,
-            r.reason = 'beneficiary later acts as sender'
+            r.reason = 'beneficiary later acts as sender',
+            r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
         """, session_id=session_param, trusted_entries=trusted_entries)
 
         # ----------------------------
@@ -216,7 +220,8 @@ def batch_graph_analysis_transactions(
         MERGE (t)-[r:DORMANT_TO_ACTIVE {{session_id:$session_id}}]->(t)
         SET r.bgcolor = '#ff8c8c',
             r.provisional = false,
-            r.reason = 'dormant source account transacts with active beneficiary'
+            r.reason = 'dormant source account transacts with active beneficiary',
+            r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
         """, session_id=session_param, trusted_entries=trusted_entries)
 
         # ---------------------------- 
@@ -233,7 +238,8 @@ def batch_graph_analysis_transactions(
             r.provisional = false,
             r.reason = 'configured high-risk account appears in transaction',
             r.account = acc,
-            r.risk_source = 'built_in_account_list'
+            r.risk_source = 'built_in_account_list',
+            r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
         """, accounts=high_risk_accounts, session_id=session_param, trusted_entries=trusted_entries)
 
         session.run(f"""
@@ -246,15 +252,15 @@ def batch_graph_analysis_transactions(
         
         FOREACH (ignore IN CASE WHEN cat = 'PEP' THEN [1] ELSE [] END |
             MERGE (t)-[r:PEP_INVOLVED {{session_id:$session_id}}]->(t)
-            SET r.bgcolor = '#0099ff', r.provisional = false, r.reason = 'PEP matched', r.risk_source = 'risk_entities'
+            SET r.bgcolor = '#0099ff', r.provisional = false, r.reason = 'PEP matched', r.risk_source = 'risk_entities', r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
         )
         FOREACH (ignore IN CASE WHEN cat IN ['SANCTION', 'SANCTIONS', 'SANCTIONED'] THEN [1] ELSE [] END |
             MERGE (t)-[r:SANCTIONED_ENTITY_MATCH {{session_id:$session_id}}]->(t)
-            SET r.bgcolor = '#ff3b3b', r.provisional = false, r.reason = 'Sanctioned entity matched', r.risk_source = 'risk_entities'
+            SET r.bgcolor = '#ff3b3b', r.provisional = false, r.reason = 'Sanctioned entity matched', r.risk_source = 'risk_entities', r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
         )
         FOREACH (ignore IN CASE WHEN NOT cat IN ['PEP', 'SANCTION', 'SANCTIONS', 'SANCTIONED'] THEN [1] ELSE [] END |
             MERGE (t)-[r:HIGH_RISK_LINK {{session_id:$session_id}}]->(t)
-            SET r.bgcolor = '#de7d07', r.provisional = false, r.reason = 'Configured risk entity matched', r.risk_source = 'risk_entities', r.category = cat
+            SET r.bgcolor = '#de7d07', r.provisional = false, r.reason = 'Configured risk entity matched', r.risk_source = 'risk_entities', r.category = cat, r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
         )
         """, session_id=session_param, trusted_entries=trusted_entries, risk_entries=risk_entries)
 
@@ -297,7 +303,8 @@ def batch_graph_analysis_transactions(
             r.reason = 'balance change exceeds recent account baseline',
             r.change = current_change,
             r.average_recent_change = avg_change,
-            r.threshold_multiplier = $threshold
+            r.threshold_multiplier = $threshold,
+            r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
         """, threshold=threshold_multiplier, session_id=session_param, trusted_entries=trusted_entries)
 
         # ----------------------------
@@ -324,7 +331,8 @@ def batch_graph_analysis_transactions(
             r.hub_account = hub,
             r.direction = 'outgoing',
             r.tx_day = tx_day,
-            r.spoke_count = spoke_count
+            r.spoke_count = spoke_count,
+            r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
         """, session_id=session_param, min_tx_count=min_tx_count, trusted_entries=trusted_entries)
 
         session.run(f"""
@@ -348,7 +356,8 @@ def batch_graph_analysis_transactions(
             r.hub_account = hub,
             r.direction = 'incoming',
             r.tx_day = tx_day,
-            r.spoke_count = spoke_count
+            r.spoke_count = spoke_count,
+            r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
         """, session_id=session_param, min_tx_count=min_tx_count, trusted_entries=trusted_entries)
 
         # ----------------------------
@@ -381,7 +390,8 @@ def batch_graph_analysis_transactions(
             r.reason = 'same identifier appears on multiple accounts',
             r.identifier_type = identifier_type,
             r.identifier_value = identifier_value,
-            r.account_count = size(accounts)
+            r.account_count = size(accounts),
+            r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
         """, session_id=session_param, trusted_entries=trusted_entries)
 
         # ----------------------------
@@ -398,7 +408,8 @@ def batch_graph_analysis_transactions(
         MERGE (t)-[r:LATE_NIGHT_TX {{session_id:$session_id}}]->(t)
         SET r.bgcolor = '#00c1a2',
             r.provisional = false,
-            r.reason = 'transaction occurred outside typical business hours'
+            r.reason = 'transaction occurred outside typical business hours',
+            r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
         """, session_id=session_param, trusted_entries=trusted_entries)
 
         # ----------------------------
@@ -407,16 +418,17 @@ def batch_graph_analysis_transactions(
         session.run(f"""
         MATCH (t:{label})
         WHERE ($session_id IS NULL OR {_session_scope_clause("t")})
-          AND coalesce(toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) > 0
+          AND coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) > 0
           AND {_trusted_node_clause('t')}
-        WITH t, coalesce(toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) AS amt
+        WITH t, coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) AS amt
         WHERE amt >= ($single_tx_threshold * 0.9) AND amt < $single_tx_threshold
         MERGE (t)-[r:JUST_BELOW_THRESHOLD {{session_id:$session_id}}]->(t)
         SET r.bgcolor = '#dba124',
             r.provisional = false,
             r.reason = 'transaction amount is suspiciously close to reporting threshold',
             r.amount = amt,
-            r.threshold = $single_tx_threshold
+            r.threshold = $single_tx_threshold,
+            r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
         """, session_id=session_param, trusted_entries=trusted_entries, single_tx_threshold=single_tx_threshold)
 
         # ----------------------------
@@ -433,15 +445,16 @@ def batch_graph_analysis_transactions(
           AND coalesce(toString(a.TRANSACTIONTIME), '') < coalesce(toString(b.TRANSACTIONTIME), '')
           AND {_trusted_pair_clause('a', 'b')}
         WITH a, b, 
-             coalesce(toFloat(a.AMOUNT), toFloat(a.amount), toFloat(a.LOCAL_AMOUNT), 0.0) AS in_amt,
-             coalesce(toFloat(b.AMOUNT), toFloat(b.amount), toFloat(b.LOCAL_AMOUNT), 0.0) AS out_amt
+             coalesce(toFloat(a.AMOUNTINBIRR), toFloat(a.AMOUNT), toFloat(a.amount), toFloat(a.LOCAL_AMOUNT), 0.0) AS in_amt,
+             coalesce(toFloat(b.AMOUNTINBIRR), toFloat(b.AMOUNT), toFloat(b.amount), toFloat(b.LOCAL_AMOUNT), 0.0) AS out_amt
         WHERE in_amt > 0 AND out_amt >= (in_amt * 0.9) AND out_amt <= (in_amt * 1.1)
         MERGE (a)-[r:RAPID_WITHDRAWAL {{session_id:$session_id}}]->(b)
         SET r.bgcolor = '#d5d276',
             r.provisional = false,
             r.reason = 'funds rapidly withdrawn or passed through on same day',
             r.in_amount = in_amt,
-            r.out_amount = out_amt
+            r.out_amount = out_amt,
+            r.edge_semantic = 'OBSERVED_FLOW', r.financial_flow = true, r.directed_display = true
         """, session_id=session_param, trusted_entries=trusted_entries)
 
         # ----------------------------
@@ -467,7 +480,8 @@ def batch_graph_analysis_transactions(
             r.provisional = false,
             r.reason = 'unusually high transaction volume for this account on this day',
             r.daily_count = daily_count,
-            r.avg_daily = avg_daily
+            r.avg_daily = avg_daily,
+            r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
         """, session_id=session_param, trusted_entries=trusted_entries)
 
         counts = _count_transaction_relationships(session, session_param) if session_param else {}
@@ -517,7 +531,7 @@ def incremental_graph_analysis_transactions(
           AND t.BENACCOUNTNO = beneficiary
           AND t.TRANSACTIONDATE = tx_day
         WITH acc, beneficiary, tx_day, t,
-             coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount)) AS amount
+             coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) AS amount
         WHERE amount IS NOT NULL
           AND amount > 0
           AND amount < $single_tx_threshold
@@ -533,6 +547,7 @@ def incremental_graph_analysis_transactions(
         SET r.bgcolor = '#d5d276',
             r.provisional = true,
             r.reason = 'multiple small same-day transfers below threshold',
+            r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true,
             r.account = acc,
             r.beneficiary = beneficiary,
             r.tx_day = tx_day,
@@ -586,10 +601,16 @@ def incremental_graph_analysis_transactions(
             )
           )
           AND {_trusted_pair_clause('a', 'b')}
+        WITH a, b
+        ORDER BY a.TRANSACTIONDATE, a.TRANSACTIONTIME, b.TRANSACTIONDATE, b.TRANSACTIONTIME
+        WITH a, collect(b) AS downstream
+        WITH a, downstream[..5] AS limited_downstream
+        UNWIND limited_downstream AS b
         MERGE (a)-[r:FUND_FLOW {{session_id:$session_id}}]->(b)
         SET r.bgcolor = '#d8a822',
             r.provisional = true,
-            r.reason = 'beneficiary later acts as sender'
+            r.reason = 'beneficiary later acts as sender',
+            r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
         """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
 
         # Cheap row-local flags: only new batch rows.
@@ -602,7 +623,8 @@ def incremental_graph_analysis_transactions(
         MERGE (t)-[r:DORMANT_TO_ACTIVE {{session_id:$session_id}}]->(t)
         SET r.bgcolor = '#ff8c8c',
             r.provisional = true,
-            r.reason = 'dormant source account transacts with active beneficiary'
+            r.reason = 'dormant source account transacts with active beneficiary',
+            r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
         """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
 
         session.run(f"""
@@ -616,7 +638,8 @@ def incremental_graph_analysis_transactions(
             r.provisional = true,
             r.reason = 'configured high-risk account appears in transaction',
             r.account = acc,
-            r.risk_source = 'built_in_account_list'
+            r.risk_source = 'built_in_account_list',
+            r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
         """, accounts=high_risk_accounts, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
 
         session.run(f"""
@@ -629,15 +652,15 @@ def incremental_graph_analysis_transactions(
         
         FOREACH (ignore IN CASE WHEN cat = 'PEP' THEN [1] ELSE [] END |
             MERGE (t)-[r:PEP_INVOLVED {{session_id:$session_id}}]->(t)
-            SET r.bgcolor = '#0099ff', r.provisional = true, r.reason = 'PEP matched', r.risk_source = 'risk_entities'
+            SET r.bgcolor = '#0099ff', r.provisional = true, r.reason = 'PEP matched', r.risk_source = 'risk_entities', r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
         )
         FOREACH (ignore IN CASE WHEN cat IN ['SANCTION', 'SANCTIONS', 'SANCTIONED'] THEN [1] ELSE [] END |
             MERGE (t)-[r:SANCTIONED_ENTITY_MATCH {{session_id:$session_id}}]->(t)
-            SET r.bgcolor = '#ff3b3b', r.provisional = true, r.reason = 'Sanctioned entity matched', r.risk_source = 'risk_entities'
+            SET r.bgcolor = '#ff3b3b', r.provisional = true, r.reason = 'Sanctioned entity matched', r.risk_source = 'risk_entities', r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
         )
         FOREACH (ignore IN CASE WHEN NOT cat IN ['PEP', 'SANCTION', 'SANCTIONS', 'SANCTIONED'] THEN [1] ELSE [] END |
             MERGE (t)-[r:HIGH_RISK_LINK {{session_id:$session_id}}]->(t)
-            SET r.bgcolor = '#de7d07', r.provisional = true, r.reason = 'Configured risk entity matched', r.risk_source = 'risk_entities', r.category = cat
+            SET r.bgcolor = '#de7d07', r.provisional = true, r.reason = 'Configured risk entity matched', r.risk_source = 'risk_entities', r.category = cat, r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
         )
         """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, risk_entries=risk_entries)
 
@@ -683,7 +706,8 @@ def incremental_graph_analysis_transactions(
             r.reason = 'balance change exceeds recent account baseline',
             r.change = current_change,
             r.average_recent_change = avg_change,
-            r.threshold_multiplier = $threshold
+            r.threshold_multiplier = $threshold,
+            r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
         """, batch_id=batch_id, session_id=session_param, threshold=threshold_multiplier, trusted_entries=trusted_entries)
 
         # Hub-and-spoke: recalculate account fans touched by this batch.
@@ -710,7 +734,8 @@ def incremental_graph_analysis_transactions(
             r.hub_account = hub,
             r.direction = 'outgoing',
             r.tx_day = tx_day,
-            r.spoke_count = spoke_count
+            r.spoke_count = spoke_count,
+            r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
         """, batch_id=batch_id, session_id=session_param, min_tx_count=min_tx_count, trusted_entries=trusted_entries)
 
         session.run(f"""
@@ -736,7 +761,8 @@ def incremental_graph_analysis_transactions(
             r.hub_account = hub,
             r.direction = 'incoming',
             r.tx_day = tx_day,
-            r.spoke_count = spoke_count
+            r.spoke_count = spoke_count,
+            r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
         """, batch_id=batch_id, session_id=session_param, min_tx_count=min_tx_count, trusted_entries=trusted_entries)
 
         # Shared identifier: recalculate phone identifiers touched by this batch.
@@ -779,7 +805,8 @@ def incremental_graph_analysis_transactions(
             r.reason = 'same identifier appears on multiple accounts',
             r.identifier_type = identifier_type,
             r.identifier_value = identifier_value,
-            r.account_count = size(accounts)
+            r.account_count = size(accounts),
+            r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
         """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
 
         session.run(f"""
@@ -793,22 +820,24 @@ def incremental_graph_analysis_transactions(
         MERGE (t)-[r:LATE_NIGHT_TX {{session_id:$session_id}}]->(t)
         SET r.bgcolor = '#00c1a2',
             r.provisional = true,
-            r.reason = 'transaction occurred outside typical business hours'
+            r.reason = 'transaction occurred outside typical business hours',
+            r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
         """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
 
         session.run(f"""
         MATCH (t:{label})
         WHERE t.batch_id = $batch_id
-          AND coalesce(toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) > 0
+          AND coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) > 0
           AND {_trusted_node_clause('t')}
-        WITH t, coalesce(toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) AS amt
+        WITH t, coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) AS amt
         WHERE amt >= ($single_tx_threshold * 0.9) AND amt < $single_tx_threshold
         MERGE (t)-[r:JUST_BELOW_THRESHOLD {{session_id:$session_id}}]->(t)
         SET r.bgcolor = '#dba124',
             r.provisional = true,
             r.reason = 'transaction amount is suspiciously close to reporting threshold',
             r.amount = amt,
-            r.threshold = $single_tx_threshold
+            r.threshold = $single_tx_threshold,
+            r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
         """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, single_tx_threshold=single_tx_threshold)
 
         session.run(f"""
@@ -823,15 +852,16 @@ def incremental_graph_analysis_transactions(
           AND coalesce(toString(a.TRANSACTIONTIME), '') < coalesce(toString(b.TRANSACTIONTIME), '')
           AND {_trusted_pair_clause('a', 'b')}
         WITH a, b, 
-             coalesce(toFloat(a.AMOUNT), toFloat(a.amount), toFloat(a.LOCAL_AMOUNT), 0.0) AS in_amt,
-             coalesce(toFloat(b.AMOUNT), toFloat(b.amount), toFloat(b.LOCAL_AMOUNT), 0.0) AS out_amt
+             coalesce(toFloat(a.AMOUNTINBIRR), toFloat(a.AMOUNT), toFloat(a.amount), toFloat(a.LOCAL_AMOUNT), 0.0) AS in_amt,
+             coalesce(toFloat(b.AMOUNTINBIRR), toFloat(b.AMOUNT), toFloat(b.amount), toFloat(b.LOCAL_AMOUNT), 0.0) AS out_amt
         WHERE in_amt > 0 AND out_amt >= (in_amt * 0.9) AND out_amt <= (in_amt * 1.1)
         MERGE (a)-[r:RAPID_WITHDRAWAL {{session_id:$session_id}}]->(b)
         SET r.bgcolor = '#d5d276',
             r.provisional = true,
             r.reason = 'funds rapidly withdrawn or passed through on same day',
             r.in_amount = in_amt,
-            r.out_amount = out_amt
+            r.out_amount = out_amt,
+            r.edge_semantic = 'OBSERVED_FLOW', r.financial_flow = true, r.directed_display = true
         """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
 
         session.run(f"""
@@ -854,7 +884,8 @@ def incremental_graph_analysis_transactions(
             r.provisional = true,
             r.reason = 'unusually high transaction volume for this account on this day',
             r.daily_count = daily_count,
-            r.avg_daily = avg_daily
+            r.avg_daily = avg_daily,
+            r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
         """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
 
         counts = _count_transaction_relationships(session, session_param)
