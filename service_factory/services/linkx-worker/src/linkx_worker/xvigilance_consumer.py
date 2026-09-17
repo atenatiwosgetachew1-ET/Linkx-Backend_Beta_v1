@@ -594,7 +594,6 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 s.run(f"""
                 MATCH (t:{label})
                 WHERE ($session_id IS NULL OR t.session_id = $session_id)
-                  AND {_trusted_node_clause('t')}
                 WITH t.ACCOUNTNO AS acc, t,
                      coalesce(toFloat(t.BALANCEHELD), toFloat(t.BALANCE), toFloat(t.balance)) AS balance
                 WHERE acc IS NOT NULL AND acc <> '' AND balance IS NOT NULL
@@ -615,6 +614,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 WITH current, previous, current_change,
                      reduce(s = 0.0, c IN valid_changes | s + c) / size(valid_changes) AS avg_change
                 WHERE avg_change > 0 AND current_change >= avg_change * 3
+                  AND {_trusted_pair_clause('previous', 'current')}
                 MERGE (previous)-[r:ABNORMAL_BALANCE_CHANGE {{session_id:$session_id}}]->(current)
                 SET r.bgcolor = '#196e08', r.textcolor = '#eeeeee', r.provisional = false,
                     r.reason = 'balance change exceeds recent account baseline',
@@ -633,7 +633,6 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 s.run(f"""
                 MATCH (t:{label})
                 WHERE ($session_id IS NULL OR t.session_id = $session_id)
-                  AND {_trusted_node_clause('t')}
                   AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> ''
                   AND t.BENACCOUNTNO IS NOT NULL AND t.BENACCOUNTNO <> ''
                 WITH t.ACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day, collect(t) AS txns, count(DISTINCT t.BENACCOUNTNO) AS spoke_count
@@ -641,6 +640,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 CALL (txns, hub, tx_day, spoke_count) {{
                   UNWIND range(0, size(txns)-2) AS i
                   WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
+                  WHERE {_trusted_pair_clause('a', 'b')}
                   MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
                   SET r.bgcolor = '#6f42c1', r.textcolor = '#eeeeee', r.provisional = false,
                       r.reason = 'account connects with multiple counterparties on same day',
@@ -660,7 +660,6 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 s.run(f"""
                 MATCH (t:{label})
                 WHERE ($session_id IS NULL OR t.session_id = $session_id)
-                  AND {_trusted_node_clause('t')}
                   AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> ''
                   AND t.ACCOUNTNO IS NOT NULL AND t.ACCOUNTNO <> ''
                 WITH t.BENACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day, collect(t) AS txns, count(DISTINCT t.ACCOUNTNO) AS spoke_count
@@ -668,6 +667,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 CALL (txns, hub, tx_day, spoke_count) {{
                   UNWIND range(0, size(txns)-2) AS i
                   WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
+                  WHERE {_trusted_pair_clause('a', 'b')}
                   MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
                   SET r.bgcolor = '#6f42c1', r.textcolor = '#eeeeee', r.provisional = false,
                       r.reason = 'account connects with multiple counterparties on same day',
