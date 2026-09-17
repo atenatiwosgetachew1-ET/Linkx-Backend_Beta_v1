@@ -199,6 +199,7 @@ def batch_graph_analysis_transactions(
         WITH a, collect(b) AS downstream
         WITH a, downstream[..5] AS limited_downstream
         UNWIND limited_downstream AS b
+        WITH a, b
         WHERE b IS NOT NULL
           AND {_trusted_pair_clause('a', 'b')}
         MERGE (a)-[r:FUND_FLOW {{session_id:$session_id}}]->(b)
