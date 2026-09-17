@@ -61,9 +61,10 @@ def _elastic_api_url(session_id, endpoint, fallback_storage=None):
     base_url = load_temp_config("elastic_api_base_url", session_id)
     api_port = load_temp_config("api_port", session_id)
     if base_url:
-        if api_port:
-            from urllib.parse import urlparse
-            parsed = urlparse(base_url if "://" in base_url else f"http://{base_url}")
+        from urllib.parse import urlparse
+        parsed = urlparse(base_url if "://" in base_url else f"http://{base_url}")
+        # Only override with api_port if the base_url has no explicit port
+        if not parsed.port and api_port:
             host = parsed.hostname or base_url.split(":", 1)[0]
             scheme = parsed.scheme or "http"
             base_url = f"{scheme}://{host}:{api_port}"
