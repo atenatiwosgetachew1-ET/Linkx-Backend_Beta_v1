@@ -466,10 +466,9 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 s.run(f"""
                 MATCH (t:{label})
                 WHERE ($session_id IS NULL OR t.session_id = $session_id)
-                  AND {_trusted_node_clause('t')}
                 WITH t.ACCOUNTNO AS acc, t.BENACCOUNTNO AS beneficiary,
                      t.TRANSACTIONDATE AS tx_day, t,
-                     coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount)) AS amount
+                     coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) AS amount
                 WHERE acc IS NOT NULL AND acc <> ''
                   AND beneficiary IS NOT NULL AND beneficiary <> ''
                   AND tx_day IS NOT NULL AND tx_day <> ''
@@ -480,6 +479,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 WHERE tx_count >= 3 AND total_amount >= 30000
                 UNWIND range(0, size(txns)-2) AS i
                 WITH txns[i] AS a, txns[i+1] AS b, acc, beneficiary, tx_day, tx_count, total_amount
+                WHERE {_trusted_pair_clause('a', 'b')}
                 MERGE (a)-[r:SMURFING {{session_id:$session_id}}]->(b)
                 SET r.bgcolor = '#d5d276', r.provisional = false,
                     r.reason = 'multiple small same-day transfers below threshold',
@@ -506,13 +506,13 @@ def run_full_graph_analysis(credentials, session_id, node_label):
 
                 MATCH (a:{label} {{ACCOUNTNO: acc}})
                 WHERE ($session_id IS NULL OR a.session_id = $session_id)
-                  AND {_trusted_node_clause('a')}
                   AND a.BENACCOUNTNO IS NOT NULL AND a.BENACCOUNTNO <> ''
                 CALL (a) {{
                   MATCH (b:{label} {{ACCOUNTNO: a.BENACCOUNTNO, BENACCOUNTNO: a.ACCOUNTNO}})
                   WHERE ($session_id IS NULL OR b.session_id = $session_id)
                     AND elementId(a) < elementId(b)
                     AND coalesce(a.TRANSACTIONDATE, '') = coalesce(b.TRANSACTIONDATE, '')
+                    AND {_trusted_pair_clause('a', 'b')}
                   MERGE (a)-[r1:CIRCULAR_FLOW {{session_id:$session_id}}]->(b)
                   SET r1.bgcolor = '#e6e6e6', r1.provisional = false, r1.reason = 'same-day reverse transfer pair',
                       r1.edge_semantic = 'OBSERVED_FLOW', r1.financial_flow = true, r1.directed_display = true
@@ -539,7 +539,6 @@ def run_full_graph_analysis(credentials, session_id, node_label):
 
                 MATCH (a:{label} {{BENACCOUNTNO: acc}})
                 WHERE ($session_id IS NULL OR a.session_id = $session_id)
-                  AND {_trusted_node_clause('a')}
                 CALL (a, acc) {{
                   MATCH (b:{label} {{ACCOUNTNO: acc}})
                   WHERE ($session_id IS NULL OR b.session_id = $session_id)
@@ -551,9 +550,12 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                         AND coalesce(a.TRANSACTIONTIME, '') < coalesce(b.TRANSACTIONTIME, '')
                       )
                     )
+                    AND {_trusted_pair_clause('a', 'b')}
                   WITH a, b
                   ORDER BY b.TRANSACTIONDATE ASC, b.TRANSACTIONTIME ASC
-                  LIMIT 1
+                  WITH a, collect(b) AS downstream
+                  WITH a, downstream[..5] AS limited_downstream
+                  UNWIND limited_downstream AS b
                   MERGE (a)-[r:FUND_FLOW {{session_id:$session_id}}]->(b)
                   SET r.bgcolor = '#d8a822', r.provisional = false,
                       r.reason = 'beneficiary later acts as sender',
@@ -698,6 +700,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                 CALL (txns, identifier_type, identifier_value, accounts) {{
                   UNWIND range(0, size(txns)-2) AS i
                   WITH txns[i] AS a, txns[i+1] AS b, identifier_type, identifier_value, accounts
+                  WHERE {_trusted_pair_clause('a', 'b')}
                   MERGE (a)-[r:SHARED_IDENTIFIER {{session_id:$session_id}}]->(b)
                   SET r.bgcolor = '#0b7285', r.textcolor = '#eeeeee', r.provisional = false,
                       r.reason = 'same identifier appears on multiple accounts',
