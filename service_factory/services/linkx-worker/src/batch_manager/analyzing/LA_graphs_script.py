@@ -96,7 +96,7 @@ def prepare_graph_data_full(records):
             'from': n_id,
             'to': m_id,
             'label': getattr(rel, 'type', 'UNKNOWN'),
-            **rel.properties if hasattr(rel, 'properties') else {}
+            **(rel.properties if hasattr(rel, 'properties') else {})
         })
 
     return list(nodes_dict.values()), edges
