@@ -371,7 +371,7 @@ def create_session_config(session_id, actor=None, default_config=None, existing_
         with conn.cursor() as cur:
             if existing_session_id:
                 cur.execute(
-                    "SELECT id, config FROM session_configs WHERE session_id = %s AND window_id = ''",
+                    "SELECT id, config FROM session_configs WHERE session_id = %s ORDER BY updated_at DESC LIMIT 1",
                     (str(existing_session_id),),
                 )
                 row = cur.fetchone()
