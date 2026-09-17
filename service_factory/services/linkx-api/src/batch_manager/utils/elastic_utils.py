@@ -67,7 +67,7 @@ def _elastic_request_headers(auth_header=None):
     return {"Authorization": header_value, "Accept": "application/json"}
 
 
-def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_column, date=None, fetch_columns=None, timeout=30, limit=None, offset=0, batch_size=None, auth_header=None):
+def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_column, date=None, fetch_columns=None, timeout=30, limit=None, offset=0, batch_size=None, auth_header=None, column_mapping=None):
     if not search_column:
         print(-2, "search_column1:", search_column)
         return None
@@ -194,6 +194,10 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
 
             df = pd.DataFrame(records)
             df.columns = [c.lower() for c in df.columns]
+
+            if column_mapping:
+                rename_dict = {k.lower(): v.lower() for k, v in column_mapping.items()}
+                df = df.rename(columns=rename_dict)
 
             if fetch_columns:
                 normalized_fetch = [c.lower() for c in fetch_columns]

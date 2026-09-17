@@ -528,6 +528,7 @@ def batch_data_manager(payload):
                                 limit=fetch_limit,
                                 batch_size=fetch_batch_size,
                                 auth_header=elastic_auth_header,
+                                column_mapping=load_temp_config("column_mapping", session_id),
                             )
                         else:
                             df = es_keyword_search(
@@ -542,6 +543,7 @@ def batch_data_manager(payload):
                                 limit=fetch_limit,
                                 batch_size=fetch_batch_size,
                                 auth_header=elastic_auth_header,
+                                column_mapping=load_temp_config("column_mapping", session_id),
                             )
                         if df is not None:
                             dfs.append(df)
@@ -601,6 +603,7 @@ def batch_data_manager(payload):
                                     fetch_columns=fetch_columns,
                                     limit=fetch_limit,
                                     batch_size=fetch_batch_size,
+                                    column_mapping=load_temp_config("column_mapping", session_id),
                                 )
                         if df is not None:
                             dfs.append(df)
