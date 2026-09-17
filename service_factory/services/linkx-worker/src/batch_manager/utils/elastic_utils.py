@@ -3,14 +3,8 @@ import os
 import shutil
 import logging
 from urllib.parse import urlsplit
-try:
-    from pyspark.sql import Row
-except ImportError:
-    Row = None
-try:
-    import polars as pl
-except ImportError:
-    pl = None
+from pyspark.sql import Row
+import polars as pl
 import pandas as pd
 from batch_manager.utils.hive_utils import hive_keyword_search
 from batch_manager.utils.spark_utils import ensure_spark_df
@@ -73,7 +67,7 @@ def _elastic_request_headers(auth_header=None):
     return {"Authorization": header_value, "Accept": "application/json"}
 
 
-def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_column, date=None, fetch_columns=None, timeout=30, limit=None, offset=0, batch_size=None, auth_header=None):
+def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_column, date=None, fetch_columns=None, timeout=30, limit=None, offset=0, batch_size=None, auth_header=None, column_mapping=None):
     if not search_column:
         print(-2, "search_column1:", search_column)
         return None
@@ -93,6 +87,7 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
                 if strict_mood:
                     used_payload = {column: keyword}
                     _log_es_request("DF payload ES", API_URL, used_payload)
+                    print(f"\n[DEBUG-PAYLOAD] URL={API_URL} | PAYLOAD={used_payload}\n", flush=True)
                     response = requests.post(API_URL, json=used_payload, headers=_elastic_request_headers(auth_header), timeout=timeout)
                     response.raise_for_status()
                     result = response.json()
@@ -124,6 +119,7 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
                     request_offset = max(0, request_offset)
                     payload.update({"limit": request_limit, "offset": request_offset, "size": request_limit, "from": request_offset})
                 _log_es_request("DF payload ES", API_URL, payload)
+                print(f"\n[DEBUG-PAYLOAD] URL={API_URL} | PAYLOAD={payload}\n", flush=True)
                 response = requests.post(API_URL, json=payload, headers=_elastic_request_headers(auth_header), timeout=timeout)
                 response.raise_for_status()
                 result = response.json()
@@ -198,6 +194,10 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
 
             df = pd.DataFrame(records)
             df.columns = [c.lower() for c in df.columns]
+
+            if column_mapping:
+                rename_dict = {k.lower(): v.lower() for k, v in column_mapping.items()}
+                df = df.rename(columns=rename_dict)
 
             if fetch_columns:
                 normalized_fetch = [c.lower() for c in fetch_columns]
