@@ -493,7 +493,6 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
         # ---- 0. EFFECTIVE_FLOW: trace funds through pass-through intermediaries ----
         if pass_through_accounts:
             try:
-                pass_through_values = [pt.get("value") for pt in pass_through_accounts if pt.get("value")]
                 with driver.session() as s:
                     s.run(f"""
                     MATCH (inbound:{label})
@@ -534,7 +533,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                         r.edge_semantic = 'EFFECTIVE_FLOW',
                         r.financial_flow = true,
                         r.directed_display = true
-                    """, session_id=sp, pass_through_accounts=pass_through_values)
+                    """, session_id=sp, pass_through_accounts=pass_through_accounts)
                 rules_completed.append("EFFECTIVE_FLOW")
                 print(f"  [Rule] EFFECTIVE_FLOW ✓", flush=True)
             except Exception as e:
