@@ -66,6 +66,16 @@ def _fetch_global_entities():
     return {}
 
 def update_global_entities(config_dict, actor):
+    """Update the global entity classification table.
+
+    Each entry in ``trusted_entities`` may carry an optional ``pass_through``
+    boolean field.  When ``true`` the entity is treated as a fund-routing
+    intermediary (wallet, bank, payment processor) whose inbound→outbound
+    flows are collapsed into EFFECTIVE_FLOW relationships so that the
+    underlying customer-to-customer patterns remain visible to the anomaly
+    rules.  When ``false`` (the default) the entity is a merchant endpoint
+    (supermarket, restaurant, etc.) and is only used for rule suppression.
+    """
     try:
         from batch_manager.utils.postgres_utils import get_postgres_connection
         import json
