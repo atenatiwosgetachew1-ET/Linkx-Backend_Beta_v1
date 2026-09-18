@@ -1,8 +1,10 @@
 import sys
 import os
 
-# Ensure we can import the backend modules
-sys.path.append(os.path.join(os.path.dirname(__file__), 'service_factory/services/linkx-api/src'))
+# Insert the correct src path at the VERY BEGINNING of sys.path 
+# so it overrides any root-level leftovers
+correct_path = os.path.join(os.path.dirname(__file__), 'service_factory/services/linkx-api/src')
+sys.path.insert(1, correct_path)
 
 from batch_manager.config_defaults import _fetch_global_entities, update_global_entities
 
