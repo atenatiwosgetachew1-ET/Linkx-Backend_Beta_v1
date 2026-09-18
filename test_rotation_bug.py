@@ -1,6 +1,7 @@
 import sys
 import os
 import json
+import time
 
 correct_path = os.path.join(os.path.dirname(__file__), 'service_factory/services/linkx-api/src')
 sys.path.insert(0, correct_path)
@@ -9,7 +10,7 @@ from batch_manager.config_defaults import _auto_load_dotenv
 _auto_load_dotenv()
 
 from auth.repository import bind_analysis_session_actor
-from session_config_store import save_session_config, create_session_config, _connect
+from session_config_store import save_session_config, create_session_config, duplicate_window_config, _connect
 
 def run_test():
     valid_user_id = None
@@ -26,16 +27,17 @@ def run_test():
     actor = {'id': valid_user_id, 'actor_type': 'user'}
     
     parent_session = '777777'
-    window_session = f'1_{parent_session}'
     
     bind_analysis_session_actor(parent_session, actor)
     
     # 1. Base config gets our survivor identifier
     save_session_config(parent_session, {'test_identifier': 'ROTATION_SURVIVOR'})
     
-    # 2. But what happens if we update just ONE minor setting in a window?
-    # This causes the window's row to be updated last, and it ONLY contains the delta!
-    save_session_config(window_session, {'minor_setting': 'changed'})
+    # 2. Wait 1 second so the timestamp is definitively newer
+    time.sleep(1)
+    
+    # 3. Simulate the UI duplicating a window, which creates a new row with {} and a NEWER timestamp!
+    duplicate_window_config(parent_session, '2')
     
     with _connect() as conn:
         with conn.cursor() as cur:
@@ -58,7 +60,7 @@ def run_test():
     if copied_config and "test_identifier" in copied_config:
         print("\n✅ SUCCESS: The identifier survived!")
     else:
-        print("\n❌ BUG VERIFIED: The identifier was WIPED OUT! It grabbed the partial window delta instead.")
+        print("\n❌ BUG VERIFIED: The identifier was WIPED OUT! It grabbed the empty window row instead.")
 
 if __name__ == "__main__":
     run_test()
