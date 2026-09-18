@@ -10,6 +10,7 @@ sys.path.insert(0, worker_path)
 from batch_manager.config_defaults import _auto_load_dotenv
 _auto_load_dotenv()
 
+from session_config_store import load_session_config
 from linkx_worker.xvigilance_consumer import (
     fast_ingest_batch,
     run_full_graph_analysis,
@@ -37,24 +38,13 @@ def run_test():
     print("\n--- 2. Generating Target Transactions ---")
     now = datetime.datetime.now(datetime.UTC)
     
-    # We create a perfect Hub & Spoke that funnels through the Pass-Through accounts
     all_rows = [
-        # Criminal 1 sends to Feres (Pass-Through)
         {"ACCOUNTNO": "CRIMINAL_1", "BENACCOUNTNO": "338766", "AMOUNT": "10000", "TRANSACTIONDATE": now.strftime("%Y-%m-%d"), "TRANSACTIONTIME": "10:00:00"},
-        # Feres immediately funnels to Central Hub
         {"ACCOUNTNO": "338766", "BENACCOUNTNO": "CENTRAL_HUB", "AMOUNT": "9900", "TRANSACTIONDATE": now.strftime("%Y-%m-%d"), "TRANSACTIONTIME": "10:10:00"},
-        
-        # Criminal 2 sends to Gode Supermarket (Pass-Through)
         {"ACCOUNTNO": "CRIMINAL_2", "BENACCOUNTNO": "600035", "AMOUNT": "15000", "TRANSACTIONDATE": now.strftime("%Y-%m-%d"), "TRANSACTIONTIME": "10:15:00"},
-        # Gode Supermarket funnels to Central Hub
         {"ACCOUNTNO": "600035", "BENACCOUNTNO": "CENTRAL_HUB", "AMOUNT": "14900", "TRANSACTIONDATE": now.strftime("%Y-%m-%d"), "TRANSACTIONTIME": "10:20:00"},
-        
-        # Criminal 3 sends to ALJAZEERA (Pass-Through)
         {"ACCOUNTNO": "CRIMINAL_3", "BENACCOUNTNO": "785238", "AMOUNT": "5000", "TRANSACTIONDATE": now.strftime("%Y-%m-%d"), "TRANSACTIONTIME": "10:25:00"},
-        # ALJAZEERA funnels to Central Hub
         {"ACCOUNTNO": "785238", "BENACCOUNTNO": "CENTRAL_HUB", "AMOUNT": "4900", "TRANSACTIONDATE": now.strftime("%Y-%m-%d"), "TRANSACTIONTIME": "10:30:00"},
-        
-        # Central Hub cashes out
         {"ACCOUNTNO": "CENTRAL_HUB", "BENACCOUNTNO": "CASHOUT_WALLET", "AMOUNT": "29000", "TRANSACTIONDATE": now.strftime("%Y-%m-%d"), "TRANSACTIONTIME": "11:00:00"},
     ]
         
@@ -62,11 +52,19 @@ def run_test():
     print(f"Compiled {len(df)} transactions.")
     
     print("\n--- 3. Pushing to Neo4j ---")
-    session_id = "TEST_EFFECTIVE_FLOW_888"
-    credentials = {"session_id": session_id}
-    node_label = f"TestPassThrough"
     
-    # We manually override the worker's entity fetcher for this test if it was 0
+    # Grab Neo4j credentials from the live active session 185230 as requested!
+    existing_config = load_session_config("185230") or {}
+    credentials = existing_config.get("active_storage_address")
+    
+    if not credentials:
+        print("ERROR: Could not find active_storage_address in session 185230!")
+        sys.exit(1)
+        
+    session_id = "TEST_EFFECTIVE_FLOW_888"
+    credentials["session_id"] = session_id
+    node_label = "TestPassThrough"
+    
     import linkx_worker.xvigilance_consumer
     linkx_worker.xvigilance_consumer.fetch_global_entities = lambda: entities
     
@@ -79,7 +77,6 @@ def run_test():
     print(f"\n✅ Analysis complete!")
     print(f"You can now open Neo4j Browser and run:")
     print(f"MATCH (n:{node_label}) RETURN n")
-    print(f"Or to explicitly view the newly generated EFFECTIVE_FLOW anomalies:")
     print(f"MATCH (s:{node_label})-[r:EFFECTIVE_FLOW]->(t:{node_label}) RETURN s, r, t")
 
 if __name__ == "__main__":
