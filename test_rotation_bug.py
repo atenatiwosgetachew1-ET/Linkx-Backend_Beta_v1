@@ -6,6 +6,10 @@ import json
 correct_path = os.path.join(os.path.dirname(__file__), 'service_factory/services/linkx-api/src')
 sys.path.insert(0, correct_path)
 
+# Automatically load the database credentials from the .env file!
+from batch_manager.config_defaults import _auto_load_dotenv
+_auto_load_dotenv()
+
 from auth.repository import bind_analysis_session_actor
 from session_config_store import save_session_config, create_session_config, _connect
 
@@ -53,7 +57,7 @@ def run_test():
     print("Config applied to the new rotated session:")
     print(json.dumps(copied_config, indent=2))
     
-    if "test_identifier" in copied_config:
+    if copied_config and "test_identifier" in copied_config:
         print("\n✅ SUCCESS: The identifier survived the rotation! (The bug is fixed)")
     else:
         print("\n❌ BUG VERIFIED: The identifier was WIPED OUT! It grabbed the empty window config instead.")
