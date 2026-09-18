@@ -440,6 +440,26 @@ def _trusted_pair_clause(left_alias, right_alias):
         f"({_trusted_entry_match(left_alias)} OR {_trusted_entry_match(right_alias)}))"
     )
 
+def _extract_pass_through_accounts(global_config):
+    """Extract account numbers of entities marked as pass-through intermediaries.
+
+    Works with both the raw DB format (bool ``True``) and the stringified
+    Cypher-parameter format (``"True"``/``"true"``/``"1"``).
+    """
+    accounts = set()
+    for entity in (global_config.get("trusted_entities") or []):
+        if not isinstance(entity, dict):
+            continue
+        pt = entity.get("pass_through", entity.get("passthrough", ""))
+        if str(pt).lower() in ("true", "1", "yes"):
+            for key in ("ACCOUNTNO", "accountno", "account_no", "account"):
+                val = entity.get(key)
+                if val and str(val).strip():
+                    accounts.add(str(val).strip())
+                    break
+    return list(accounts)
+
+
 def run_full_graph_analysis(credentials, session_id, node_label):
     """
     Run ALL LA rules on the complete hourly graph.
@@ -458,6 +478,9 @@ def run_full_graph_analysis(credentials, session_id, node_label):
     global_config = fetch_global_entities()
     trusted_entries = format_cypher_entries(global_config.get("trusted_entities", []))
     risk_entries = format_cypher_entries(global_config.get("risk_entities", []))
+    pass_through_accounts = _extract_pass_through_accounts(global_config)
+    if pass_through_accounts:
+        print(f"[xVigilance-Consumer] Pass-through accounts loaded: {len(pass_through_accounts)}", flush=True)
 
     try:
         # ---- 1. SMURFING ----

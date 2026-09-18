@@ -37,6 +37,28 @@ def _risk_node_clause(alias):
     return f"any(entry IN $risk_entries WHERE {_trusted_entry_match(alias)})"
 
 
+def _extract_pass_through_accounts(trusted_entities_raw):
+    """Extract account numbers of entities marked as pass-through intermediaries.
+
+    Works with both the raw DB format (bool ``True``) and the stringified
+    Cypher-parameter format (``"True"``/``"true"``/``"1"``).
+    """
+    accounts = set()
+    if not trusted_entities_raw or not isinstance(trusted_entities_raw, list):
+        return list(accounts)
+    for entity in trusted_entities_raw:
+        if not isinstance(entity, dict):
+            continue
+        pt = entity.get("pass_through", entity.get("passthrough", ""))
+        if str(pt).lower() in ("true", "1", "yes"):
+            for key in ("ACCOUNTNO", "accountno", "account_no", "account"):
+                val = entity.get(key)
+                if val and str(val).strip():
+                    accounts.add(str(val).strip())
+                    break
+    return list(accounts)
+
+
 TRANSACTION_RELATIONSHIPS = [
     "SMURFING",
     "CIRCULAR_FLOW",
@@ -103,6 +125,7 @@ def batch_graph_analysis_transactions(
     session_param = str(session_id) if session_id else ""
     trusted_entries = trusted_entities_cypher_entries(trusted_entities)
     risk_entries = risk_entities_cypher_entries(risk_entities)
+    pass_through_accounts = _extract_pass_through_accounts(trusted_entities)
 
     with driver.session() as session:
         _create_transaction_indexes(session, nodes_label)
@@ -513,6 +536,7 @@ def incremental_graph_analysis_transactions(
     label = _safe_label(nodes_label)
     trusted_entries = trusted_entities_cypher_entries(trusted_entities)
     risk_entries = risk_entities_cypher_entries(risk_entities)
+    pass_through_accounts = _extract_pass_through_accounts(trusted_entities)
     log_writer(log_file, f"[{datetime.now()}] [Info] Running incremental transaction analysis for batch {batch_id}")
 
     with driver.session() as session:
