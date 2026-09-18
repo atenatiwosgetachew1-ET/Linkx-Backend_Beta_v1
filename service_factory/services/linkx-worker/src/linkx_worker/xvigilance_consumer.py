@@ -27,8 +27,9 @@ def calculate_fraud_score(anomaly_type, nodes, edges, config=None, version_id="h
     # Fallback default configuration
     default_config = {
         "base_scores": {
-            "HIGH_RISK_LINK": 50, "CIRCULAR_FLOW": 30, "SMURFING": 20, 
-            "SHARED_IDENTIFIER": 20, "HUB_AND_SPOKE": 10, "RAPID_FAN_OUT": 10, "ABNORMAL_BALANCE_CHANGE": 10
+            "HIGH_RISK_LINK": 50, "CIRCULAR_FLOW": 30, "EFFECTIVE_FLOW": 25,
+            "SMURFING": 20, "SHARED_IDENTIFIER": 20, "HUB_AND_SPOKE": 10,
+            "RAPID_FAN_OUT": 10, "ABNORMAL_BALANCE_CHANGE": 10
         },
         "node_thresholds": [
             {"min_nodes": 10000, "add_points": 30},
