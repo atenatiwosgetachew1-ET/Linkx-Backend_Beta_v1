@@ -461,7 +461,7 @@ def _extract_pass_through_accounts(global_config):
     return list(accounts)
 
 
-def run_full_graph_analysis(credentials, session_id, node_label):
+def run_full_graph_analysis(credentials, session_id, node_label, mock_global_config=None):
     """
     Run ALL LA rules on the complete hourly graph.
     Each rule runs in its own transaction with error isolation,
@@ -476,7 +476,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
     rules_failed = []
 
     # Fetch and format global entities
-    global_config = fetch_global_entities()
+    global_config = mock_global_config if mock_global_config is not None else fetch_global_entities()
     trusted_entries = format_cypher_entries(global_config.get("trusted_entities", []))
     risk_entries = format_cypher_entries(global_config.get("risk_entities", []))
     pass_through_accounts = _extract_pass_through_accounts(global_config)
@@ -487,6 +487,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
         # ---- 0. EFFECTIVE_FLOW: trace funds through pass-through intermediaries ----
         if pass_through_accounts:
             try:
+                pass_through_values = [pt.get("value") for pt in pass_through_accounts if pt.get("value")]
                 with driver.session() as s:
                     s.run(f"""
                     MATCH (inbound:{label})
@@ -527,7 +528,7 @@ def run_full_graph_analysis(credentials, session_id, node_label):
                         r.edge_semantic = 'EFFECTIVE_FLOW',
                         r.financial_flow = true,
                         r.directed_display = true
-                    """, session_id=sp, pass_through_accounts=pass_through_accounts)
+                    """, session_id=sp, pass_through_accounts=pass_through_values)
                 rules_completed.append("EFFECTIVE_FLOW")
                 print(f"  [Rule] EFFECTIVE_FLOW ✓", flush=True)
             except Exception as e:
