@@ -60,6 +60,7 @@ def _extract_pass_through_accounts(trusted_entities_raw):
 
 
 TRANSACTION_RELATIONSHIPS = [
+    "EFFECTIVE_FLOW",
     "SMURFING",
     "CIRCULAR_FLOW",
     "FUND_FLOW",

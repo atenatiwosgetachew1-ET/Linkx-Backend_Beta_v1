@@ -483,6 +483,59 @@ def run_full_graph_analysis(credentials, session_id, node_label):
         print(f"[xVigilance-Consumer] Pass-through accounts loaded: {len(pass_through_accounts)}", flush=True)
 
     try:
+        # ---- 0. EFFECTIVE_FLOW: trace funds through pass-through intermediaries ----
+        if pass_through_accounts:
+            try:
+                with driver.session() as s:
+                    s.run(f"""
+                    MATCH (inbound:{label})
+                    WHERE ($session_id IS NULL OR inbound.session_id = $session_id)
+                      AND inbound.BENACCOUNTNO IN $pass_through_accounts
+                      AND inbound.ACCOUNTNO IS NOT NULL AND inbound.ACCOUNTNO <> ''
+
+                    MATCH (outbound:{label})
+                    WHERE outbound.ACCOUNTNO = inbound.BENACCOUNTNO
+                      AND ($session_id IS NULL OR outbound.session_id = $session_id)
+                      AND outbound.BENACCOUNTNO IS NOT NULL
+                      AND outbound.BENACCOUNTNO <> ''
+                      AND outbound.BENACCOUNTNO <> inbound.ACCOUNTNO
+                      AND coalesce(outbound.TRANSACTIONDATE, '') = coalesce(inbound.TRANSACTIONDATE, '')
+                      AND coalesce(outbound.TRANSACTIONTIME, '') >= coalesce(inbound.TRANSACTIONTIME, '')
+
+                    WITH inbound, outbound,
+                         coalesce(toFloat(inbound.AMOUNTINBIRR), toFloat(inbound.AMOUNT),
+                                  toFloat(inbound.amount), toFloat(inbound.LOCAL_AMOUNT), 0.0) AS in_amt,
+                         coalesce(toFloat(outbound.AMOUNTINBIRR), toFloat(outbound.AMOUNT),
+                                  toFloat(outbound.amount), toFloat(outbound.LOCAL_AMOUNT), 0.0) AS out_amt
+                    WHERE in_amt > 0 AND out_amt > 0
+                      AND abs(out_amt - in_amt) <= (in_amt * 0.1)
+
+                    MERGE (inbound)-[r:EFFECTIVE_FLOW {{session_id:$session_id}}]->(outbound)
+                    SET r.intermediary = inbound.BENACCOUNTNO,
+                        r.hop_count = 2,
+                        r.in_amount = in_amt,
+                        r.out_amount = out_amt,
+                        r.fee_delta = in_amt - out_amt,
+                        r.effective_sender = inbound.ACCOUNTNO,
+                        r.effective_receiver = outbound.BENACCOUNTNO,
+                        r.tx_date = inbound.TRANSACTIONDATE,
+                        r.bgcolor = '#9b59b6',
+                        r.textcolor = '#eeeeee',
+                        r.provisional = false,
+                        r.reason = 'funds flow through trusted intermediary',
+                        r.edge_semantic = 'EFFECTIVE_FLOW',
+                        r.financial_flow = true,
+                        r.directed_display = true
+                    """, session_id=sp, pass_through_accounts=pass_through_accounts)
+                rules_completed.append("EFFECTIVE_FLOW")
+                print(f"  [Rule] EFFECTIVE_FLOW ✓", flush=True)
+            except Exception as e:
+                rules_failed.append(("EFFECTIVE_FLOW", str(e)[:100]))
+                print(f"  [Rule] EFFECTIVE_FLOW ✗ {str(e)[:100]}", flush=True)
+        else:
+            rules_completed.append("EFFECTIVE_FLOW")
+            print(f"  [Rule] EFFECTIVE_FLOW ✓ (skipped: no pass-through accounts configured)", flush=True)
+
         # ---- 1. SMURFING ----
         try:
             with driver.session() as s:
