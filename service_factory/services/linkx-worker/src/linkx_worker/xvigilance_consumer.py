@@ -453,11 +453,17 @@ def _extract_pass_through_accounts(global_config):
             continue
         pt = entity.get("pass_through", entity.get("passthrough", ""))
         if str(pt).lower() in ("true", "1", "yes"):
-            for key in ("ACCOUNTNO", "accountno", "account_no", "account"):
-                val = entity.get(key)
+            # The UI stores entities as {"key": "...", "value": "..."}
+            key = str(entity.get("key") or "").upper()
+            val = entity.get("value")
+            
+            # Also support flat key-values just in case
+            if not val and entity.get("ACCOUNTNO"):
+                val = entity.get("ACCOUNTNO")
+
+            if key in ("ACCOUNTNO", "ACCOUNT_NO", "ACCOUNT") or entity.get("ACCOUNTNO"):
                 if val and str(val).strip():
                     accounts.add(str(val).strip())
-                    break
     return list(accounts)
 
 
