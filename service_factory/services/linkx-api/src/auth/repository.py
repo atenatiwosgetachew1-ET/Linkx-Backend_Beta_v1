@@ -153,7 +153,9 @@ DEFAULT_SERVICE_PERMISSIONS = {
     ],
 }
 
+import threading
 _AUTH_SCHEMA_READY = False
+_AUTH_SCHEMA_LOCK = threading.Lock()
 
 
 def ensure_auth_schema():
@@ -161,129 +163,133 @@ def ensure_auth_schema():
     if _AUTH_SCHEMA_READY:
         return
 
-    with get_postgres_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SET LOCAL lock_timeout = '2s'")
-            cur.execute("SET LOCAL statement_timeout = '15s'")
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id BIGSERIAL PRIMARY KEY,
-                username TEXT NOT NULL UNIQUE,
-                password_hash TEXT NOT NULL,
-                display_name TEXT,
-                is_active BOOLEAN NOT NULL DEFAULT TRUE,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )
-            """)
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS roles (
-                id BIGSERIAL PRIMARY KEY,
-                name TEXT NOT NULL UNIQUE,
-                description TEXT
-            )
-            """)
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS permissions (
-                id BIGSERIAL PRIMARY KEY,
-                key TEXT NOT NULL UNIQUE,
-                description TEXT
-            )
-            """)
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS user_roles (
-                user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                role_id BIGINT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
-                PRIMARY KEY (user_id, role_id)
-            )
-            """)
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS role_permissions (
-                role_id BIGINT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
-                permission_id BIGINT NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
-                PRIMARY KEY (role_id, permission_id)
-            )
-            """)
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS service_accounts (
-                id BIGSERIAL PRIMARY KEY,
-                client_id TEXT NOT NULL UNIQUE,
-                secret_hash TEXT NOT NULL,
-                display_name TEXT,
-                is_active BOOLEAN NOT NULL DEFAULT TRUE,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )
-            """)
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS service_account_permissions (
-                service_account_id BIGINT NOT NULL REFERENCES service_accounts(id) ON DELETE CASCADE,
-                permission_id BIGINT NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
-                PRIMARY KEY (service_account_id, permission_id)
-            )
-            """)
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS analysis_sessions (
-                session_id TEXT PRIMARY KEY,
-                owner_user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
-                owner_service_id BIGINT REFERENCES service_accounts(id) ON DELETE CASCADE,
-                created_by_type TEXT,
-                created_by_id BIGINT,
-                parent_session_id TEXT,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )
-            """)
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS security_audit_events (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                event_type TEXT NOT NULL,
-                actor_type TEXT,
-                actor_id TEXT,
-                username TEXT,
-                target_type TEXT,
-                target_id TEXT,
-                session_id TEXT,
-                ip_address TEXT,
-                user_agent TEXT,
-                success BOOLEAN,
-                metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )
-            """)
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS parent_oauth_sessions (
-                user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-                parent_subject TEXT NOT NULL,
-                refresh_token_ciphertext TEXT,
-                access_token_ciphertext TEXT,
-                access_token_expires_at TIMESTAMPTZ,
-                metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                revoked_at TIMESTAMPTZ
-            )
-            """)
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS token_revocations (
-                jti TEXT PRIMARY KEY,
-                actor_type TEXT,
-                actor_id TEXT,
-                reason TEXT,
-                expires_at TIMESTAMPTZ,
-                revoked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )
-            """)
-            _add_column_if_missing(cur, "parent_oauth_sessions", "access_token_ciphertext", "access_token_ciphertext TEXT")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_parent_oauth_sessions_subject ON parent_oauth_sessions(parent_subject)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_token_revocations_expires_at ON token_revocations(expires_at)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_security_audit_events_created ON security_audit_events(created_at DESC)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_security_audit_events_type_created ON security_audit_events(event_type, created_at DESC)")
-            _migrate_analysis_sessions(cur)
-            _seed_roles_permissions(cur)
-            _bootstrap_superuser(cur)
-            _bootstrap_admin(cur)
-            _bootstrap_service_accounts(cur)
-        conn.commit()
-    _AUTH_SCHEMA_READY = True
+    with _AUTH_SCHEMA_LOCK:
+        if _AUTH_SCHEMA_READY:
+            return
+
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL lock_timeout = '2s'")
+                cur.execute("SET LOCAL statement_timeout = '15s'")
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id BIGSERIAL PRIMARY KEY,
+                    username TEXT NOT NULL UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    display_name TEXT,
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS roles (
+                    id BIGSERIAL PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    description TEXT
+                )
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS permissions (
+                    id BIGSERIAL PRIMARY KEY,
+                    key TEXT NOT NULL UNIQUE,
+                    description TEXT
+                )
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS user_roles (
+                    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    role_id BIGINT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+                    PRIMARY KEY (user_id, role_id)
+                )
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS role_permissions (
+                    role_id BIGINT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+                    permission_id BIGINT NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
+                    PRIMARY KEY (role_id, permission_id)
+                )
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS service_accounts (
+                    id BIGSERIAL PRIMARY KEY,
+                    client_id TEXT NOT NULL UNIQUE,
+                    secret_hash TEXT NOT NULL,
+                    display_name TEXT,
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS service_account_permissions (
+                    service_account_id BIGINT NOT NULL REFERENCES service_accounts(id) ON DELETE CASCADE,
+                    permission_id BIGINT NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
+                    PRIMARY KEY (service_account_id, permission_id)
+                )
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS analysis_sessions (
+                    session_id TEXT PRIMARY KEY,
+                    owner_user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+                    owner_service_id BIGINT REFERENCES service_accounts(id) ON DELETE CASCADE,
+                    created_by_type TEXT,
+                    created_by_id BIGINT,
+                    parent_session_id TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS security_audit_events (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    event_type TEXT NOT NULL,
+                    actor_type TEXT,
+                    actor_id TEXT,
+                    username TEXT,
+                    target_type TEXT,
+                    target_id TEXT,
+                    session_id TEXT,
+                    ip_address TEXT,
+                    user_agent TEXT,
+                    success BOOLEAN,
+                    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS parent_oauth_sessions (
+                    user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                    parent_subject TEXT NOT NULL,
+                    refresh_token_ciphertext TEXT,
+                    access_token_ciphertext TEXT,
+                    access_token_expires_at TIMESTAMPTZ,
+                    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    revoked_at TIMESTAMPTZ
+                )
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS token_revocations (
+                    jti TEXT PRIMARY KEY,
+                    actor_type TEXT,
+                    actor_id TEXT,
+                    reason TEXT,
+                    expires_at TIMESTAMPTZ,
+                    revoked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """)
+                _add_column_if_missing(cur, "parent_oauth_sessions", "access_token_ciphertext", "access_token_ciphertext TEXT")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_parent_oauth_sessions_subject ON parent_oauth_sessions(parent_subject)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_token_revocations_expires_at ON token_revocations(expires_at)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_security_audit_events_created ON security_audit_events(created_at DESC)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_security_audit_events_type_created ON security_audit_events(event_type, created_at DESC)")
+                _migrate_analysis_sessions(cur)
+                _seed_roles_permissions(cur)
+                _bootstrap_superuser(cur)
+                _bootstrap_admin(cur)
+                _bootstrap_service_accounts(cur)
+            conn.commit()
+        _AUTH_SCHEMA_READY = True
 
 
 def _migrate_analysis_sessions(cur):
