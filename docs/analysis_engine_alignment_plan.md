@@ -274,3 +274,17 @@ The xVigilance version only checks `_trusted_node_clause('a')`. Update to check 
 | Phase 6 (Amount standardization) | **Low** | Fallback chain is backwards-compatible. |
 | Phase 7 (Trusted filter position) | **Medium** | Moving the filter changes which transactions get flagged. Expect more flags on partially-trusted pairs initially. |
 | Phase 8 (Deployment) | **Low** | Standard service restart. Keep old files as `.bak` before overwriting. |
+
+---
+
+## IMPLEMENTATION COMPLETE (September 2026)
+
+All alignment phases have been completed. Furthermore, the core **intermediary blind-spot problem** identified during the review has been explicitly resolved by implementing the **EFFECTIVE_FLOW** pass-through rule as Rule 0 in both engines.
+
+**Key Achievements:**
+1. Both engines now share identical trusted entity filtering code and amount standardization logic.
+2. A new `_extract_pass_through_accounts` helper exists in both engines.
+3. The `EFFECTIVE_FLOW` rule automatically detects when funds route through an entity marked `pass_through: true` and connects the actual sender and receiver directly.
+4. Downstream rules (SMURFING, FUND_FLOW, etc.) successfully evaluate these effective-flow paths without requiring modifications to the core rules themselves.
+5. The `EFFECTIVE_FLOW` anomaly is officially scored with a base score of 25.
+6. 46 core pass-through entities (Wallets, Banks, Telecoms, Agents) have been officially seeded in the production database.

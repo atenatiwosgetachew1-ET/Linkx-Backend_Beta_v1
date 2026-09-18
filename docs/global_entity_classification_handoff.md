@@ -44,3 +44,15 @@ When saving the session configuration, the `trusted_entities` array should be st
 ```
 
 By completing the frontend UI for this feature, the Risk Team can continuously curate their whitelists manually, and xVigilance will instantly and silently adapt to those rules for all automated anomaly detection.
+
+## Update: Pass-Through Intermediary Tracing (EFFECTIVE_FLOW)
+*Added September 2026*
+
+The classification engine has been upgraded to support a **`pass_through`** boolean flag on trusted entities.
+
+Previously, trusted entities were strictly used as "suppressors" (if a wallet was trusted, transactions flowing through it were ignored, creating blind spots). Now, if an entity is marked with `"pass_through": true` (e.g., Wallets, Banks, Payment Processors), the system will actively collapse the A -> Wallet -> B flows into a direct **`EFFECTIVE_FLOW`** relationship between Customer A and Customer B. This allows pattern-detection rules (like Smurfing or Circular Flow) to flag fraudulent behavior even when actors try to hide behind legitimate intermediaries.
+
+**Frontend requirement updates:**
+When the Admin edits a trusted entity, the JSON object must support the `pass_through` boolean key.
+- **True:** Funds pass through this entity to other customers (e.g., Banks, Wallets, Telecoms).
+- **False:** This entity is a final destination / merchant endpoint (e.g., Supermarkets, Restaurants).
