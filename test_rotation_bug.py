@@ -29,22 +29,17 @@ def run_test():
     print("--- STEP 1: SETUP ---")
     print(f"Using valid user ID: {valid_user_id}")
     
-    # Use a numeric session ID so the system doesn't accidentally split it on underscores!
     parent_session = '999999'
     window_session = f'1_{parent_session}'
     
-    # 1. Create parent session
     bind_analysis_session_actor(parent_session, actor)
     
-    # 2. Save parent config with identifier
     save_session_config(parent_session, {'test_identifier': 'ROTATION_SURVIVOR'})
     print("Saved parent config: {'test_identifier': 'ROTATION_SURVIVOR'}")
     
-    # 3. Simulate opening a window (creates empty window row with later timestamp)
     save_session_config(window_session, {})
     print(f"Simulated opening a window ({window_session}) with an empty config.")
     
-    # 4. Age the session
     with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -57,6 +52,9 @@ def run_test():
     
     print("\n--- STEP 2: ROTATION TRIGGER ---")
     new_session_id = '888888'
+    
+    # WE MUST CREATE THE NEW SESSION IN DB FIRST (just like main.py does)
+    bind_analysis_session_actor(new_session_id, actor)
     
     print(f"Triggering rotation from '{parent_session}' -> '{new_session_id}'...")
     
