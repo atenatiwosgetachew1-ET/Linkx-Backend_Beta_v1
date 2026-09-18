@@ -173,6 +173,14 @@ def enforce_request_body_size():
     return None
 
 
+import psycopg
+
+@app.errorhandler(psycopg.Error)
+def database_error(exc):
+    current_app.logger.warning("database error: %s", exc)
+    return jsonify({"message": "service_unavailable", "detail": "database_error"}), 503
+
+
 @app.errorhandler(500)
 def internal_server_error(exc):
     current_app.logger.exception("unhandled API error")
