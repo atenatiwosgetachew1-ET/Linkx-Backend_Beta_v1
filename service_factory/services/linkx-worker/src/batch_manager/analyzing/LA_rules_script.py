@@ -134,6 +134,52 @@ def batch_graph_analysis_transactions(
             _clear_transaction_relationships(session, session_id)
 
         # ----------------------------
+        # 0. EFFECTIVE_FLOW: trace funds through pass-through intermediaries
+        # ----------------------------
+        if pass_through_accounts:
+            session.run(f"""
+            MATCH (inbound:{label})
+            WHERE ($session_id IS NULL OR {_session_scope_clause("inbound")})
+              AND inbound.BENACCOUNTNO IN $pass_through_accounts
+              AND inbound.ACCOUNTNO IS NOT NULL AND inbound.ACCOUNTNO <> ''
+
+            MATCH (outbound:{label})
+            WHERE outbound.ACCOUNTNO = inbound.BENACCOUNTNO
+              AND ($session_id IS NULL OR {_session_scope_clause("outbound")})
+              AND outbound.BENACCOUNTNO IS NOT NULL
+              AND outbound.BENACCOUNTNO <> ''
+              AND outbound.BENACCOUNTNO <> inbound.ACCOUNTNO
+              AND coalesce(outbound.TRANSACTIONDATE, '') = coalesce(inbound.TRANSACTIONDATE, '')
+              AND coalesce(outbound.TRANSACTIONTIME, '') >= coalesce(inbound.TRANSACTIONTIME, '')
+
+            WITH inbound, outbound,
+                 coalesce(toFloat(inbound.AMOUNTINBIRR), toFloat(inbound.AMOUNT),
+                          toFloat(inbound.amount), toFloat(inbound.LOCAL_AMOUNT), 0.0) AS in_amt,
+                 coalesce(toFloat(outbound.AMOUNTINBIRR), toFloat(outbound.AMOUNT),
+                          toFloat(outbound.amount), toFloat(outbound.LOCAL_AMOUNT), 0.0) AS out_amt
+            WHERE in_amt > 0 AND out_amt > 0
+              AND abs(out_amt - in_amt) <= (in_amt * 0.1)
+
+            MERGE (inbound)-[r:EFFECTIVE_FLOW {{session_id:$session_id}}]->(outbound)
+            SET r.intermediary = inbound.BENACCOUNTNO,
+                r.hop_count = 2,
+                r.in_amount = in_amt,
+                r.out_amount = out_amt,
+                r.fee_delta = in_amt - out_amt,
+                r.effective_sender = inbound.ACCOUNTNO,
+                r.effective_receiver = outbound.BENACCOUNTNO,
+                r.tx_date = inbound.TRANSACTIONDATE,
+                r.bgcolor = '#9b59b6',
+                r.textcolor = '#eeeeee',
+                r.provisional = false,
+                r.reason = 'funds flow through trusted intermediary',
+                r.edge_semantic = 'EFFECTIVE_FLOW',
+                r.financial_flow = true,
+                r.directed_display = true
+            """, session_id=session_param, pass_through_accounts=pass_through_accounts)
+            log_writer(log_file, f"[{datetime.now()}] [Info] EFFECTIVE_FLOW rule completed")
+
+        # ----------------------------
         # 1. SMURFING: repeated small transfers from one account to one beneficiary
         # ----------------------------
         session.run(f"""
@@ -542,6 +588,51 @@ def incremental_graph_analysis_transactions(
 
     with driver.session() as session:
         _create_transaction_indexes(session, nodes_label)
+
+        # ----------------------------
+        # 0. EFFECTIVE_FLOW (incremental): trace funds through pass-through intermediaries for new batch
+        # ----------------------------
+        if pass_through_accounts:
+            session.run(f"""
+            MATCH (inbound:{label})
+            WHERE inbound.batch_id = $batch_id
+              AND inbound.BENACCOUNTNO IN $pass_through_accounts
+              AND inbound.ACCOUNTNO IS NOT NULL AND inbound.ACCOUNTNO <> ''
+
+            MATCH (outbound:{label})
+            WHERE outbound.ACCOUNTNO = inbound.BENACCOUNTNO
+              AND {_session_scope_clause("outbound")}
+              AND outbound.BENACCOUNTNO IS NOT NULL
+              AND outbound.BENACCOUNTNO <> ''
+              AND outbound.BENACCOUNTNO <> inbound.ACCOUNTNO
+              AND coalesce(outbound.TRANSACTIONDATE, '') = coalesce(inbound.TRANSACTIONDATE, '')
+              AND coalesce(outbound.TRANSACTIONTIME, '') >= coalesce(inbound.TRANSACTIONTIME, '')
+
+            WITH inbound, outbound,
+                 coalesce(toFloat(inbound.AMOUNTINBIRR), toFloat(inbound.AMOUNT),
+                          toFloat(inbound.amount), toFloat(inbound.LOCAL_AMOUNT), 0.0) AS in_amt,
+                 coalesce(toFloat(outbound.AMOUNTINBIRR), toFloat(outbound.AMOUNT),
+                          toFloat(outbound.amount), toFloat(outbound.LOCAL_AMOUNT), 0.0) AS out_amt
+            WHERE in_amt > 0 AND out_amt > 0
+              AND abs(out_amt - in_amt) <= (in_amt * 0.1)
+
+            MERGE (inbound)-[r:EFFECTIVE_FLOW {{session_id:$session_id}}]->(outbound)
+            SET r.intermediary = inbound.BENACCOUNTNO,
+                r.hop_count = 2,
+                r.in_amount = in_amt,
+                r.out_amount = out_amt,
+                r.fee_delta = in_amt - out_amt,
+                r.effective_sender = inbound.ACCOUNTNO,
+                r.effective_receiver = outbound.BENACCOUNTNO,
+                r.tx_date = inbound.TRANSACTIONDATE,
+                r.bgcolor = '#9b59b6',
+                r.textcolor = '#eeeeee',
+                r.provisional = true,
+                r.reason = 'funds flow through trusted intermediary',
+                r.edge_semantic = 'EFFECTIVE_FLOW',
+                r.financial_flow = true,
+                r.directed_display = true
+            """, session_id=session_param, batch_id=batch_id, pass_through_accounts=pass_through_accounts)
 
         # Smurfing: start from new rows, then inspect only matching account/beneficiary/day groups.
         session.run(f"""
