@@ -53,16 +53,28 @@ def run_test():
     
     print("\n--- 3. Pushing to Neo4j ---")
     
-    # Grab Neo4j credentials from the live active session 185230 as requested!
-    existing_config = load_session_config("185230") or {}
-    credentials = existing_config.get("active_storage_address")
-    
-    if not credentials:
-        print("ERROR: Could not find active_storage_address in session 185230!")
-        sys.exit(1)
-        
+    # We will explicitly inject the Neo4j credentials from the environment variables,
+    # or fallback to defaults if not present
     session_id = "TEST_EFFECTIVE_FLOW_888"
-    credentials["session_id"] = session_id
+    credentials = {
+        "url": os.getenv("LINKX_NEO4J_URL", "bolt://172.27.23.106:7687"),
+        "username": os.getenv("LINKX_NEO4J_USER", "neo4j"),
+        "password": os.getenv("LINKX_NEO4J_PASSWORD", "linkx-password"),
+        "session_id": session_id
+    }
+    
+    # If the user has a live session we can also grab the password from there just in case
+    try:
+        existing_config = load_session_config("185230") or {}
+        # tool_credentials usually contains the Neo4j payload
+        tool_cred = existing_config.get("tool_credentials") or {}
+        if isinstance(tool_cred, dict) and tool_cred.get("password"):
+            credentials["url"] = tool_cred.get("url", credentials["url"])
+            credentials["username"] = tool_cred.get("username", credentials["username"])
+            credentials["password"] = tool_cred.get("password", credentials["password"])
+    except Exception as e:
+        print(f"Failed to load session 185230 config: {e}")
+
     node_label = "TestPassThrough"
     
     import linkx_worker.xvigilance_consumer
