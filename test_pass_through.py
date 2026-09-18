@@ -1,6 +1,7 @@
 import sys
 import os
 import datetime
+from unittest.mock import patch
 
 api_path = os.path.join(os.path.dirname(__file__), 'service_factory/services/linkx-api/src')
 sys.path.insert(0, api_path)
@@ -53,8 +54,6 @@ def run_test():
     
     print("\n--- 3. Pushing to Neo4j ---")
     
-    # We will explicitly inject the Neo4j credentials from the environment variables,
-    # or fallback to defaults if not present
     session_id = "TEST_EFFECTIVE_FLOW_888"
     credentials = {
         "url": os.getenv("LINKX_NEO4J_URL", "bolt://172.27.23.106:7687"),
@@ -63,10 +62,8 @@ def run_test():
         "session_id": session_id
     }
     
-    # If the user has a live session we can also grab the password from there just in case
     try:
         existing_config = load_session_config("185230") or {}
-        # tool_credentials usually contains the Neo4j payload
         tool_cred = existing_config.get("tool_credentials") or {}
         if isinstance(tool_cred, dict) and tool_cred.get("password"):
             credentials["url"] = tool_cred.get("url", credentials["url"])
@@ -77,14 +74,14 @@ def run_test():
 
     node_label = "TestPassThrough"
     
-    import linkx_worker.xvigilance_consumer
-    linkx_worker.xvigilance_consumer.fetch_global_entities = lambda: entities
-    
     fast_ingest_batch(credentials, session_id, df, 1, node_label)
     print(f"Ingested into Neo4j with label '{node_label}'")
     
     print("\n--- 4. Running Graph Analysis ---")
-    run_full_graph_analysis(credentials, session_id, node_label)
+    
+    # We use unittest.mock.patch to definitively override the function inside the module!
+    with patch('linkx_worker.xvigilance_consumer.fetch_global_entities', return_value=entities):
+        run_full_graph_analysis(credentials, session_id, node_label)
     
     print(f"\n✅ Analysis complete!")
     print(f"You can now open Neo4j Browser and run:")
