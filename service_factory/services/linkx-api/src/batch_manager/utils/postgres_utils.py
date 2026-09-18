@@ -17,6 +17,24 @@ def get_connect_timeout():
         return DEFAULT_CONNECT_TIMEOUT
 
 
+_global_pool = None
+
+def _init_pool():
+    global _global_pool
+    if _global_pool is None:
+        try:
+            from psycopg_pool import ConnectionPool
+            _global_pool = ConnectionPool(
+                get_database_url(),
+                min_size=5,
+                max_size=20,
+                timeout=get_connect_timeout(),
+                kwargs={"application_name": os.getenv("DATABASE_APPLICATION_NAME", "linkx-backend")}
+            )
+        except ImportError:
+            pass
+
+
 @contextmanager
 def get_postgres_connection():
     try:
@@ -26,12 +44,18 @@ def get_postgres_connection():
             "PostgreSQL driver is not installed. Install requirements.txt to add psycopg."
         ) from exc
 
-    with psycopg.connect(
-        get_database_url(),
-        connect_timeout=get_connect_timeout(),
-        application_name=os.getenv("DATABASE_APPLICATION_NAME", "linkx-backend"),
-    ) as conn:
-        yield conn
+    _init_pool()
+    
+    if _global_pool:
+        with _global_pool.connection() as conn:
+            yield conn
+    else:
+        with psycopg.connect(
+            get_database_url(),
+            connect_timeout=get_connect_timeout(),
+            application_name=os.getenv("DATABASE_APPLICATION_NAME", "linkx-backend"),
+        ) as conn:
+            yield conn
 
 
 def check_postgres_connection():
