@@ -12,7 +12,6 @@ from auth.repository import bind_analysis_session_actor
 from session_config_store import save_session_config, create_session_config, _connect
 
 def run_test():
-    # Automatically grab a valid user from the database
     valid_user_id = None
     with _connect() as conn:
         with conn.cursor() as cur:
@@ -30,16 +29,20 @@ def run_test():
     print("--- STEP 1: SETUP ---")
     print(f"Using valid user ID: {valid_user_id}")
     
+    # Use a numeric session ID so the system doesn't accidentally split it on underscores!
+    parent_session = '999999'
+    window_session = f'1_{parent_session}'
+    
     # 1. Create parent session
-    bind_analysis_session_actor('TEST_PARENT', actor)
+    bind_analysis_session_actor(parent_session, actor)
     
     # 2. Save parent config with identifier
-    save_session_config('TEST_PARENT', {'test_identifier': 'ROTATION_SURVIVOR'})
+    save_session_config(parent_session, {'test_identifier': 'ROTATION_SURVIVOR'})
     print("Saved parent config: {'test_identifier': 'ROTATION_SURVIVOR'}")
     
     # 3. Simulate opening a window (creates empty window row with later timestamp)
-    save_session_config('1_TEST_PARENT', {})
-    print("Simulated opening a window (1_TEST_PARENT) with an empty config.")
+    save_session_config(window_session, {})
+    print(f"Simulated opening a window ({window_session}) with an empty config.")
     
     # 4. Age the session
     with _connect() as conn:
@@ -47,21 +50,21 @@ def run_test():
             cur.execute("""
                 UPDATE analysis_sessions 
                 SET created_at = NOW() - INTERVAL '13 hours' 
-                WHERE session_id = 'TEST_PARENT'
-            """)
+                WHERE session_id = %s
+            """, (parent_session,))
         conn.commit()
-    print("Artificially aged TEST_PARENT by 13 hours.")
+    print("Artificially aged parent session by 13 hours.")
     
     print("\n--- STEP 2: ROTATION TRIGGER ---")
-    new_session_id = 'ROTATED_SESSION_444'
+    new_session_id = '888888'
     
-    print(f"Triggering rotation from 'TEST_PARENT' -> '{new_session_id}'...")
+    print(f"Triggering rotation from '{parent_session}' -> '{new_session_id}'...")
     
     copied_config = create_session_config(
         session_id=new_session_id,
         actor=actor,
         default_config={"default_theme": "dark"},
-        existing_session_id='TEST_PARENT'
+        existing_session_id=parent_session
     )
     
     print("\n--- RESULT ---")
