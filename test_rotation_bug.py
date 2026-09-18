@@ -2,11 +2,9 @@ import sys
 import os
 import json
 
-# Ensure we use the correct src path
 correct_path = os.path.join(os.path.dirname(__file__), 'service_factory/services/linkx-api/src')
 sys.path.insert(0, correct_path)
 
-# Automatically load the database credentials from the .env file!
 from batch_manager.config_defaults import _auto_load_dotenv
 _auto_load_dotenv()
 
@@ -14,9 +12,24 @@ from auth.repository import bind_analysis_session_actor
 from session_config_store import save_session_config, create_session_config, _connect
 
 def run_test():
-    actor = {'id': 9999, 'actor_type': 'user'}
+    # Automatically grab a valid user from the database
+    valid_user_id = None
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM users LIMIT 1")
+            row = cur.fetchone()
+            if row:
+                valid_user_id = row[0]
+                
+    if not valid_user_id:
+        print("No users found in the database. Cannot run test.")
+        return
+        
+    actor = {'id': valid_user_id, 'actor_type': 'user'}
     
     print("--- STEP 1: SETUP ---")
+    print(f"Using valid user ID: {valid_user_id}")
+    
     # 1. Create parent session
     bind_analysis_session_actor('TEST_PARENT', actor)
     
@@ -40,12 +53,10 @@ def run_test():
     print("Artificially aged TEST_PARENT by 13 hours.")
     
     print("\n--- STEP 2: ROTATION TRIGGER ---")
-    # Simulate the exact logic init() runs during a rotation
     new_session_id = 'ROTATED_SESSION_444'
     
     print(f"Triggering rotation from 'TEST_PARENT' -> '{new_session_id}'...")
     
-    # create_session_config copies the old config into the new session
     copied_config = create_session_config(
         session_id=new_session_id,
         actor=actor,
