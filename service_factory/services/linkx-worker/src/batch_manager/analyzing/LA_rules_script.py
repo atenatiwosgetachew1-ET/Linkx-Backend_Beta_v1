@@ -140,26 +140,31 @@ def batch_graph_analysis_transactions(
         if pass_through_accounts:
             session.run(f"""
             MATCH (inbound:{label})
-            WHERE ($session_id IS NULL OR {_session_scope_clause("inbound")})
+            WHERE inbound.batch_id = $batch_id
               AND inbound.BENACCOUNTNO IN $pass_through_accounts
-              AND inbound.ACCOUNTNO IS NOT NULL AND inbound.ACCOUNTNO <> ''
+              AND inbound.ACCOUNTNO IS NOT NULL AND inbound.ACCOUNTNO <> 
 
-            MATCH (outbound:{label})
-            WHERE outbound.ACCOUNTNO = inbound.BENACCOUNTNO
-              AND ($session_id IS NULL OR {_session_scope_clause("outbound")})
-              AND outbound.BENACCOUNTNO IS NOT NULL
-              AND outbound.BENACCOUNTNO <> ''
-              AND outbound.BENACCOUNTNO <> inbound.ACCOUNTNO
-              AND coalesce(outbound.TRANSACTIONDATE, '') = coalesce(inbound.TRANSACTIONDATE, '')
-              AND coalesce(outbound.TRANSACTIONTIME, '') >= coalesce(inbound.TRANSACTIONTIME, '')
-
-            WITH inbound, outbound,
-                 coalesce(toFloat(inbound.AMOUNTINBIRR), toFloat(inbound.AMOUNT),
-                          toFloat(inbound.amount), toFloat(inbound.LOCAL_AMOUNT), 0.0) AS in_amt,
-                 coalesce(toFloat(outbound.AMOUNTINBIRR), toFloat(outbound.AMOUNT),
-                          toFloat(outbound.amount), toFloat(outbound.LOCAL_AMOUNT), 0.0) AS out_amt
-            WHERE in_amt > 0 AND out_amt > 0
-              AND abs(out_amt - in_amt) <= (in_amt * 0.1)
+            CALL {
+                WITH inbound
+                MATCH (outbound:{label})
+                WHERE outbound.ACCOUNTNO = inbound.BENACCOUNTNO
+                  AND {_session_scope_clause("outbound")}
+                  AND outbound.BENACCOUNTNO IS NOT NULL
+                  AND outbound.BENACCOUNTNO <> 
+                  AND outbound.BENACCOUNTNO <> inbound.ACCOUNTNO
+                  AND coalesce(outbound.TRANSACTIONDATE, ) = coalesce(inbound.TRANSACTIONDATE, )
+                  AND coalesce(outbound.TRANSACTIONTIME, ) >= coalesce(inbound.TRANSACTIONTIME, )
+                WITH inbound, outbound,
+                     coalesce(toFloat(inbound.AMOUNTINBIRR), toFloat(inbound.AMOUNT),
+                              toFloat(inbound.amount), toFloat(inbound.LOCAL_AMOUNT), 0.0) AS in_amt,
+                     coalesce(toFloat(outbound.AMOUNTINBIRR), toFloat(outbound.AMOUNT),
+                              toFloat(outbound.amount), toFloat(outbound.LOCAL_AMOUNT), 0.0) AS out_amt
+                WHERE in_amt > 0 AND out_amt > 0
+                  AND abs(out_amt - in_amt) <= (in_amt * 0.1)
+                RETURN outbound, in_amt, out_amt
+                ORDER BY outbound.TRANSACTIONTIME ASC
+                LIMIT 1
+            }
 
             MERGE (inbound)-[r:EFFECTIVE_FLOW {{session_id:$session_id}}]->(outbound)
             SET r.intermediary = inbound.BENACCOUNTNO,
