@@ -19,6 +19,7 @@ def _safe_index_name(*parts):
 
 
 def _trusted_entry_match(alias):
+    # Support matching against both raw and logical fields
     return f"all(k IN keys(entry) WHERE toLower(k) IN ['category', 'type', 'reason', 'pass_through', 'passthrough', 'classification', 'notes'] OR toString(coalesce({alias}[k], \"\")) = toString(entry[k]))"
 
 
@@ -178,6 +179,26 @@ def batch_graph_analysis_transactions(
                 r.directed_display = true
             """, session_id=session_param, pass_through_accounts=pass_through_accounts)
             log_writer(log_file, f"[{datetime.now()}] [Info] EFFECTIVE_FLOW rule completed")
+
+        # ----------------------------
+        # 0.5 LOGICAL TRANSACTION LAYER INITIALIZATION
+        # ----------------------------
+        session.run(f'''
+        MATCH (t:{label})
+        WHERE ($session_id IS NULL OR {_session_scope_clause("t")})
+        SET t.LOGICAL_ACCOUNTNO = coalesce(t.ACCOUNTNO, ''),
+            t.LOGICAL_BENACCOUNTNO = coalesce(t.BENACCOUNTNO, ''),
+            t.IGNORE_LOGICAL = false
+        ''', session_id=session_param)
+        
+        if pass_through_accounts:
+            session.run(f'''
+            MATCH (inbound:{label})-[r:EFFECTIVE_FLOW]->(outbound:{label})
+            WHERE ($session_id IS NULL OR {_session_scope_clause("inbound")})
+            SET inbound.LOGICAL_BENACCOUNTNO = coalesce(outbound.BENACCOUNTNO, ''),
+                outbound.IGNORE_LOGICAL = true
+            ''', session_id=session_param)
+        log_writer(log_file, f"[{datetime.now()}] [Info] Logical Layer initialized")
 
         # ----------------------------
         # 1. SMURFING: repeated small transfers from one account to one beneficiary
@@ -632,6 +653,26 @@ def incremental_graph_analysis_transactions(
                 r.edge_semantic = 'EFFECTIVE_FLOW',
                 r.financial_flow = true,
                 r.directed_display = true
+
+        # ----------------------------
+        # 0.5 LOGICAL TRANSACTION LAYER INITIALIZATION
+        # ----------------------------
+        session.run(f'''
+        MATCH (t:{label})
+        WHERE t.batch_id = $batch_id
+        SET t.LOGICAL_ACCOUNTNO = coalesce(t.ACCOUNTNO, ''),
+            t.LOGICAL_BENACCOUNTNO = coalesce(t.BENACCOUNTNO, ''),
+            t.IGNORE_LOGICAL = false
+        ''', batch_id=batch_id)
+        
+        if pass_through_accounts:
+            session.run(f'''
+            MATCH (inbound:{label})-[r:EFFECTIVE_FLOW]->(outbound:{label})
+            WHERE inbound.batch_id = $batch_id
+            SET inbound.LOGICAL_BENACCOUNTNO = coalesce(outbound.BENACCOUNTNO, ''),
+                outbound.IGNORE_LOGICAL = true
+            ''', batch_id=batch_id)
+        log_writer(log_file, f"[{datetime.now()}] [Info] Logical Layer initialized")
             """, session_id=session_param, batch_id=batch_id, pass_through_accounts=pass_through_accounts)
 
         # Smurfing: start from new rows, then inspect only matching account/beneficiary/day groups.

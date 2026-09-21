@@ -457,6 +457,9 @@ def format_cypher_entries(entities):
     return [{str(k): str(v) for k, v in entry.items()} for entry in entities if isinstance(entry, dict)]
 
 def _trusted_entry_match(alias):
+    # Re-map alias to use logical fields for matching
+    logical_alias = f'{{alias}}'
+
     return f"all(k IN keys(entry) WHERE toLower(k) IN ['category', 'type', 'reason'] OR toString(coalesce({alias}[k], \"\")) = toString(entry[k]))"
 
 def _trusted_node_clause(alias):
@@ -574,13 +577,38 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             rules_completed.append("EFFECTIVE_FLOW")
             print(f"  [Rule] EFFECTIVE_FLOW ✓ (skipped: no pass-through accounts configured)", flush=True)
 
+        # ---- 0.5. LOGICAL TRANSACTION LAYER ----
+        try:
+            with driver.session() as s:
+                s.run(f'''
+                MATCH (t:{label})
+                WHERE ($session_id IS NULL OR t.session_id = $session_id)
+                SET t.LOGICAL_ACCOUNTNO = coalesce(t.ACCOUNTNO, ''),
+                    t.LOGICAL_BENACCOUNTNO = coalesce(t.BENACCOUNTNO, ''),
+                    t.IGNORE_LOGICAL = false
+                ''', session_id=sp)
+                
+                if pass_through_accounts:
+                    s.run(f'''
+                    MATCH (inbound:{label})-[r:EFFECTIVE_FLOW]->(outbound:{label})
+                    WHERE ($session_id IS NULL OR inbound.session_id = $session_id)
+                    SET inbound.LOGICAL_BENACCOUNTNO = coalesce(outbound.BENACCOUNTNO, ''),
+                        outbound.IGNORE_LOGICAL = true
+                    ''', session_id=sp)
+            rules_completed.append("LOGICAL_LAYER")
+            print("  [Rule] LOGICAL_LAYER ✓", flush=True)
+        except Exception as e:
+            rules_failed.append(("LOGICAL_LAYER", str(e)[:100]))
+            print(f"  [Rule] LOGICAL_LAYER ✗ {str(e)[:100]}", flush=True)
+
         # ---- 1. SMURFING ----
         try:
             with driver.session() as s:
                 s.run(f"""
                 MATCH (t:{label})
                 WHERE ($session_id IS NULL OR t.session_id = $session_id)
-                WITH t.ACCOUNTNO AS acc, t.BENACCOUNTNO AS beneficiary,
+                  AND coalesce(t.IGNORE_LOGICAL, false) = false
+                WITH t.LOGICAL_ACCOUNTNO AS acc, t.LOGICAL_BENACCOUNTNO AS beneficiary,
                      t.TRANSACTIONDATE AS tx_day, t,
                      coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) AS amount
                 WHERE acc IS NOT NULL AND acc <> ''
@@ -617,15 +645,16 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 s.run(f"""
                 MATCH (t:{label})
                 WHERE ($session_id IS NULL OR t.session_id = $session_id)
-                  AND t.ACCOUNTNO IS NOT NULL AND t.ACCOUNTNO <> ''
-                WITH t.ACCOUNTNO AS acc, count(t) AS out_count
+                  AND coalesce(t.IGNORE_LOGICAL, false) = false
+                  AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> ''
+                WITH t.LOGICAL_ACCOUNTNO AS acc, count(t) AS out_count
                 WHERE out_count < 1000
 
                 MATCH (a:{label} {{ACCOUNTNO: acc}})
                 WHERE ($session_id IS NULL OR a.session_id = $session_id)
-                  AND a.BENACCOUNTNO IS NOT NULL AND a.BENACCOUNTNO <> ''
+                  AND a.LOGICAL_BENACCOUNTNO IS NOT NULL AND a.LOGICAL_BENACCOUNTNO <> ''
                 CALL (a) {{
-                  MATCH (b:{label} {{ACCOUNTNO: a.BENACCOUNTNO, BENACCOUNTNO: a.ACCOUNTNO}})
+                  MATCH (b:{label} {{ACCOUNTNO: a.LOGICAL_BENACCOUNTNO, BENACCOUNTNO: a.LOGICAL_ACCOUNTNO}})
                   WHERE ($session_id IS NULL OR b.session_id = $session_id)
                     AND elementId(a) < elementId(b)
                     AND coalesce(a.TRANSACTIONDATE, '') = coalesce(b.TRANSACTIONDATE, '')
@@ -650,8 +679,9 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 s.run(f"""
                 MATCH (t:{label})
                 WHERE ($session_id IS NULL OR t.session_id = $session_id)
-                  AND t.ACCOUNTNO IS NOT NULL AND t.ACCOUNTNO <> ''
-                WITH t.ACCOUNTNO AS acc, count(t) AS out_count
+                  AND coalesce(t.IGNORE_LOGICAL, false) = false
+                  AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> ''
+                WITH t.LOGICAL_ACCOUNTNO AS acc, count(t) AS out_count
                 WHERE out_count < 1000
 
                 MATCH (a:{label} {{BENACCOUNTNO: acc}})
@@ -691,6 +721,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 s.run(f"""
                 MATCH (t:{label})
                 WHERE ($session_id IS NULL OR t.session_id = $session_id)
+                  AND coalesce(t.IGNORE_LOGICAL, false) = false
                   AND {_trusted_node_clause('t')}
                   AND toLower(coalesce(t.ACCOUNTSTATE, '')) = 'dormant'
                   AND toLower(coalesce(t.BENACCOUNTSTATE, '')) = 'active'
@@ -711,10 +742,11 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 s.run(f"""
                 MATCH (t:{label})
                 WHERE ($session_id IS NULL OR t.session_id = $session_id)
-                WITH t.ACCOUNTNO AS acc, t,
+                  AND coalesce(t.IGNORE_LOGICAL, false) = false
+                WITH t.LOGICAL_ACCOUNTNO AS acc, t,
                      coalesce(toFloat(t.BALANCEHELD), toFloat(t.BALANCE), toFloat(t.balance)) AS balance
                 WHERE acc IS NOT NULL AND acc <> '' AND balance IS NOT NULL
-                WITH t.ACCOUNTNO AS acc, t
+                WITH t.LOGICAL_ACCOUNTNO AS acc, t
                 ORDER BY t.TRANSACTIONDATE, t.TRANSACTIONTIME
                 With acc, collect(t) AS txns
                 UNWIND range(1, size(txns)-1) AS i
@@ -750,9 +782,10 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 s.run(f"""
                 MATCH (t:{label})
                 WHERE ($session_id IS NULL OR t.session_id = $session_id)
+                  AND coalesce(t.IGNORE_LOGICAL, false) = false
                   AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> ''
-                  AND t.BENACCOUNTNO IS NOT NULL AND t.BENACCOUNTNO <> ''
-                WITH t.ACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day, collect(t) AS txns, count(DISTINCT t.BENACCOUNTNO) AS spoke_count
+                  AND t.LOGICAL_BENACCOUNTNO IS NOT NULL AND t.LOGICAL_BENACCOUNTNO <> ''
+                WITH t.LOGICAL_ACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day, collect(t) AS txns, count(DISTINCT t.LOGICAL_BENACCOUNTNO) AS spoke_count
                 WHERE hub IS NOT NULL AND hub <> '' AND spoke_count >= $hub_spoke_min_counterparties AND size(txns) < 1000
                 CALL (txns, hub, tx_day, spoke_count) {{
                   UNWIND range(0, size(txns)-2) AS i
@@ -778,9 +811,10 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 s.run(f"""
                 MATCH (t:{label})
                 WHERE ($session_id IS NULL OR t.session_id = $session_id)
+                  AND coalesce(t.IGNORE_LOGICAL, false) = false
                   AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> ''
-                  AND t.ACCOUNTNO IS NOT NULL AND t.ACCOUNTNO <> ''
-                WITH t.BENACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day, collect(t) AS txns, count(DISTINCT t.ACCOUNTNO) AS spoke_count
+                  AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> ''
+                WITH t.LOGICAL_BENACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day, collect(t) AS txns, count(DISTINCT t.LOGICAL_ACCOUNTNO) AS spoke_count
                 WHERE hub IS NOT NULL AND hub <> '' AND spoke_count >= $hub_spoke_min_counterparties AND size(txns) < 1000
                 CALL (txns, hub, tx_day, spoke_count) {{
                   UNWIND range(0, size(txns)-2) AS i
@@ -806,9 +840,10 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 s.run(f"""
                 MATCH (t:{label})
                 WHERE ($session_id IS NULL OR t.session_id = $session_id)
+                  AND coalesce(t.IGNORE_LOGICAL, false) = false
                 WITH t,
-                     [{{kind:'BUSINESSMOBILENO', value:t.BUSINESSMOBILENO, account:t.ACCOUNTNO}},
-                      {{kind:'BENTELNO', value:t.BENTELNO, account:t.BENACCOUNTNO}}] AS identifiers
+                     [{{kind:'BUSINESSMOBILENO', value:t.BUSINESSMOBILENO, account:t.LOGICAL_ACCOUNTNO}},
+                      {{kind:'BENTELNO', value:t.BENTELNO, account:t.LOGICAL_BENACCOUNTNO}}] AS identifiers
                 UNWIND identifiers AS identifier
                 WITH identifier.kind AS identifier_type,
                      trim(toString(identifier.value)) AS identifier_value,
@@ -840,6 +875,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 s.run(f"""
                 MATCH (t:{label})
                 WHERE ($session_id IS NULL OR t.session_id = $session_id)
+                  AND coalesce(t.IGNORE_LOGICAL, false) = false
                   AND t.TRANSACTIONTIME IS NOT NULL
                   AND toString(t.TRANSACTIONTIME) <> ''
                   AND {_trusted_node_clause('t')}
@@ -865,6 +901,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 s.run(f"""
                 MATCH (t:{label})
                 WHERE ($session_id IS NULL OR t.session_id = $session_id)
+                  AND coalesce(t.IGNORE_LOGICAL, false) = false
                   AND coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) > 0
                   AND {_trusted_node_clause('t')}
                 WITH t, coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) AS amt
@@ -888,8 +925,9 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 s.run(f"""
                 MATCH (t:{label})
                 WHERE ($session_id IS NULL OR t.session_id = $session_id)
-                  AND t.BENACCOUNTNO IS NOT NULL AND t.BENACCOUNTNO <> ''
-                WITH t.BENACCOUNTNO AS acc, count(t) AS out_count
+                  AND coalesce(t.IGNORE_LOGICAL, false) = false
+                  AND t.LOGICAL_BENACCOUNTNO IS NOT NULL AND t.LOGICAL_BENACCOUNTNO <> ''
+                WITH t.LOGICAL_BENACCOUNTNO AS acc, count(t) AS out_count
                 WHERE out_count < 1000
 
                 MATCH (a:{label} {{BENACCOUNTNO: acc}})
@@ -925,12 +963,13 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 s.run(f"""
                 MATCH (t:{label})
                 WHERE ($session_id IS NULL OR t.session_id = $session_id)
-                  AND coalesce(toString(t.ACCOUNTNO), '') <> ''
+                  AND coalesce(t.IGNORE_LOGICAL, false) = false
+                  AND coalesce(toString(t.LOGICAL_ACCOUNTNO), '') <> ''
                   AND coalesce(toString(t.TRANSACTIONDATE), '') <> ''
-                WITH t.ACCOUNTNO AS acc, t.TRANSACTIONDATE AS tx_day, count(t) AS daily_count, collect(t) AS day_txns
+                WITH t.LOGICAL_ACCOUNTNO AS acc, t.TRANSACTIONDATE AS tx_day, count(t) AS daily_count, collect(t) AS day_txns
                 WHERE daily_count >= $activity_spike_min_daily_count
                 MATCH (all_t:{label})
-                WHERE all_t.ACCOUNTNO = acc AND coalesce(toString(all_t.TRANSACTIONDATE), '') <> ''
+                WHERE all_t.LOGICAL_ACCOUNTNO = acc AND coalesce(toString(all_t.TRANSACTIONDATE), '') <> '' AND coalesce(all_t.IGNORE_LOGICAL, false) = false
                 WITH acc, tx_day, daily_count, day_txns, count(all_t) AS total_count, count(DISTINCT all_t.TRANSACTIONDATE) AS total_days
                 WITH acc, tx_day, daily_count, day_txns, (toFloat(total_count) / toFloat(CASE WHEN total_days = 0 THEN 1 ELSE total_days END)) AS avg_daily
                 WHERE daily_count >= (avg_daily * $activity_spike_multiplier)
@@ -958,6 +997,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 UNWIND $risk_entries AS entry
                 MATCH (t:{label})
                 WHERE ($session_id IS NULL OR t.session_id = $session_id)
+                  AND coalesce(t.IGNORE_LOGICAL, false) = false
                   AND {_trusted_node_clause('t')}
                   AND {_trusted_entry_match('t')}
                 WITH t, entry, toUpper(coalesce(entry.category, entry.CATEGORY, entry.type, entry.TYPE, 'RISK')) AS cat
