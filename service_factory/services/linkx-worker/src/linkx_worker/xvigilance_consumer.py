@@ -340,6 +340,7 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
                         "reason": graph_data["reason"],
                         "reported_to": "Risk Scoring Service",
                         "execution_meta": execution_meta or {},
+                        "run_id": execution_meta.get("batch_id") if execution_meta else None,
                         "fraud_score": score,
                         "score_band": band,
                         "top_5_accounts": top_5_accounts
