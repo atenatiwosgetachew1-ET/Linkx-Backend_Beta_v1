@@ -13,9 +13,10 @@ async def test_thresholds():
     
     print("\nTesting classified entities fetch from PostgreSQL...")
     entities = fetch_global_entities()
-    print(f"✅ Fetched {len(entities)} Classified Entities.")
+    print(f"✅ Fetched {len(entities)} Classified Entity categories.")
     if len(entities) > 0:
-        print(f"Sample: {entities[0]}")
+        sample_key = list(entities.keys())[0]
+        print(f"Sample [{sample_key}]: {len(entities[sample_key])} items")
     
     print("\nSimulating full graph analysis for testing thresholds (Dry Run)...")
     try:
