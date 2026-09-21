@@ -423,6 +423,34 @@ def fetch_global_entities():
         print(f"[xVigilance] Failed to fetch global entities: {e}")
     return {}
 
+
+def fetch_rule_thresholds():
+    defaults = {
+        "smurfing_single_tx_threshold": 300000,
+        "smurfing_min_tx_count": 3,
+        "smurfing_cumulative_threshold": 900000,
+        "reporting_threshold": 300000,
+        "circular_flow_check_amounts": False,
+        "late_night_start": 2300,
+        "late_night_end": 400,
+        "hub_spoke_min_counterparties": 3,
+        "activity_spike_multiplier": 3,
+        "activity_spike_min_daily_count": 10,
+        "rapid_withdrawal_amount_tolerance": 0.1
+    }
+    try:
+        with psycopg.connect(os.getenv('LINKX_POSTGRES_DSN')) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT config_data FROM global_rule_thresholds ORDER BY created_at DESC LIMIT 1")
+                row = cur.fetchone()
+                if row and row[0]:
+                    merged = dict(defaults)
+                    merged.update(row[0])
+                    return merged
+    except Exception as e:
+        print(f"[xVigilance] Failed to fetch rule thresholds, using defaults: {e}")
+    return defaults
+
 def format_cypher_entries(entities):
     if not entities or not isinstance(entities, list):
         return []
@@ -487,6 +515,10 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
     pass_through_accounts = _extract_pass_through_accounts(global_config)
     if pass_through_accounts:
         print(f"[xVigilance-Consumer] Pass-through accounts loaded: {len(pass_through_accounts)}", flush=True)
+
+    # Fetch rule thresholds
+    thresholds = fetch_rule_thresholds()
+    print(f"[xVigilance-Consumer] Rule thresholds loaded: {', '.join(f'{k}={v}' for k, v in thresholds.items())}", flush=True)
 
     try:
         # ---- 0. EFFECTIVE_FLOW: trace funds through pass-through intermediaries ----
@@ -554,11 +586,11 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 WHERE acc IS NOT NULL AND acc <> ''
                   AND beneficiary IS NOT NULL AND beneficiary <> ''
                   AND tx_day IS NOT NULL AND tx_day <> ''
-                  AND amount IS NOT NULL AND amount > 0 AND amount < 10000
+                  AND amount IS NOT NULL AND amount > 0 AND amount < $smurfing_single_tx_threshold
                 WITH acc, beneficiary, tx_day, t, amount
                 ORDER BY t.TRANSACTIONDATE, t.TRANSACTIONTIME
                 WITH acc, beneficiary, tx_day, collect(t) AS txns, sum(amount) AS total_amount, count(t) AS tx_count
-                WHERE tx_count >= 3 AND total_amount >= 30000
+                WHERE tx_count >= $smurfing_min_tx_count AND total_amount >= $smurfing_cumulative_threshold
                 UNWIND range(0, size(txns)-2) AS i
                 WITH txns[i] AS a, txns[i+1] AS b, acc, beneficiary, tx_day, tx_count, total_amount
                 WHERE {_trusted_pair_clause('a', 'b')}
@@ -567,9 +599,12 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                     r.reason = 'multiple small same-day transfers below threshold',
                     r.account = acc, r.beneficiary = beneficiary, r.tx_day = tx_day,
                     r.tx_count = tx_count, r.total_amount = total_amount,
-                    r.single_tx_threshold = 10000, r.total_threshold = 30000,
+                    r.single_tx_threshold = $smurfing_single_tx_threshold, r.total_threshold = $smurfing_cumulative_threshold,
                     r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
-                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
+                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries,
+                     smurfing_single_tx_threshold=thresholds.get("smurfing_single_tx_threshold"),
+                     smurfing_min_tx_count=thresholds.get("smurfing_min_tx_count"),
+                     smurfing_cumulative_threshold=thresholds.get("smurfing_cumulative_threshold"))
             rules_completed.append("SMURFING")
             print(f"  [Rule] SMURFING ✓", flush=True)
         except Exception as e:
@@ -718,7 +753,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                   AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> ''
                   AND t.BENACCOUNTNO IS NOT NULL AND t.BENACCOUNTNO <> ''
                 WITH t.ACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day, collect(t) AS txns, count(DISTINCT t.BENACCOUNTNO) AS spoke_count
-                WHERE hub IS NOT NULL AND hub <> '' AND spoke_count >= 3 AND size(txns) < 1000
+                WHERE hub IS NOT NULL AND hub <> '' AND spoke_count >= $hub_spoke_min_counterparties AND size(txns) < 1000
                 CALL (txns, hub, tx_day, spoke_count) {{
                   UNWIND range(0, size(txns)-2) AS i
                   WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
@@ -729,7 +764,8 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                       r.hub_account = hub, r.direction = 'outgoing', r.tx_day = tx_day, r.spoke_count = spoke_count,
                       r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
                 }} IN TRANSACTIONS OF 1000 ROWS
-                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
+                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries,
+                     hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties"))
             rules_completed.append("HUB_AND_SPOKE_OUT")
             print(f"  [Rule] HUB_AND_SPOKE (outgoing) ✓", flush=True)
         except Exception as e:
@@ -745,7 +781,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                   AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> ''
                   AND t.ACCOUNTNO IS NOT NULL AND t.ACCOUNTNO <> ''
                 WITH t.BENACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day, collect(t) AS txns, count(DISTINCT t.ACCOUNTNO) AS spoke_count
-                WHERE hub IS NOT NULL AND hub <> '' AND spoke_count >= 3 AND size(txns) < 1000
+                WHERE hub IS NOT NULL AND hub <> '' AND spoke_count >= $hub_spoke_min_counterparties AND size(txns) < 1000
                 CALL (txns, hub, tx_day, spoke_count) {{
                   UNWIND range(0, size(txns)-2) AS i
                   WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
@@ -756,7 +792,8 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                       r.hub_account = hub, r.direction = 'incoming', r.tx_day = tx_day, r.spoke_count = spoke_count,
                       r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
                 }} IN TRANSACTIONS OF 1000 ROWS
-                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
+                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries,
+                     hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties"))
             rules_completed.append("HUB_AND_SPOKE_IN")
             print(f"  [Rule] HUB_AND_SPOKE (incoming) ✓", flush=True)
         except Exception as e:
@@ -807,12 +844,14 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                   AND toString(t.TRANSACTIONTIME) <> ''
                   AND {_trusted_node_clause('t')}
                 WITH t, toInteger(substring(replace(toString(t.TRANSACTIONTIME), ':', ''), 0, 4)) AS t_time
-                WHERE t_time >= 2300 OR t_time <= 400
+                WHERE t_time >= $late_night_start OR t_time <= $late_night_end
                 MERGE (t)-[r:LATE_NIGHT_TX {{session_id:$session_id}}]->(t)
                 SET r.bgcolor = '#00c1a2', r.provisional = false,
                     r.reason = 'transaction occurred outside typical business hours',
                     r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
+                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries,
+                     late_night_start=thresholds.get("late_night_start"),
+                     late_night_end=thresholds.get("late_night_end"))
             rules_completed.append("LATE_NIGHT_TX")
             print(f"  [Rule] LATE_NIGHT_TX ✓", flush=True)
         except Exception as e:
@@ -821,7 +860,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
 
         # ---- 10. JUST_BELOW_THRESHOLD ----
         try:
-            single_tx_threshold = 10000
+            reporting_threshold = thresholds.get("reporting_threshold")
             with driver.session() as s:
                 s.run(f"""
                 MATCH (t:{label})
@@ -829,14 +868,14 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                   AND coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) > 0
                   AND {_trusted_node_clause('t')}
                 WITH t, coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) AS amt
-                WHERE amt >= ($single_tx_threshold * 0.9) AND amt < $single_tx_threshold
+                WHERE amt >= ($reporting_threshold * 0.9) AND amt < $reporting_threshold
                 MERGE (t)-[r:JUST_BELOW_THRESHOLD {{session_id:$session_id}}]->(t)
                 SET r.bgcolor = '#dba124', r.provisional = false,
                     r.reason = 'transaction amount is suspiciously close to reporting threshold',
-                    r.amount = amt, r.threshold = $single_tx_threshold,
+                    r.amount = amt, r.threshold = $reporting_threshold,
                     r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
                 """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries,
-                     single_tx_threshold=single_tx_threshold)
+                     reporting_threshold=thresholds.get("reporting_threshold"))
             rules_completed.append("JUST_BELOW_THRESHOLD")
             print(f"  [Rule] JUST_BELOW_THRESHOLD ✓", flush=True)
         except Exception as e:
@@ -865,14 +904,15 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                   WITH a, b,
                        coalesce(toFloat(a.AMOUNTINBIRR), toFloat(a.AMOUNT), toFloat(a.amount), toFloat(a.LOCAL_AMOUNT), 0.0) AS in_amt,
                        coalesce(toFloat(b.AMOUNTINBIRR), toFloat(b.AMOUNT), toFloat(b.amount), toFloat(b.LOCAL_AMOUNT), 0.0) AS out_amt
-                  WHERE in_amt > 0 AND out_amt >= (in_amt * 0.9) AND out_amt <= (in_amt * 1.1)
+                  WHERE in_amt > 0 AND out_amt >= (in_amt * (1 - $rapid_withdrawal_amount_tolerance)) AND out_amt <= (in_amt * (1 + $rapid_withdrawal_amount_tolerance))
                   MERGE (a)-[r:RAPID_WITHDRAWAL {{session_id:$session_id}}]->(b)
                   SET r.bgcolor = '#d5d276', r.provisional = false,
                       r.reason = 'funds rapidly withdrawn or passed through on same day',
                       r.in_amount = in_amt, r.out_amount = out_amt,
                       r.edge_semantic = 'OBSERVED_FLOW', r.financial_flow = true, r.directed_display = true
                 }} IN TRANSACTIONS OF 1000 ROWS
-                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
+                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries,
+                     rapid_withdrawal_amount_tolerance=thresholds.get("rapid_withdrawal_amount_tolerance"))
             rules_completed.append("RAPID_WITHDRAWAL")
             print(f"  [Rule] RAPID_WITHDRAWAL ✓", flush=True)
         except Exception as e:
@@ -888,12 +928,12 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                   AND coalesce(toString(t.ACCOUNTNO), '') <> ''
                   AND coalesce(toString(t.TRANSACTIONDATE), '') <> ''
                 WITH t.ACCOUNTNO AS acc, t.TRANSACTIONDATE AS tx_day, count(t) AS daily_count, collect(t) AS day_txns
-                WHERE daily_count >= 10
+                WHERE daily_count >= $activity_spike_min_daily_count
                 MATCH (all_t:{label})
                 WHERE all_t.ACCOUNTNO = acc AND coalesce(toString(all_t.TRANSACTIONDATE), '') <> ''
                 WITH acc, tx_day, daily_count, day_txns, count(all_t) AS total_count, count(DISTINCT all_t.TRANSACTIONDATE) AS total_days
                 WITH acc, tx_day, daily_count, day_txns, (toFloat(total_count) / toFloat(CASE WHEN total_days = 0 THEN 1 ELSE total_days END)) AS avg_daily
-                WHERE daily_count >= (avg_daily * 3)
+                WHERE daily_count >= (avg_daily * $activity_spike_multiplier)
                 UNWIND day_txns AS t
                 WITH t, acc, tx_day, daily_count, avg_daily
                 WHERE {_trusted_node_clause('t')}
@@ -902,7 +942,9 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                     r.reason = 'unusually high transaction volume for this account on this day',
                     r.daily_count = daily_count, r.avg_daily = avg_daily,
                     r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
+                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries,
+                     activity_spike_min_daily_count=thresholds.get("activity_spike_min_daily_count"),
+                     activity_spike_multiplier=thresholds.get("activity_spike_multiplier"))
             rules_completed.append("ACCOUNT_ACTIVITY_SPIKE")
             print(f"  [Rule] ACCOUNT_ACTIVITY_SPIKE ✓", flush=True)
         except Exception as e:
