@@ -8,8 +8,8 @@ with open('/opt/linkx-worker/.env', 'r') as f:
 
 conn=psycopg.connect(dsn)
 cur=conn.cursor()
-cur.execute("UPDATE xvigilance_checkpoints SET last_window_end = '2026-09-24 00:00:00+00' WHERE feed_name = 'hourly_transaction_detective';")
+cur.execute("UPDATE xvigilance_checkpoints SET last_window_end = '2026-08-24 00:00:00+00' WHERE feed_name = 'hourly_transaction_detective';")
 conn.commit()
 cur.close()
 conn.close()
-print('Clock successfully rewound to 2026-09-24 00:00:00 UTC!')
+print('Clock successfully rewound to 2026-08-24 00:00:00 UTC!')
