@@ -26,6 +26,12 @@ This document outlines the REST API endpoints used to pause the xVigilance daemo
 ```
 *Frontend Note:* You can use the `error_message` from failed runs in the `recent_runs` array to build a "View Diagnostics" modal for troubleshooting.
 
+**Status Types for UI Styling:**
+- `'running'`: The daemon is currently actively processing this window (Show as pulsing blue/green).
+- `'succeeded'`: Successfully completed (Show as green).
+- `'failed'`: Crashed during execution (Show as red with a "View Error" button).
+- `'aborted'`: The daemon was restarted or killed mid-execution (Show as grey/orange).
+
 ## 2. Pause / Resume Engine
 - **Endpoint:** `POST /api/v1/reports/xvigilance/state`
 - **Auth:** Requires Bearer Token + `users:manage` permission.
