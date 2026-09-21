@@ -10,6 +10,7 @@ from linkx_xvigilance.checkpoints import (
     finish_slice_run,
     get_or_init_checkpoint,
     log_slice_start,
+    clean_zombie_runs,
 )
 from linkx_xvigilance.config import get_xvigilance_config
 from linkx_xvigilance.fetcher import stream_window_records
@@ -82,6 +83,7 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
     # 1. Initialize PostgreSQL schema
     try:
         ensure_xvigilance_schema()
+        clean_zombie_runs()
     except Exception as exc:
         print(f"[xvigilance] Warning: Database schema init failed (will retry): {exc}", flush=True)
 

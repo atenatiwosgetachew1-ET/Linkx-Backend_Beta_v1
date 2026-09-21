@@ -52,6 +52,25 @@ def get_or_init_checkpoint(feed_name: str = "hourly_transaction_detective", defa
             }
 
 
+def clean_zombie_runs():
+    """Marks any 'running' slice as 'aborted' (used on daemon startup)."""
+    try:
+        with connect(application_name="xvigilance-zombie-cleanup") as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE xvigilance_slice_runs
+                    SET status = 'aborted',
+                        error_message = 'Daemon restarted while running',
+                        finished_at = NOW()
+                    WHERE status = 'running'
+                    """
+                )
+            conn.commit()
+    except Exception as e:
+        print(f"[xvigilance] Failed to clean zombie runs: {e}", flush=True)
+
+
 def log_slice_start(feed_name: str, window_start: datetime, window_end: datetime) -> int:
     with connect(application_name="xvigilance-slice-log") as conn:
         with conn.cursor() as cur:
