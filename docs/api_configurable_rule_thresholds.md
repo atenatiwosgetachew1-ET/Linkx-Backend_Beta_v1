@@ -1,4 +1,4 @@
-# Frontend Handoff: Configurable Rule Thresholds & Platform Stability
+# Backend API: Configurable Rule Thresholds
 
 This document outlines the backend capabilities that have been deployed to the LinkX production environment and provides a prompt to hand off to the frontend development team to build the corresponding UI.
 
