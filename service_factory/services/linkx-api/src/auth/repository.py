@@ -154,6 +154,7 @@ DEFAULT_SERVICE_PERMISSIONS = {
 }
 
 
+import threading
 _AUTH_SCHEMA_READY = False
 _AUTH_SCHEMA_LOCK = threading.Lock()
 _ADVISORY_LOCK_ID = 73616665  # arbitrary fixed ID for schema migration lock
