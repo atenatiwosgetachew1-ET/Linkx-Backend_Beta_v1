@@ -812,6 +812,142 @@ def admin_cleanup_session():
     }), 202
 
 
+# ── Rule Thresholds (Admin-Only) ─────────────────────────────────────
+
+_RULE_THRESHOLD_GUARDRAILS = {
+    "smurfing_single_tx_threshold":    {"type": (int, float), "min": 1000,  "max": 10000000},
+    "smurfing_min_tx_count":           {"type": (int,),       "min": 2,     "max": 100},
+    "smurfing_cumulative_threshold":   {"type": (int, float), "min": 5000,  "max": 50000000},
+    "reporting_threshold":             {"type": (int, float), "min": 1000,  "max": 10000000},
+    "circular_flow_check_amounts":     {"type": (bool,),      "min": None,  "max": None},
+    "late_night_start":                {"type": (int,),       "min": 1800,  "max": 2359},
+    "late_night_end":                  {"type": (int,),       "min": 0,     "max": 800},
+    "hub_spoke_min_counterparties":    {"type": (int,),       "min": 2,     "max": 50},
+    "activity_spike_multiplier":       {"type": (int, float), "min": 1.5,   "max": 20},
+    "activity_spike_min_daily_count":  {"type": (int,),       "min": 3,     "max": 1000},
+    "rapid_withdrawal_amount_tolerance": {"type": (float, int), "min": 0.01, "max": 0.5},
+}
+
+
+@app.route('/rule-thresholds', methods=['GET'])
+@auth_required
+def get_rule_thresholds():
+    denied = _require_permission("config:read")
+    if denied:
+        return denied
+    try:
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT config_data, updated_by, created_at FROM global_rule_thresholds ORDER BY created_at DESC LIMIT 1")
+                row = cur.fetchone()
+                if row:
+                    return jsonify({
+                        "message": "success",
+                        "results": {
+                            "config": row[0],
+                            "updated_by": row[1],
+                            "updated_at": row[2].isoformat() if row[2] else None,
+                        }
+                    }), 200
+                return jsonify({"message": "success", "results": {"config": {}, "updated_by": None, "updated_at": None}}), 200
+    except Exception as e:
+        current_app.logger.warning("Failed to fetch rule thresholds: %s", e)
+        return jsonify({"message": "failed", "error": "rule_thresholds_fetch_failed"}), 500
+
+
+@app.route('/rule-thresholds', methods=['POST'])
+@auth_required
+def save_rule_thresholds():
+    denied = _require_permission("users:manage")
+    if denied:
+        return denied
+
+    data = request.get_json(silent=True)
+    if not data or not isinstance(data, dict):
+        return jsonify({"message": "validation_error", "detail": "json_object_required"}), 400
+
+    # Validate each key against guardrails
+    errors = []
+    for key, value in data.items():
+        if key not in _RULE_THRESHOLD_GUARDRAILS:
+            errors.append(f"Unknown threshold key: '{key}'")
+            continue
+        guard = _RULE_THRESHOLD_GUARDRAILS[key]
+        if not isinstance(value, guard["type"]):
+            errors.append(f"'{key}' must be {'/'.join(t.__name__ for t in guard['type'])}, got {type(value).__name__}")
+            continue
+        if guard["min"] is not None and value < guard["min"]:
+            errors.append(f"'{key}' must be >= {guard['min']}, got {value}")
+        if guard["max"] is not None and value > guard["max"]:
+            errors.append(f"'{key}' must be <= {guard['max']}, got {value}")
+
+    if errors:
+        return jsonify({"message": "validation_error", "detail": errors}), 400
+
+    try:
+        # Merge with existing config so partial updates work
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT config_data FROM global_rule_thresholds ORDER BY created_at DESC LIMIT 1")
+                row = cur.fetchone()
+                existing = row[0] if row and row[0] else {}
+
+                merged = {**existing, **data}
+
+                actor = current_actor_from_request()
+                updated_by = actor.get("username") or actor.get("id") or "unknown" if actor else "unknown"
+
+                cur.execute(
+                    "INSERT INTO global_rule_thresholds (config_data, updated_by) VALUES (%s, %s)",
+                    [json.dumps(merged), str(updated_by)]
+                )
+            conn.commit()
+
+        _record_security_event_safe(
+            "admin.rule_thresholds.update",
+            actor=actor,
+            target_type="rule_thresholds",
+            target_id="global",
+            success=True,
+            metadata={"changed_keys": list(data.keys())},
+        )
+
+        return jsonify({"message": "success", "results": {"config": merged, "updated_by": updated_by}}), 200
+    except Exception as e:
+        current_app.logger.warning("Failed to save rule thresholds: %s", e)
+        return jsonify({"message": "failed", "error": "rule_thresholds_save_failed"}), 500
+
+
+@app.route('/rule-thresholds/history', methods=['GET'])
+@auth_required
+def get_rule_thresholds_history():
+    denied = _require_permission("users:manage")
+    if denied:
+        return denied
+    try:
+        limit = min(int(request.args.get("limit", 50)), 200)
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT version_id, config_data, updated_by, created_at FROM global_rule_thresholds ORDER BY created_at DESC LIMIT %s",
+                    [limit]
+                )
+                rows = cur.fetchall()
+                history = [
+                    {
+                        "version_id": r[0],
+                        "config": r[1],
+                        "updated_by": r[2],
+                        "created_at": r[3].isoformat() if r[3] else None,
+                    }
+                    for r in rows
+                ]
+        return jsonify({"message": "success", "results": history}), 200
+    except Exception as e:
+        current_app.logger.warning("Failed to fetch rule thresholds history: %s", e)
+        return jsonify({"message": "failed", "error": "rule_thresholds_history_failed"}), 500
+
+
 @app.route('/db/health', methods=['GET'])
 def db_health():
     try:
