@@ -12,7 +12,7 @@ def get_or_init_checkpoint(feed_name: str = "hourly_transaction_detective", defa
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT feed_name, last_window_end, total_records_analyzed, total_slices_completed, status
+                SELECT feed_name, last_window_end, total_records_analyzed, total_slices_completed, status, is_paused
                 FROM xvigilance_checkpoints
                 WHERE feed_name = %s
                 """,
@@ -26,6 +26,7 @@ def get_or_init_checkpoint(feed_name: str = "hourly_transaction_detective", defa
                     "total_records_analyzed": row[2],
                     "total_slices_completed": row[3],
                     "status": row[4],
+                    "is_paused": row[5] if len(row) > 5 else False,
                 }
 
             # Initialize to top of the hour (e.g. 1 hour ago)

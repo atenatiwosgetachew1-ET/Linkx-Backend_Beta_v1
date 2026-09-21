@@ -137,6 +137,31 @@ def xvigilance_rewind():
         _audit("xvigilance.rewind", success=False, metadata={"error": str(e)})
         return jsonify({"error": str(e)}), 500
 
+@reports_api.route('/xvigilance/state', methods=['POST'])
+@permission_required("users:manage")
+def xvigilance_state():
+    """Pauses or resumes the xVigilance engine."""
+    payload = request.get_json() or {}
+    if "is_paused" not in payload:
+        return jsonify({"error": "Missing is_paused boolean"}), 400
+
+    is_paused = bool(payload["is_paused"])
+    from batch_manager.utils.postgres_utils import get_postgres_connection
+    try:
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE xvigilance_checkpoints SET is_paused = %s WHERE feed_name = 'hourly_transaction_detective'",
+                    (is_paused,)
+                )
+            conn.commit()
+            
+        _audit("xvigilance.state", success=True, metadata={"is_paused": is_paused})
+        return jsonify({"message": "State updated", "is_paused": is_paused}), 200
+    except Exception as e:
+        _audit("xvigilance.state", success=False, metadata={"error": str(e)})
+        return jsonify({"error": str(e)}), 500
+
 @reports_api.route('/xvigilance/health', methods=['GET'])
 def xvigilance_health():
     """Returns the real-time heartbeat and audit logs of the xVigilance daemon."""
@@ -145,7 +170,7 @@ def xvigilance_health():
         from batch_manager.utils.postgres_utils import get_postgres_connection
         with get_postgres_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT feed_name, last_window_end, total_records_analyzed, status, total_graph_analyzed FROM xvigilance_checkpoints LIMIT 1")
+                cur.execute("SELECT feed_name, last_window_end, total_records_analyzed, status, total_graph_analyzed, is_paused FROM xvigilance_checkpoints LIMIT 1")
                 cp = cur.fetchone()
                 checkpoint = {}
                 if cp:
@@ -154,7 +179,8 @@ def xvigilance_health():
                         "last_window_end": cp[1],
                         "total_records_analyzed": cp[2],
                         "status": cp[3],
-                        "total_graph_analyzed": cp[4] if len(cp) > 4 else cp[2]
+                        "total_graph_analyzed": cp[4] if len(cp) > 4 else cp[2],
+                        "is_paused": cp[5] if len(cp) > 5 else False
                     }
                 
                 cur.execute("""

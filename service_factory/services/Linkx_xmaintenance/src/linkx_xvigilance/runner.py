@@ -94,6 +94,12 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
 
             # 2. Get current high-water mark checkpoint
             checkpoint = get_or_init_checkpoint(feed_name=feed_name, default_lookback_hours=1)
+            
+            if checkpoint.get("is_paused"):
+                print("[xvigilance] ⏸️ Daemon is paused by Admin. Sleeping...", flush=True)
+                time.sleep(30)
+                continue
+
             window_start = checkpoint["last_window_end"]
             window_end = window_start + timedelta(hours=1)
 
