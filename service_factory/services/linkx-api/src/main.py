@@ -1,6 +1,5 @@
-import eventlet
-import eventlet.wsgi
-eventlet.monkey_patch()
+
+
 
 from flask import Flask, request, jsonify, session, render_template, current_app, g
 from flask_socketio import SocketIO, emit
@@ -99,7 +98,7 @@ if not app.secret_key or app.secret_key == "dev-only-change-me":
     app.secret_key = "dev-only-change-me"
 app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("LINKX_MAX_UPLOAD_BYTES", "104857600"))
 app.config["LINKX_MAX_JSON_BYTES"] = int(os.getenv("LINKX_MAX_JSON_BYTES", "2097152"))
-socketio = SocketIO(app, cors_allowed_origins=cors_origins, async_mode="eventlet") #Socket listners are found inside 'logger.py' page
+socketio = SocketIO(app, cors_allowed_origins=cors_origins, async_mode="threading")
 # Register socket
 register_socket_handlers(socketio)
 # Register auth API blueprint
@@ -2278,6 +2277,6 @@ def get_graph():
 
 
 if __name__ == "__main__":
-    #socketio.run(app, host="0.0.0.0", port=8000, debug=True)
     port = int(os.getenv("PORT", "8100"))
-    eventlet.wsgi.server(eventlet.listen(('0.0.0.0', port)), app, log_output=False)
+    socketio.run(app, host="0.0.0.0", port=port, debug=False, allow_unsafe_werkzeug=True)
+

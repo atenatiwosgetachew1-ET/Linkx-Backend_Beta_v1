@@ -322,7 +322,7 @@ def register_socket_handlers(socketio: SocketIO):
                 task = g_entry.get("task")
                 stop_event = g_entry.get("stop_event")
 
-                # cooperative stop (eventlet style)
+                # cooperative stop
                 if stop_event:
                     stop_event.set()
 

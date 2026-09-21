@@ -153,9 +153,10 @@ DEFAULT_SERVICE_PERMISSIONS = {
     ],
 }
 
-import threading
+
 _AUTH_SCHEMA_READY = False
 _AUTH_SCHEMA_LOCK = threading.Lock()
+_ADVISORY_LOCK_ID = 73616665  # arbitrary fixed ID for schema migration lock
 
 
 def ensure_auth_schema():
@@ -169,8 +170,10 @@ def ensure_auth_schema():
 
         with get_postgres_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("SET LOCAL lock_timeout = '2s'")
-                cur.execute("SET LOCAL statement_timeout = '15s'")
+                # Cross-process lock: prevents multiple Gunicorn workers
+                # from running DDL simultaneously on startup
+                cur.execute("SELECT pg_advisory_lock(%s)", [_ADVISORY_LOCK_ID])
+                cur.execute("SET LOCAL statement_timeout = '30s'")
                 cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     id BIGSERIAL PRIMARY KEY,
@@ -288,6 +291,7 @@ def ensure_auth_schema():
                 _bootstrap_superuser(cur)
                 _bootstrap_admin(cur)
                 _bootstrap_service_accounts(cur)
+                cur.execute("SELECT pg_advisory_unlock(%s)", [_ADVISORY_LOCK_ID])
             conn.commit()
         _AUTH_SCHEMA_READY = True
 
