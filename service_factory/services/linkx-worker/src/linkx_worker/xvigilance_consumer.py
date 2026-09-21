@@ -413,8 +413,7 @@ def fast_ingest_batch(credentials, session_id, df, batch_number, node_label):
 
 def fetch_global_entities():
     try:
-        from batch_manager.utils.postgres_utils import get_postgres_connection
-        with get_postgres_connection() as conn:
+        with psycopg.connect(os.getenv('LINKX_POSTGRES_DSN')) as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT config_data FROM global_entity_classification ORDER BY created_at DESC LIMIT 1")
                 row = cur.fetchone()
