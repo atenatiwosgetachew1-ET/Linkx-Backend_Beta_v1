@@ -5,6 +5,7 @@ import asyncio
 # Setup path for linkx-worker
 sys.path.append("/opt/linkx-worker/src")
 from linkx_worker.xvigilance_consumer import fetch_rule_thresholds, fetch_global_entities, run_full_graph_analysis
+from batch_manager.services.risk_scoring_kafka_service import _neo4j_credentials
 
 def test_thresholds():
     print("Testing config fetch from PostgreSQL...")
@@ -20,13 +21,10 @@ def test_thresholds():
     
     print("\nSimulating full graph analysis for testing thresholds (Dry Run)...")
     try:
-        credentials = {
-            "uri": os.getenv("NEO4J_URI", "bolt://172.27.23.20:7687"),
-            "user": os.getenv("NEO4J_USER", "neo4j"),
-            "password": os.getenv("NEO4J_PASSWORD", "linkxds-neo4j-2026")
-        }
-        # We pass a fake session_id and node_label so it safely runs against an empty partition
-        run_full_graph_analysis(credentials, "TEST_SESSION_123", "TestPartition")
+        session_id = "158144"
+        credentials = _neo4j_credentials(session_id)
+        # We pass a fake node_label so it safely runs against an empty partition
+        run_full_graph_analysis(credentials, session_id, "TestPartition")
         print("✅ Graph analysis executed successfully with the dynamic thresholds!")
     except Exception as e:
         print(f"❌ Error during graph analysis: {e}")
