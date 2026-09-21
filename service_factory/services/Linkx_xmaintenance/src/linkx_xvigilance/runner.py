@@ -93,7 +93,8 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
                 kafka_producer, kafka_available = _connect_kafka(max_retries=3)
 
             # 2. Get current high-water mark checkpoint
-            checkpoint = get_or_init_checkpoint(feed_name=feed_name, default_lookback_hours=1)
+            checkpoint = get_or_init_checkpoint(feed_name=feed_name,
+                    window_start=window_start, default_lookback_hours=1)
             window_start = checkpoint["last_window_end"]
             window_end = window_start + timedelta(hours=1)
 
@@ -123,7 +124,8 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
                     time.sleep(1)
                 
                 # Check if the database checkpoint was manually rewound while sleeping
-                current_db_checkpoint = get_or_init_checkpoint(feed_name=feed_name, default_lookback_hours=1)
+                current_db_checkpoint = get_or_init_checkpoint(feed_name=feed_name,
+                    window_start=window_start, default_lookback_hours=1)
                 if current_db_checkpoint["last_window_end"] < window_start:
                     print(f"[xvigilance] ⚠️ Clock rewind detected in database! Resetting internal clock to {current_db_checkpoint['last_window_end']}", flush=True)
                 
@@ -207,6 +209,7 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
                 finish_slice_run(
                     run_id=run_id,
                     feed_name=feed_name,
+                    window_start=window_start,
                     window_end=window_end,
                     success=True,
                     records_count=total_records,
@@ -253,6 +256,7 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
                 finish_slice_run(
                     run_id=run_id,
                     feed_name=feed_name,
+                    window_start=window_start,
                     window_end=window_end,
                     success=False,
                     duration_ms=duration_ms,

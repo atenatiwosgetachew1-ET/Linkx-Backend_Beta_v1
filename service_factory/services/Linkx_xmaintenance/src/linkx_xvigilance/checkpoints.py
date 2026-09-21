@@ -70,6 +70,7 @@ def log_slice_start(feed_name: str, window_start: datetime, window_end: datetime
 def finish_slice_run(
     run_id: int,
     feed_name: str,
+    window_start: datetime,
     window_end: datetime,
     success: bool,
     records_count: int = 0,
@@ -99,7 +100,7 @@ def finish_slice_run(
                 (status_str, records_count, duration_ms, overrun_occurred, summary_json, error_message, run_id),
             )
 
-            # 2. Advance high-water mark if successful
+            # 2. Advance high-water mark if successful, ONLY if it hasn't been rewound manually!
             if success:
                 cur.execute(
                     """
@@ -108,9 +109,9 @@ def finish_slice_run(
                         total_records_analyzed = total_records_analyzed + %s,
                         total_slices_completed = total_slices_completed + 1,
                         updated_at = NOW()
-                    WHERE feed_name = %s
+                    WHERE feed_name = %s AND last_window_end = %s
                     """,
-                    (window_end, records_count, feed_name),
+                    (window_end, records_count, feed_name, window_start),
                 )
 
         conn.commit()
