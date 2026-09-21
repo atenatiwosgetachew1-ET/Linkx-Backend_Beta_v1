@@ -2,7 +2,7 @@ import psycopg, os, json
 from datetime import datetime, timezone
 
 dsn = None
-with open('/opt/linkx-worker/.env', 'r') as f:
+with open('/opt/linkx-backend-api/.env', 'r') as f:
     for line in f:
         if line.startswith('LINKX_POSTGRES_DSN='):
             dsn = line.strip().split('=', 1)[1].strip(' "\'')
