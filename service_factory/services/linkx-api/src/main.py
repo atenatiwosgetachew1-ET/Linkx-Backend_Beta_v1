@@ -946,7 +946,53 @@ def get_rule_thresholds_history():
         current_app.logger.warning("Failed to fetch rule thresholds history: %s", e)
         return jsonify({"message": "failed", "error": "rule_thresholds_history_failed"}), 500
 
+@app.route('/config/score-lineage', methods=['GET'])
+@permission_required("config:read")
+def get_score_lineage():
+    try:
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT config_data FROM global_score_lineage ORDER BY created_at DESC LIMIT 1"
+                )
+                row = cur.fetchone()
+                if not row:
+                    return jsonify({"error": "not_found"}), 404
+        return jsonify(row[0]), 200
+    except Exception as e:
+        current_app.logger.error(f"Failed to fetch score lineage: {e}")
+        return jsonify({"error": "fetch_failed"}), 500
 
+@app.route('/config/score-lineage', methods=['POST'])
+@permission_required("users:manage")
+def update_score_lineage():
+    payload = request.get_json()
+    if not payload:
+        return jsonify({"error": "invalid_payload"}), 400
+
+    # Basic structural validation
+    required_keys = ["base_scores", "node_thresholds", "money_thresholds"]
+    for key in required_keys:
+        if key not in payload:
+            return jsonify({"error": f"Missing required key: {key}"}), 400
+
+    actor = current_actor_from_request()
+    
+    try:
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO global_score_lineage (config_data, updated_by) VALUES (%s, %s) RETURNING version_id",
+                    (json.dumps(payload), actor)
+                )
+                version_id = cur.fetchone()[0]
+            conn.commit()
+            
+        record_security_event("config.score_lineage.update", actor=actor, success=True, metadata={"version_id": version_id})
+        return jsonify({"message": "success", "version_id": version_id}), 200
+    except Exception as e:
+        record_security_event("config.score_lineage.update", actor=actor, success=False, metadata={"error": str(e)})
+        return jsonify({"error": "update_failed"}), 500
 @app.route('/db/health', methods=['GET'])
 def db_health():
     try:
