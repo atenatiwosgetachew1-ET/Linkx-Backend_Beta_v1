@@ -19,7 +19,7 @@ def _safe_index_name(*parts):
 
 
 def _trusted_entry_match(alias):
-    return f"all(k IN keys(entry) WHERE toLower(k) IN ['category', 'type', 'reason'] OR toString(coalesce({alias}[k], \"\")) = toString(entry[k]))"
+    return f"all(k IN keys(entry) WHERE toLower(k) IN ['category', 'type', 'reason', 'pass_through', 'passthrough', 'classification', 'notes'] OR toString(coalesce({alias}[k], \"\")) = toString(entry[k]))"
 
 
 def _trusted_node_clause(alias):
