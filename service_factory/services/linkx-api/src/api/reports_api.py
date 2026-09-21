@@ -105,6 +105,38 @@ def bind_workspace(report_id):
         _audit("reports.bind_workspace", target_id=str(report_id), success=False, metadata={"error": str(e)})
         return jsonify({"error": str(e)}), 500
 
+@reports_api.route('/xvigilance/rewind', methods=['POST'])
+@permission_required("users:manage")
+def xvigilance_rewind():
+    """Rewinds the xVigilance engine clock by updating checkpoints and clearing future runs."""
+    payload = request.get_json() or {}
+    target_date = payload.get("target_date")
+    if not target_date:
+        return jsonify({"error": "Missing target_date"}), 400
+
+    from batch_manager.utils.postgres_utils import get_postgres_connection
+    try:
+        with get_postgres_connection() as conn:
+            with conn.cursor() as cur:
+                # Rewind checkpoint
+                cur.execute(
+                    "UPDATE xvigilance_checkpoints SET last_window_end = %s WHERE feed_name = 'hourly_transaction_detective'",
+                    (target_date,)
+                )
+                
+                # Delete future runs from the audit log
+                cur.execute(
+                    "DELETE FROM xvigilance_slice_runs WHERE window_end > %s",
+                    (target_date,)
+                )
+            conn.commit()
+            
+        _audit("xvigilance.rewind", success=True, metadata={"target_date": target_date})
+        return jsonify({"message": "Clock successfully rewound.", "target_date": target_date}), 200
+    except Exception as e:
+        _audit("xvigilance.rewind", success=False, metadata={"error": str(e)})
+        return jsonify({"error": str(e)}), 500
+
 @reports_api.route('/xvigilance/health', methods=['GET'])
 def xvigilance_health():
     """Returns the real-time heartbeat and audit logs of the xVigilance daemon."""

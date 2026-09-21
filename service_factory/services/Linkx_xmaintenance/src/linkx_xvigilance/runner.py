@@ -115,10 +115,18 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
                     print("[xvigilance] Run-once mode: target window in future, stopping.", flush=True)
                     break
 
-                # Sleep in short increments to remain responsive to signals
-                sleep_target = time.time() + remaining_seconds
+                # Sleep in short increments and periodically check if the DB checkpoint was rewound
+                sleep_seconds = min(remaining_seconds, 60)
+                sleep_target = time.time() + sleep_seconds
+                
                 while RUNNING and time.time() < sleep_target:
-                    time.sleep(min(5.0, sleep_target - time.time()))
+                    time.sleep(1)
+                
+                # Check if the database checkpoint was manually rewound while sleeping
+                current_db_checkpoint = get_or_init_checkpoint(feed_name=feed_name, default_lookback_hours=1)
+                if current_db_checkpoint["last_window_end"] < window_start:
+                    print(f"[xvigilance] ⚠️ Clock rewind detected in database! Resetting internal clock to {current_db_checkpoint['last_window_end']}", flush=True)
+                
                 continue
 
             # 4. ACTIVE EXECUTION PHASE: Target window has elapsed
