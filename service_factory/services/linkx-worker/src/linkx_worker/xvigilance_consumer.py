@@ -696,12 +696,12 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                   AND coalesce(t.IGNORE_LOGICAL, false) = false
                   AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> ''
                 WITH t.LOGICAL_ACCOUNTNO AS acc, count(t) AS out_count
-                WHERE out_count < 1000
+                WHERE out_count < 1000 AND NOT acc IN $pt
 
-                MATCH (a:{label} {{BENACCOUNTNO: acc}})
+                MATCH (a:{label} {{LOGICAL_BENACCOUNTNO: acc}})
                 WHERE ($session_id IS NULL OR a.session_id = $session_id)
                 CALL (a, acc) {{
-                  MATCH (b:{label} {{ACCOUNTNO: acc}})
+                  MATCH (b:{label} {{LOGICAL_ACCOUNTNO: acc}})
                   WHERE ($session_id IS NULL OR b.session_id = $session_id)
                     AND elementId(a) <> elementId(b)
                     AND (
@@ -942,12 +942,12 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                   AND coalesce(t.IGNORE_LOGICAL, false) = false
                   AND t.LOGICAL_BENACCOUNTNO IS NOT NULL AND t.LOGICAL_BENACCOUNTNO <> ''
                 WITH t.LOGICAL_BENACCOUNTNO AS acc, count(t) AS out_count
-                WHERE out_count < 1000
+                WHERE out_count < 1000 AND NOT acc IN $pt
 
-                MATCH (a:{label} {{BENACCOUNTNO: acc}})
+                MATCH (a:{label} {{LOGICAL_BENACCOUNTNO: acc}})
                 WHERE ($session_id IS NULL OR a.session_id = $session_id)
                 CALL (a, acc) {{
-                  MATCH (b:{label} {{ACCOUNTNO: acc}})
+                  MATCH (b:{label} {{LOGICAL_ACCOUNTNO: acc}})
                   WHERE ($session_id IS NULL OR b.session_id = $session_id)
                     AND elementId(a) <> elementId(b)
                     AND coalesce(toString(a.TRANSACTIONDATE), '') = coalesce(toString(b.TRANSACTIONDATE), '')
@@ -964,7 +964,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                       r.edge_semantic = 'OBSERVED_FLOW', r.financial_flow = true, r.directed_display = true
                 }} IN TRANSACTIONS OF 1000 ROWS
                 """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries,
-                     rapid_withdrawal_amount_tolerance=thresholds.get("rapid_withdrawal_amount_tolerance"))
+                     rapid_withdrawal_amount_tolerance=thresholds.get("rapid_withdrawal_amount_tolerance"), pt=pass_through_accounts)
             rules_completed.append("RAPID_WITHDRAWAL")
             print(f"  [Rule] RAPID_WITHDRAWAL ✓", flush=True)
         except Exception as e:
@@ -981,7 +981,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                   AND coalesce(toString(t.LOGICAL_ACCOUNTNO), '') <> ''
                   AND coalesce(toString(t.TRANSACTIONDATE), '') <> ''
                 WITH t.LOGICAL_ACCOUNTNO AS acc, t.TRANSACTIONDATE AS tx_day, count(t) AS daily_count, collect(t) AS day_txns
-                WHERE daily_count >= $activity_spike_min_daily_count
+                WHERE daily_count >= $activity_spike_min_daily_count AND NOT acc IN $pt AND NOT acc IN $pt AND NOT acc IN $pt
                 MATCH (all_t:{label})
                 WHERE all_t.LOGICAL_ACCOUNTNO = acc AND coalesce(toString(all_t.TRANSACTIONDATE), '') <> '' AND coalesce(all_t.IGNORE_LOGICAL, false) = false
                 WITH acc, tx_day, daily_count, day_txns, count(all_t) AS total_count, count(DISTINCT all_t.TRANSACTIONDATE) AS total_days
@@ -997,7 +997,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                     r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
                 """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries,
                      activity_spike_min_daily_count=thresholds.get("activity_spike_min_daily_count"),
-                     activity_spike_multiplier=thresholds.get("activity_spike_multiplier"))
+                     activity_spike_multiplier=thresholds.get("activity_spike_multiplier"), pt=pass_through_accounts)
             rules_completed.append("ACCOUNT_ACTIVITY_SPIKE")
             print(f"  [Rule] ACCOUNT_ACTIVITY_SPIKE ✓", flush=True)
         except Exception as e:
