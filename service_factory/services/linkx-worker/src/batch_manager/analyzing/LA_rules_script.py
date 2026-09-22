@@ -413,6 +413,7 @@ def batch_graph_analysis_transactions(
         WITH t.ACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day, collect(t) AS txns, count(DISTINCT t.BENACCOUNTNO) AS spoke_count
         WHERE hub IS NOT NULL
           AND hub <> ''
+          AND NOT hub IN $pt
           AND spoke_count >= $min_tx_count
         UNWIND range(0, size(txns)-2) AS i
         WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
@@ -438,6 +439,7 @@ def batch_graph_analysis_transactions(
         WITH t.BENACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day, collect(t) AS txns, count(DISTINCT t.ACCOUNTNO) AS spoke_count
         WHERE hub IS NOT NULL
           AND hub <> ''
+          AND NOT hub IN $pt
           AND spoke_count >= $min_tx_count
         UNWIND range(0, size(txns)-2) AS i
         WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
@@ -875,6 +877,7 @@ def incremental_graph_analysis_transactions(
         WITH DISTINCT seed.ACCOUNTNO AS hub, seed.TRANSACTIONDATE AS tx_day
         WHERE hub IS NOT NULL AND hub <> ''
           AND tx_day IS NOT NULL AND tx_day <> ''
+          AND NOT hub IN $pt
         MATCH (t:{label})
         WHERE {_session_scope_clause("t")}
           AND t.ACCOUNTNO = hub
@@ -902,6 +905,7 @@ def incremental_graph_analysis_transactions(
         WITH DISTINCT seed.BENACCOUNTNO AS hub, seed.TRANSACTIONDATE AS tx_day
         WHERE hub IS NOT NULL AND hub <> ''
           AND tx_day IS NOT NULL AND tx_day <> ''
+          AND NOT hub IN $pt
         MATCH (t:{label})
         WHERE {_session_scope_clause("t")}
           AND t.BENACCOUNTNO = hub

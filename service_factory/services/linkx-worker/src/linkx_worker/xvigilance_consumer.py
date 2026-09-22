@@ -800,7 +800,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                   AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> ''
                   AND t.LOGICAL_BENACCOUNTNO IS NOT NULL AND t.LOGICAL_BENACCOUNTNO <> ''
                 WITH t.LOGICAL_ACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day, collect(t) AS txns, count(DISTINCT t.LOGICAL_BENACCOUNTNO) AS spoke_count
-                WHERE hub IS NOT NULL AND hub <> '' AND spoke_count >= $hub_spoke_min_counterparties AND size(txns) < 1000
+                WHERE hub IS NOT NULL AND hub <> '' AND NOT hub IN $pt AND spoke_count >= $hub_spoke_min_counterparties AND size(txns) < 1000
                 CALL (txns, hub, tx_day, spoke_count) {{
                   UNWIND range(0, size(txns)-2) AS i
                   WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
@@ -812,7 +812,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                       r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
                 }} IN TRANSACTIONS OF 1000 ROWS
                 """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries,
-                     hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties"))
+                     hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties"), pt=pass_through_accounts)
             rules_completed.append("HUB_AND_SPOKE_OUT")
             print(f"  [Rule] HUB_AND_SPOKE (outgoing) ✓", flush=True)
         except Exception as e:
@@ -829,7 +829,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                   AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> ''
                   AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> ''
                 WITH t.LOGICAL_BENACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day, collect(t) AS txns, count(DISTINCT t.LOGICAL_ACCOUNTNO) AS spoke_count
-                WHERE hub IS NOT NULL AND hub <> '' AND spoke_count >= $hub_spoke_min_counterparties AND size(txns) < 1000
+                WHERE hub IS NOT NULL AND hub <> '' AND NOT hub IN $pt AND spoke_count >= $hub_spoke_min_counterparties AND size(txns) < 1000
                 CALL (txns, hub, tx_day, spoke_count) {{
                   UNWIND range(0, size(txns)-2) AS i
                   WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
@@ -841,7 +841,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                       r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
                 }} IN TRANSACTIONS OF 1000 ROWS
                 """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries,
-                     hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties"))
+                     hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties"), pt=pass_through_accounts)
             rules_completed.append("HUB_AND_SPOKE_IN")
             print(f"  [Rule] HUB_AND_SPOKE (incoming) ✓", flush=True)
         except Exception as e:
