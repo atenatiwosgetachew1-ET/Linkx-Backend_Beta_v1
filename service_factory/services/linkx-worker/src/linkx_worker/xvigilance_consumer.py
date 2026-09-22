@@ -666,6 +666,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 MATCH (a:{label} {{ACCOUNTNO: acc}})
                 WHERE ($session_id IS NULL OR a.session_id = $session_id)
                   AND a.LOGICAL_BENACCOUNTNO IS NOT NULL AND a.LOGICAL_BENACCOUNTNO <> ''
+                  AND NOT a.LOGICAL_BENACCOUNTNO IN $pass_through_accounts
                 CALL (a) {{
                   MATCH (b:{label} {{ACCOUNTNO: a.LOGICAL_BENACCOUNTNO, BENACCOUNTNO: a.LOGICAL_ACCOUNTNO}})
                   WHERE ($session_id IS NULL OR b.session_id = $session_id)
