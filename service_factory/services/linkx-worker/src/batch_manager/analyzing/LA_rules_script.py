@@ -79,6 +79,367 @@ TRANSACTION_RELATIONSHIPS = [
 ]
 
 
+# --- RULE GENERATORS (PHASE 1) ---
+
+def get_smurfing_query(label, scope_clause_t, trusted_pair_clause, is_provisional=False, incremental_batch_id=None):
+    prov_str = "true" if is_provisional else "false"
+    seed_block = ""
+    match_t_filters = ""
+    if incremental_batch_id:
+        seed_block = f"""
+        MATCH (seed:{label})
+        WHERE seed.batch_id = {incremental_batch_id}
+        WITH DISTINCT seed.LOGICAL_ACCOUNTNO AS acc, seed.LOGICAL_BENACCOUNTNO AS beneficiary, seed.TRANSACTIONDATE AS tx_day
+        WHERE acc IS NOT NULL AND acc <> ''
+          AND beneficiary IS NOT NULL AND beneficiary <> ''
+          AND tx_day IS NOT NULL AND tx_day <> ''
+        """
+        match_t_filters = "AND t.LOGICAL_ACCOUNTNO = acc AND t.LOGICAL_BENACCOUNTNO = beneficiary AND t.TRANSACTIONDATE = tx_day"
+    
+    return f"""
+    {seed_block}
+    MATCH (t:{label})
+    WHERE ({scope_clause_t})
+      AND coalesce(t.IGNORE_LOGICAL, false) = false
+      {match_t_filters}
+    WITH
+        {"t.LOGICAL_ACCOUNTNO AS acc," if not incremental_batch_id else "acc,"}
+        {"t.LOGICAL_BENACCOUNTNO AS beneficiary," if not incremental_batch_id else "beneficiary,"}
+        {"t.TRANSACTIONDATE AS tx_day," if not incremental_batch_id else "tx_day,"}
+        t, coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) AS amount
+    WHERE {"acc IS NOT NULL AND acc <> '' AND beneficiary IS NOT NULL AND beneficiary <> '' AND tx_day IS NOT NULL AND tx_day <> '' AND " if not incremental_batch_id else ""} amount IS NOT NULL AND amount > 0 AND amount < $smurfing_single_tx_threshold
+    WITH acc, beneficiary, tx_day, t, amount
+    ORDER BY t.TRANSACTIONDATE, t.TRANSACTIONTIME
+    WITH acc, beneficiary, tx_day, collect(t) AS txns, sum(amount) AS total_amount, count(t) AS tx_count
+    WHERE tx_count >= $smurfing_min_tx_count AND total_amount >= $smurfing_cumulative_threshold
+    UNWIND range(0, size(txns)-2) AS i
+    WITH txns[i] AS a, txns[i+1] AS b, acc, beneficiary, tx_day, tx_count, total_amount
+    WHERE {trusted_pair_clause}
+    MERGE (a)-[r:SMURFING {{session_id:$session_id}}]->(b)
+    SET r.bgcolor = '#d5d276', r.provisional = {prov_str},
+        r.reason = 'multiple small same-day transfers below threshold',
+        r.account = acc, r.beneficiary = beneficiary, r.tx_day = tx_day,
+        r.tx_count = tx_count, r.total_amount = total_amount,
+        r.single_tx_threshold = $smurfing_single_tx_threshold, r.total_threshold = $smurfing_cumulative_threshold,
+        r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
+    """
+
+def get_circular_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, trusted_pair_clause, is_provisional=False, boundary_clause=None):
+    prov_str = "true" if is_provisional else "false"
+    boundary_str = f"AND ({boundary_clause})" if boundary_clause else ""
+    return f"""
+    MATCH (t:{label})
+    WHERE ({scope_clause_t})
+      AND coalesce(t.IGNORE_LOGICAL, false) = false
+      AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> ''
+    WITH t.LOGICAL_ACCOUNTNO AS acc, count(t) AS out_count
+    WHERE out_count < 1000
+
+    MATCH (a:{label} {{ACCOUNTNO: acc}})
+    WHERE ({scope_clause_a})
+      AND a.LOGICAL_BENACCOUNTNO IS NOT NULL AND a.LOGICAL_BENACCOUNTNO <> ''
+      AND NOT a.LOGICAL_BENACCOUNTNO IN $pt
+    CALL (a) {{
+      MATCH (b:{label} {{ACCOUNTNO: a.LOGICAL_BENACCOUNTNO, BENACCOUNTNO: a.LOGICAL_ACCOUNTNO}})
+      WHERE ({scope_clause_b})
+        AND elementId(a) < elementId(b)
+        AND coalesce(a.TRANSACTIONDATE, '') = coalesce(b.TRANSACTIONDATE, '')
+        AND {trusted_pair_clause}
+        {boundary_str}
+      MERGE (a)-[r1:CIRCULAR_FLOW {{session_id:$session_id}}]->(b)
+      SET r1.bgcolor = '#e6e6e6', r1.provisional = {prov_str}, r1.reason = 'same-day reverse transfer pair',
+          r1.edge_semantic = 'OBSERVED_FLOW', r1.financial_flow = true, r1.directed_display = true
+      MERGE (b)-[r2:CIRCULAR_FLOW {{session_id:$session_id}}]->(a)
+      SET r2.bgcolor = '#e6e6e6', r2.provisional = {prov_str}, r2.reason = 'same-day reverse transfer pair',
+          r2.edge_semantic = 'OBSERVED_FLOW', r2.financial_flow = true, r2.directed_display = true
+    }} IN TRANSACTIONS OF 1000 ROWS
+    """
+
+def get_fund_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, trusted_pair_clause, is_provisional=False, boundary_clause=None):
+    prov_str = "true" if is_provisional else "false"
+    boundary_str = f"AND ({boundary_clause})" if boundary_clause else ""
+    return f"""
+    MATCH (t:{label})
+    WHERE ({scope_clause_t})
+      AND coalesce(t.IGNORE_LOGICAL, false) = false
+      AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> ''
+    WITH t.LOGICAL_ACCOUNTNO AS acc, count(t) AS out_count
+    WHERE out_count < 1000 AND NOT acc IN $pt
+
+    MATCH (a:{label} {{LOGICAL_BENACCOUNTNO: acc}})
+    WHERE ({scope_clause_a})
+    CALL (a, acc) {{
+      MATCH (b:{label} {{LOGICAL_ACCOUNTNO: acc}})
+      WHERE ({scope_clause_b})
+        AND elementId(a) <> elementId(b)
+        AND (
+          coalesce(a.TRANSACTIONDATE, '') < coalesce(b.TRANSACTIONDATE, '')
+          OR (
+            coalesce(a.TRANSACTIONDATE, '') = coalesce(b.TRANSACTIONDATE, '')
+            AND coalesce(a.TRANSACTIONTIME, '') < coalesce(b.TRANSACTIONTIME, '')
+          )
+        )
+        AND {trusted_pair_clause}
+        {boundary_str}
+      WITH a, b
+      ORDER BY b.TRANSACTIONDATE ASC, b.TRANSACTIONTIME ASC
+      WITH a, collect(b) AS downstream
+      WITH a, downstream[..5] AS limited_downstream
+      UNWIND limited_downstream AS b
+      MERGE (a)-[r:FUND_FLOW {{session_id:$session_id}}]->(b)
+      SET r.bgcolor = '#d8a822', r.provisional = {prov_str},
+          r.reason = 'beneficiary later acts as sender',
+          r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
+    }} IN TRANSACTIONS OF 1000 ROWS
+    """
+
+def get_dormant_to_active_query(label, scope_clause_t, is_provisional=False, incremental_batch_id=None):
+    prov_str = "true" if is_provisional else "false"
+    seed_block = f"MATCH (t:{label}) WHERE t.batch_id = {incremental_batch_id} AND coalesce(t.IGNORE_LOGICAL, false) = false AND toLower(coalesce(t.ACCOUNTSTATE, '')) = 'dormant' AND toLower(coalesce(t.BENACCOUNTSTATE, '')) = 'active' " if incremental_batch_id else f"MATCH (t:{label}) WHERE ({scope_clause_t}) AND coalesce(t.IGNORE_LOGICAL, false) = false AND toLower(coalesce(t.ACCOUNTSTATE, '')) = 'dormant' AND toLower(coalesce(t.BENACCOUNTSTATE, '')) = 'active' "
+    return f"""
+    {seed_block}
+    MERGE (t)-[r:DORMANT_TO_ACTIVE {{session_id:$session_id}}]->(t)
+    SET r.bgcolor = '#c20f0f', r.textcolor = '#eeeeee', r.provisional = {prov_str},
+        r.reason = 'dormant source account transacts with active beneficiary',
+        r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
+    """
+
+def get_abnormal_balance_query(label, scope_clause_t, is_provisional=False, incremental_batch_id=None):
+    prov_str = "true" if is_provisional else "false"
+    seed_block = ""
+    match_filters = ""
+    if incremental_batch_id:
+        seed_block = f"MATCH (seed:{label}) WHERE seed.batch_id = {incremental_batch_id} WITH DISTINCT seed.LOGICAL_ACCOUNTNO AS acc WHERE acc IS NOT NULL AND acc <> ''"
+        match_filters = "AND t.LOGICAL_ACCOUNTNO = acc"
+        
+    return f"""
+    {seed_block}
+    MATCH (t:{label})
+    WHERE ({scope_clause_t})
+      AND coalesce(t.IGNORE_LOGICAL, false) = false
+      {match_filters if incremental_batch_id else "AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> ''"}
+    WITH {"acc, t" if incremental_batch_id else "t.LOGICAL_ACCOUNTNO AS acc, t"}
+    ORDER BY t.TRANSACTIONDATE, t.TRANSACTIONTIME
+    WITH acc, collect(t) AS txns
+    WHERE size(txns) >= 5
+    UNWIND range(3, size(txns)-1) AS i
+    WITH txns[i] AS current, txns[i-1] AS previous, txns[0..i] AS history
+    WITH current, previous,
+         abs(coalesce(toFloat(current.SENDERPREVIOUSBALANCE), 0.0) - coalesce(toFloat(previous.SENDERPREVIOUSBALANCE), 0.0)) AS current_change,
+         history
+    WHERE current_change > 0
+    WITH current, previous, current_change,
+         reduce(s = 0.0, x IN history | s + abs(coalesce(toFloat(x.SENDERPREVIOUSBALANCE), 0.0))) / size(history) AS avg_change
+    WHERE current_change > (avg_change * 3)
+    MERGE (previous)-[r:ABNORMAL_BALANCE_CHANGE {{session_id:$session_id}}]->(current)
+    SET r.bgcolor = '#196e08', r.textcolor = '#eeeeee', r.provisional = {prov_str},
+        r.reason = 'balance change exceeds recent account baseline',
+        r.change = current_change, r.average_recent_change = avg_change, r.threshold_multiplier = 3,
+        r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
+    """
+
+def get_hub_and_spoke_out_query(label, scope_clause_t, trusted_pair_clause, is_provisional=False, incremental_batch_id=None):
+    prov_str = "true" if is_provisional else "false"
+    seed_block = ""
+    match_filters = ""
+    if incremental_batch_id:
+        seed_block = f"MATCH (seed:{label}) WHERE seed.batch_id = {incremental_batch_id} WITH DISTINCT seed.LOGICAL_ACCOUNTNO AS hub, seed.TRANSACTIONDATE AS tx_day WHERE hub IS NOT NULL AND hub <> '' AND tx_day IS NOT NULL AND tx_day <> '' AND NOT hub IN $pt"
+        match_filters = "AND t.LOGICAL_ACCOUNTNO = hub AND t.TRANSACTIONDATE = tx_day"
+        
+    return f"""
+    {seed_block}
+    MATCH (t:{label})
+    WHERE ({scope_clause_t})
+      AND coalesce(t.IGNORE_LOGICAL, false) = false
+      AND t.LOGICAL_BENACCOUNTNO IS NOT NULL AND t.LOGICAL_BENACCOUNTNO <> ''
+      {match_filters if incremental_batch_id else "AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> ''"}
+    WITH {"hub, tx_day," if incremental_batch_id else "t.LOGICAL_ACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day,"} collect(t) AS txns, count(DISTINCT t.LOGICAL_BENACCOUNTNO) AS spoke_count
+    WHERE {"spoke_count >= $hub_spoke_min_counterparties" if incremental_batch_id else "hub IS NOT NULL AND hub <> '' AND NOT hub IN $pt AND spoke_count >= $hub_spoke_min_counterparties"} AND size(txns) < 1000
+    CALL (txns, hub, tx_day, spoke_count) {{
+      UNWIND range(0, size(txns)-2) AS i
+      WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
+      WHERE {trusted_pair_clause}
+      MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
+      SET r.bgcolor = '#6f42c1', r.textcolor = '#eeeeee', r.provisional = {prov_str},
+          r.reason = 'account connects with multiple counterparties on same day',
+          r.hub_account = hub, r.direction = 'outgoing', r.tx_day = tx_day, r.spoke_count = spoke_count,
+          r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
+    }} IN TRANSACTIONS OF 1000 ROWS
+    """
+
+def get_hub_and_spoke_in_query(label, scope_clause_t, trusted_pair_clause, is_provisional=False, incremental_batch_id=None):
+    prov_str = "true" if is_provisional else "false"
+    seed_block = ""
+    match_filters = ""
+    if incremental_batch_id:
+        seed_block = f"MATCH (seed:{label}) WHERE seed.batch_id = {incremental_batch_id} WITH DISTINCT seed.LOGICAL_BENACCOUNTNO AS hub, seed.TRANSACTIONDATE AS tx_day WHERE hub IS NOT NULL AND hub <> '' AND tx_day IS NOT NULL AND tx_day <> '' AND NOT hub IN $pt"
+        match_filters = "AND t.LOGICAL_BENACCOUNTNO = hub AND t.TRANSACTIONDATE = tx_day"
+        
+    return f"""
+    {seed_block}
+    MATCH (t:{label})
+    WHERE ({scope_clause_t})
+      AND coalesce(t.IGNORE_LOGICAL, false) = false
+      AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> ''
+      {match_filters if incremental_batch_id else "AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> ''"}
+    WITH {"hub, tx_day," if incremental_batch_id else "t.LOGICAL_BENACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day,"} collect(t) AS txns, count(DISTINCT t.LOGICAL_ACCOUNTNO) AS spoke_count
+    WHERE {"spoke_count >= $hub_spoke_min_counterparties" if incremental_batch_id else "hub IS NOT NULL AND hub <> '' AND NOT hub IN $pt AND spoke_count >= $hub_spoke_min_counterparties"} AND size(txns) < 1000
+    CALL (txns, hub, tx_day, spoke_count) {{
+      UNWIND range(0, size(txns)-2) AS i
+      WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
+      WHERE {trusted_pair_clause}
+      MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
+      SET r.bgcolor = '#6f42c1', r.textcolor = '#eeeeee', r.provisional = {prov_str},
+          r.reason = 'account connects with multiple counterparties on same day',
+          r.hub_account = hub, r.direction = 'incoming', r.tx_day = tx_day, r.spoke_count = spoke_count,
+          r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
+    }} IN TRANSACTIONS OF 1000 ROWS
+    """
+
+def get_shared_identifier_query(label, scope_clause_t, is_provisional=False, incremental_batch_id=None):
+    prov_str = "true" if is_provisional else "false"
+    seed_block = ""
+    match_filters = ""
+    if incremental_batch_id:
+        seed_block = f"""
+        MATCH (seed:{label}) WHERE seed.batch_id = {incremental_batch_id} 
+        WITH [{{kind:'BUSINESSMOBILENO', value:seed.BUSINESSMOBILENO}}, {{kind:'BENTELNO', value:seed.BENTELNO}}] AS identifiers 
+        UNWIND identifiers AS seed_identifier
+        WITH DISTINCT seed_identifier.kind AS identifier_type, trim(toString(seed_identifier.value)) AS identifier_value
+        WHERE identifier_value <> ''
+        """
+        match_filters = "AND (t.BUSINESSMOBILENO = identifier_value OR t.BENTELNO = identifier_value)"
+
+    with_identifiers = "identifier_type, identifier_value" if incremental_batch_id else "[{kind:'BUSINESSMOBILENO', value:t.BUSINESSMOBILENO, account:t.LOGICAL_ACCOUNTNO}, {kind:'BENTELNO', value:t.BENTELNO, account:t.LOGICAL_BENACCOUNTNO}] AS identifiers"
+    with_account = "WITH identifier_type, identifier_value, CASE WHEN t.BUSINESSMOBILENO = identifier_value THEN t.LOGICAL_ACCOUNTNO ELSE t.LOGICAL_BENACCOUNTNO END AS account, t" if incremental_batch_id else "UNWIND identifiers AS identifier WITH identifier.kind AS identifier_type, trim(toString(identifier.value)) AS identifier_value, identifier.account AS account, t"
+
+    return f"""
+    {seed_block}
+    MATCH (t:{label})
+    WHERE ({scope_clause_t})
+      AND coalesce(t.IGNORE_LOGICAL, false) = false
+      {match_filters}
+    WITH t, {with_identifiers}
+    {with_account}
+    WHERE identifier_value <> '' AND account IS NOT NULL AND account <> ''
+    WITH identifier_type, identifier_value, collect(DISTINCT account) AS accounts, collect(DISTINCT t) AS txns
+    WHERE size(accounts) >= 2 AND size(txns) < 1000
+    CALL (txns, identifier_type, identifier_value, accounts) {{
+      UNWIND range(0, size(txns)-2) AS i
+      WITH txns[i] AS a, txns[i+1] AS b, identifier_type, identifier_value, accounts
+      MERGE (a)-[r:SHARED_IDENTIFIER {{session_id:$session_id}}]->(b)
+      SET r.bgcolor = '#0d898a', r.textcolor = '#eeeeee', r.provisional = {prov_str},
+          r.reason = 'same identifier appears on multiple accounts',
+          r.identifier_type = identifier_type, r.identifier_value = identifier_value,
+          r.account_count = size(accounts),
+          r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
+    }} IN TRANSACTIONS OF 1000 ROWS
+    """
+
+def get_rapid_withdrawal_query(label, scope_clause_t, is_provisional=False, incremental_batch_id=None):
+    prov_str = "true" if is_provisional else "false"
+    seed_block = ""
+    match_filters = ""
+    if incremental_batch_id:
+        seed_block = f"MATCH (seed:{label}) WHERE seed.batch_id = {incremental_batch_id} WITH DISTINCT seed.LOGICAL_ACCOUNTNO AS acc, seed.TRANSACTIONDATE AS tx_day WHERE acc IS NOT NULL AND acc <> '' AND tx_day IS NOT NULL AND tx_day <> '' AND NOT acc IN $pt"
+        match_filters = "AND (t.LOGICAL_ACCOUNTNO = acc OR t.LOGICAL_BENACCOUNTNO = acc) AND t.TRANSACTIONDATE = tx_day"
+
+    where_filter = match_filters if incremental_batch_id else "AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> '' AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> '' AND NOT t.LOGICAL_ACCOUNTNO IN $pt"
+    with_acc = "acc, tx_day," if incremental_batch_id else "t.LOGICAL_ACCOUNTNO AS acc, t.TRANSACTIONDATE AS tx_day,"
+
+    return f"""
+    {seed_block}
+    MATCH (t:{label})
+    WHERE ({scope_clause_t})
+      AND coalesce(t.IGNORE_LOGICAL, false) = false
+      {where_filter}
+    WITH {with_acc} collect(t) AS txns
+    WHERE size(txns) >= 2 AND size(txns) < 1000
+    CALL (txns, acc, tx_day) {{
+      UNWIND txns AS t1
+      UNWIND txns AS t2
+      WITH t1, t2, acc, tx_day
+      WHERE elementId(t1) < elementId(t2)
+        AND t1.LOGICAL_BENACCOUNTNO = acc
+        AND t2.LOGICAL_ACCOUNTNO = acc
+        AND coalesce(t1.TRANSACTIONTIME, '') <= coalesce(t2.TRANSACTIONTIME, '')
+      WITH t1, t2, acc, tx_day,
+           coalesce(toFloat(t1.AMOUNTINBIRR), toFloat(t1.AMOUNT), toFloat(t1.LOCAL_AMOUNT), 0.0) AS in_amt,
+           coalesce(toFloat(t2.AMOUNTINBIRR), toFloat(t2.AMOUNT), toFloat(t2.LOCAL_AMOUNT), 0.0) AS out_amt
+      WHERE in_amt > 0 AND out_amt > 0
+        AND abs(in_amt - out_amt) <= (in_amt * $rapid_withdrawal_amount_tolerance)
+      MERGE (t1)-[r:RAPID_WITHDRAWAL {{session_id:$session_id}}]->(t2)
+      SET r.bgcolor = '#e07624', r.textcolor = '#eeeeee', r.provisional = {prov_str},
+          r.reason = 'funds rapidly withdrawn or passed through on same day',
+          r.in_amount = in_amt, r.out_amount = out_amt,
+          r.edge_semantic = 'OBSERVED_FLOW', r.financial_flow = true, r.directed_display = true
+    }} IN TRANSACTIONS OF 1000 ROWS
+    """
+
+def get_account_activity_spike_query(label, scope_clause_t, is_provisional=False, incremental_batch_id=None):
+    prov_str = "true" if is_provisional else "false"
+    seed_block = ""
+    match_filters = ""
+    if incremental_batch_id:
+        seed_block = f"MATCH (seed:{label}) WHERE seed.batch_id = {incremental_batch_id} WITH DISTINCT seed.LOGICAL_ACCOUNTNO AS acc, seed.TRANSACTIONDATE AS tx_day WHERE acc IS NOT NULL AND acc <> '' AND tx_day IS NOT NULL AND tx_day <> '' AND NOT acc IN $pt"
+        match_filters = "AND t.LOGICAL_ACCOUNTNO = acc AND t.TRANSACTIONDATE = tx_day"
+        
+    where_filter = match_filters if incremental_batch_id else "AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> '' AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> '' AND NOT t.LOGICAL_ACCOUNTNO IN $pt"
+    with_acc = "acc, tx_day," if incremental_batch_id else "t.LOGICAL_ACCOUNTNO AS acc, t.TRANSACTIONDATE AS tx_day,"
+
+    return f"""
+    {seed_block}
+    MATCH (t:{label})
+    WHERE ({scope_clause_t})
+      AND coalesce(t.IGNORE_LOGICAL, false) = false
+      {where_filter}
+    WITH {with_acc} count(t) AS daily_count, collect(t) AS txns
+    WHERE daily_count >= $activity_spike_min_daily_count AND daily_count < 2000
+    WITH acc, tx_day, daily_count, txns
+    MATCH (history:{label} {{LOGICAL_ACCOUNTNO: acc}})
+    WHERE coalesce(history.IGNORE_LOGICAL, false) = false
+      AND history.TRANSACTIONDATE IS NOT NULL AND history.TRANSACTIONDATE <> tx_day
+    WITH acc, tx_day, daily_count, txns, count(history) AS hist_count, count(DISTINCT history.TRANSACTIONDATE) AS hist_days
+    WHERE hist_days > 0
+    WITH acc, tx_day, daily_count, txns, (toFloat(hist_count) / hist_days) AS avg_daily
+    WHERE daily_count > (avg_daily * $activity_spike_multiplier)
+    CALL (txns, daily_count, avg_daily) {{
+      UNWIND txns AS t
+      MERGE (t)-[r:ACCOUNT_ACTIVITY_SPIKE {{session_id:$session_id}}]->(t)
+      SET r.bgcolor = '#99153c', r.textcolor = '#eeeeee', r.provisional = {prov_str},
+          r.reason = 'unusually high transaction volume for this account on this day',
+          r.daily_count = daily_count, r.avg_daily = avg_daily,
+          r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
+    }} IN TRANSACTIONS OF 1000 ROWS
+    """
+
+def get_high_risk_link_query(label, scope_clause_t, is_provisional=False, incremental_batch_id=None):
+    prov_str = "true" if is_provisional else "false"
+    seed_block = f"MATCH (t:{label}) WHERE t.batch_id = {incremental_batch_id} " if incremental_batch_id else f"MATCH (t:{label}) WHERE ({scope_clause_t}) "
+    
+    return f"""
+    {seed_block}
+      AND coalesce(t.IGNORE_LOGICAL, false) = false
+    UNWIND $risk_entries AS risk_entity
+    WITH t, risk_entity
+    WHERE
+       (risk_entity.account IS NOT NULL AND risk_entity.account <> '' AND (t.LOGICAL_ACCOUNTNO = risk_entity.account OR t.LOGICAL_BENACCOUNTNO = risk_entity.account)) OR
+       (risk_entity.phone IS NOT NULL AND risk_entity.phone <> '' AND (t.BUSINESSMOBILENO = risk_entity.phone OR t.BENTELNO = risk_entity.phone)) OR
+       (risk_entity.name IS NOT NULL AND risk_entity.name <> '' AND (toLower(t.SENDER_FULL_NAME) = toLower(risk_entity.name) OR toLower(t.RECEIVER_FULL_NAME) = toLower(risk_entity.name)))
+    WITH t, collect(DISTINCT toUpper(risk_entity.category)) AS matched_categories
+    WHERE size(matched_categories) > 0
+    CALL (t, matched_categories) {{
+      UNWIND matched_categories AS cat
+      FOREACH (ignore IN CASE WHEN NOT cat IN ['PEP', 'SANCTION', 'SANCTIONS', 'SANCTIONED'] THEN [1] ELSE [] END |
+          MERGE (t)-[r:HIGH_RISK_LINK {{session_id:$session_id}}]->(t)
+          SET r.bgcolor = '#de7d07', r.provisional = {prov_str}, r.reason = 'Configured risk entity matched', r.risk_source = 'risk_entities', r.category = cat,
+              r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
+      )
+    }} IN TRANSACTIONS OF 1000 ROWS
+    """
+
+
+
 def _create_transaction_indexes(session, label):
     index_prefix = _safe_index_name(label)
     safe_label = _safe_label(label)
@@ -204,102 +565,42 @@ def batch_graph_analysis_transactions(
         # ----------------------------
         # 1. SMURFING: repeated small transfers from one account to one beneficiary
         # ----------------------------
-        session.run(f"""
-        MATCH (t:{label})
-        WHERE ($session_id IS NULL OR {_session_scope_clause("t")})
-        WITH
-            t.ACCOUNTNO AS acc,
-            t.BENACCOUNTNO AS beneficiary,
-            t.TRANSACTIONDATE AS tx_day,
-            t,
-            coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) AS amount
-        WHERE acc IS NOT NULL
-          AND acc <> ''
-          AND beneficiary IS NOT NULL
-          AND beneficiary <> ''
-          AND tx_day IS NOT NULL
-          AND tx_day <> ''
-          AND amount IS NOT NULL
-          AND amount > 0
-          AND amount < $single_tx_threshold
-        WITH acc, beneficiary, tx_day, t, amount
-        ORDER BY t.TRANSACTIONDATE, t.TRANSACTIONTIME 
-        WITH acc, beneficiary, tx_day, collect(t) AS txns, sum(amount) AS total_amount, count(t) AS tx_count
-        WHERE tx_count >= $min_tx_count
-          AND total_amount >= $total_threshold
-        UNWIND range(0, size(txns)-2) AS i
-        WITH txns[i] AS a, txns[i+1] AS b, acc, beneficiary, tx_day, tx_count, total_amount
-        WHERE {_trusted_pair_clause('a', 'b')}
-        MERGE (a)-[r:SMURFING {{session_id:$session_id}}]->(b)
-        SET r.bgcolor = '#d5d276',
-            r.provisional = false,
-            r.reason = 'multiple small same-day transfers below threshold',
-            r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true,
-            r.account = acc,
-            r.beneficiary = beneficiary,
-            r.tx_day = tx_day,
-            r.tx_count = tx_count,
-            r.total_amount = total_amount,
-            r.single_tx_threshold = $single_tx_threshold,
-            r.total_threshold = $total_threshold
-        """, session_id=session_param,
-             trusted_entries=trusted_entries,
-             single_tx_threshold=single_tx_threshold,
-             total_threshold=total_threshold,
-             min_tx_count=min_tx_count)
+        query = get_smurfing_query(
+            label=label,
+            scope_clause_t="t.batch_id = $batch_id",
+            trusted_pair_clause=_trusted_pair_clause('a', 'b'),
+            is_provisional=False
+        )
+        session.run(query, session_id=session_param, batch_id=batch_id, trusted_entries=trusted_entries, pt=pass_through_accounts,
+             smurfing_single_tx_threshold=single_tx_threshold,
+             smurfing_cumulative_threshold=total_threshold,
+             smurfing_min_tx_count=min_tx_count)
 
         # ----------------------------
         # 2. CIRCULAR_FLOW: direct account-to-beneficiary reversal
         # ----------------------------
-        session.run(f"""
-        MATCH (a:{label}), (b:{label})
-        WHERE ($session_id IS NULL OR ({_session_scope_clause("a")} AND {_session_scope_clause("b")}))
-          AND a.ACCOUNTNO = b.BENACCOUNTNO
-          AND a.BENACCOUNTNO = b.ACCOUNTNO
-          AND a.ACCOUNTNO IS NOT NULL
-          AND a.ACCOUNTNO <> ''
-          AND a.BENACCOUNTNO IS NOT NULL
-          AND a.BENACCOUNTNO <> ''
-          AND elementId(a) < elementId(b)
-          AND coalesce(a.TRANSACTIONDATE, '') = coalesce(b.TRANSACTIONDATE, '')
-          AND {_trusted_pair_clause('a', 'b')}
-        MERGE (a)-[r1:CIRCULAR_FLOW {{session_id:$session_id}}]->(b)
-        SET r1.bgcolor = '#e6e6e6', r1.provisional = false, r1.reason = 'same-day reverse transfer pair'
-        MERGE (b)-[r2:CIRCULAR_FLOW {{session_id:$session_id}}]->(a)
-        SET r2.bgcolor = '#e6e6e6', r2.provisional = false, r2.reason = 'same-day reverse transfer pair'
-        """, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
+        query = get_circular_flow_query(
+            label=label,
+            scope_clause_t="t.batch_id = $batch_id",
+            scope_clause_a="a.batch_id = $batch_id",
+            scope_clause_b="b.batch_id = $batch_id",
+            trusted_pair_clause=_trusted_pair_clause('a', 'b'),
+            is_provisional=False
+        )
+        session.run(query, session_id=session_param, batch_id=batch_id, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         # ----------------------------
         # 3. FUND_FLOW: beneficiary becomes sender in a later transaction
         # ----------------------------
-        session.run(f"""
-        MATCH (a:{label}), (b:{label})
-        WHERE ($session_id IS NULL OR ({_session_scope_clause("a")} AND {_session_scope_clause("b")}))
-          AND a.BENACCOUNTNO = b.ACCOUNTNO
-          AND a.BENACCOUNTNO IS NOT NULL
-          AND a.BENACCOUNTNO <> ''
-          AND elementId(a) <> elementId(b)
-          AND (
-            coalesce(a.TRANSACTIONDATE, '') < coalesce(b.TRANSACTIONDATE, '')
-            OR (
-              coalesce(a.TRANSACTIONDATE, '') = coalesce(b.TRANSACTIONDATE, '')
-              AND coalesce(a.TRANSACTIONTIME, '') < coalesce(b.TRANSACTIONTIME, '')
-            )
-          )
-        WITH a, b
-        ORDER BY a.TRANSACTIONDATE, a.TRANSACTIONTIME, b.TRANSACTIONDATE, b.TRANSACTIONTIME
-        WITH a, collect(b) AS downstream
-        WITH a, downstream[..5] AS limited_downstream
-        UNWIND limited_downstream AS b
-        WITH a, b
-        WHERE b IS NOT NULL
-          AND {_trusted_pair_clause('a', 'b')}
-        MERGE (a)-[r:FUND_FLOW {{session_id:$session_id}}]->(b)
-        SET r.bgcolor = '#d8a822',
-            r.provisional = false,
-            r.reason = 'beneficiary later acts as sender',
-            r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
-        """, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
+        query = get_fund_flow_query(
+            label=label,
+            scope_clause_t="t.batch_id = $batch_id",
+            scope_clause_a="a.batch_id = $batch_id",
+            scope_clause_b="b.batch_id = $batch_id",
+            trusted_pair_clause=_trusted_pair_clause('a', 'b'),
+            is_provisional=False
+        )
+        session.run(query, session_id=session_param, batch_id=batch_id, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         # ----------------------------
         # 4. DORMANT_TO_ACTIVE
@@ -678,100 +979,41 @@ def incremental_graph_analysis_transactions(
             """, session_id=session_param, batch_id=batch_id, pass_through_accounts=pass_through_accounts)
 
         # Smurfing: start from new rows, then inspect only matching account/beneficiary/day groups.
-        session.run(f"""
-        MATCH (seed:{label})
-        WHERE seed.batch_id = $batch_id
-        WITH DISTINCT seed.ACCOUNTNO AS acc, seed.BENACCOUNTNO AS beneficiary, seed.TRANSACTIONDATE AS tx_day
-        WHERE acc IS NOT NULL AND acc <> ''
-          AND beneficiary IS NOT NULL AND beneficiary <> ''
-          AND tx_day IS NOT NULL AND tx_day <> ''
-        MATCH (t:{label})
-        WHERE {_session_scope_clause("t")}
-          AND t.ACCOUNTNO = acc
-          AND t.BENACCOUNTNO = beneficiary
-          AND t.TRANSACTIONDATE = tx_day
-        WITH acc, beneficiary, tx_day, t,
-             coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) AS amount
-        WHERE amount IS NOT NULL
-          AND amount > 0
-          AND amount < $single_tx_threshold
-        WITH acc, beneficiary, tx_day, t, amount
-        ORDER BY t.TRANSACTIONDATE, t.TRANSACTIONTIME
-        WITH acc, beneficiary, tx_day, collect(t) AS txns, sum(amount) AS total_amount, count(t) AS tx_count
-        WHERE tx_count >= $min_tx_count
-          AND total_amount >= $total_threshold
-        UNWIND range(0, size(txns)-2) AS i
-        WITH txns[i] AS a, txns[i+1] AS b, acc, beneficiary, tx_day, tx_count, total_amount
-        WHERE {_trusted_pair_clause('a', 'b')}
-        MERGE (a)-[r:SMURFING {{session_id:$session_id}}]->(b)
-        SET r.bgcolor = '#d5d276',
-            r.provisional = true,
-            r.reason = 'multiple small same-day transfers below threshold',
-            r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true,
-            r.account = acc,
-            r.beneficiary = beneficiary,
-            r.tx_day = tx_day,
-            r.tx_count = tx_count,
-            r.total_amount = total_amount,
-            r.single_tx_threshold = $single_tx_threshold,
-            r.total_threshold = $total_threshold
-        """, batch_id=batch_id,
-             session_id=session_param,
-             trusted_entries=trusted_entries,
-             single_tx_threshold=single_tx_threshold,
-             total_threshold=total_threshold,
-             min_tx_count=min_tx_count)
+        query = get_smurfing_query(
+            label=label,
+            scope_clause_t=_session_scope_clause("t"),
+            trusted_pair_clause=_trusted_pair_clause('a', 'b'),
+            is_provisional=True,
+            incremental_batch_id="$batch_id"
+        )
+        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts,
+             smurfing_single_tx_threshold=single_tx_threshold,
+             smurfing_cumulative_threshold=total_threshold,
+             smurfing_min_tx_count=min_tx_count)
 
         # Circular flow: only pairs where the current batch is one side of the reversal.
-        session.run(f"""
-        MATCH (seed:{label})
-        WHERE seed.batch_id = $batch_id
-        MATCH (other:{label})
-        WHERE {_session_scope_clause("other")}
-          AND seed.ACCOUNTNO = other.BENACCOUNTNO
-          AND seed.BENACCOUNTNO = other.ACCOUNTNO
-          AND seed.ACCOUNTNO IS NOT NULL
-          AND seed.ACCOUNTNO <> ''
-          AND seed.BENACCOUNTNO IS NOT NULL
-          AND seed.BENACCOUNTNO <> ''
-          AND elementId(seed) <> elementId(other)
-          AND coalesce(seed.TRANSACTIONDATE, '') = coalesce(other.TRANSACTIONDATE, '')
-          AND {_trusted_pair_clause('seed', 'other')}
-        MERGE (seed)-[r1:CIRCULAR_FLOW {{session_id:$session_id}}]->(other)
-        SET r1.bgcolor = '#e6e6e6', r1.provisional = true, r1.reason = 'same-day reverse transfer pair'
-        MERGE (other)-[r2:CIRCULAR_FLOW {{session_id:$session_id}}]->(seed)
-        SET r2.bgcolor = '#e6e6e6', r2.provisional = true, r2.reason = 'same-day reverse transfer pair'
-        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
+        query = get_circular_flow_query(
+            label=label,
+            scope_clause_t=_session_scope_clause("t"),
+            scope_clause_a=_session_scope_clause("a"),
+            scope_clause_b=_session_scope_clause("b"),
+            trusted_pair_clause=_trusted_pair_clause('a', 'b'),
+            is_provisional=True,
+            boundary_clause="(a.batch_id = $batch_id OR b.batch_id = $batch_id)"
+        )
+        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         # Fund flow: new nodes can either precede or complete a downstream flow.
-        session.run(f"""
-        MATCH (a:{label}), (b:{label})
-        WHERE (a.batch_id = $batch_id OR b.batch_id = $batch_id)
-          AND {_session_scope_clause("a")}
-          AND {_session_scope_clause("b")}
-          AND a.BENACCOUNTNO = b.ACCOUNTNO
-          AND a.BENACCOUNTNO IS NOT NULL
-          AND a.BENACCOUNTNO <> ''
-          AND elementId(a) <> elementId(b)
-          AND (
-            coalesce(a.TRANSACTIONDATE, '') < coalesce(b.TRANSACTIONDATE, '')
-            OR (
-              coalesce(a.TRANSACTIONDATE, '') = coalesce(b.TRANSACTIONDATE, '')
-              AND coalesce(a.TRANSACTIONTIME, '') < coalesce(b.TRANSACTIONTIME, '')
-            )
-          )
-          AND {_trusted_pair_clause('a', 'b')}
-        WITH a, b
-        ORDER BY a.TRANSACTIONDATE, a.TRANSACTIONTIME, b.TRANSACTIONDATE, b.TRANSACTIONTIME
-        WITH a, collect(b) AS downstream
-        WITH a, downstream[..5] AS limited_downstream
-        UNWIND limited_downstream AS b
-        MERGE (a)-[r:FUND_FLOW {{session_id:$session_id}}]->(b)
-        SET r.bgcolor = '#d8a822',
-            r.provisional = true,
-            r.reason = 'beneficiary later acts as sender',
-            r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
-        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
+        query = get_fund_flow_query(
+            label=label,
+            scope_clause_t=_session_scope_clause("t"),
+            scope_clause_a=_session_scope_clause("a"),
+            scope_clause_b=_session_scope_clause("b"),
+            trusted_pair_clause=_trusted_pair_clause('a', 'b'),
+            is_provisional=True,
+            boundary_clause="(a.batch_id = $batch_id OR b.batch_id = $batch_id)"
+        )
+        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         # Cheap row-local flags: only new batch rows.
         session.run(f"""
