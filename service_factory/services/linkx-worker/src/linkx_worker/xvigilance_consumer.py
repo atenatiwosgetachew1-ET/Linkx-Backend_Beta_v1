@@ -1304,12 +1304,15 @@ def consume_firehose():
                     batch_number += 1
 
         except Exception as e:
-            print(f"[xVigilance-Consumer] ERROR in consumer loop: {e}", flush=True)
+            print(f"[xVigilance-Consumer] FATAL KAFKA ERROR in consumer loop: {e}", flush=True)
             import traceback
             traceback.print_exc()
-            if not RUNNING:
-                break
-            time.sleep(0.5)
+            print("[xVigilance-Consumer] Tearing down Kafka connection and rebooting consumer from scratch...", flush=True)
+            try:
+                c.close()
+            except:
+                pass
+            return  # The immortal wrapper in __main__ will reboot it!
 
     c.close()
 
