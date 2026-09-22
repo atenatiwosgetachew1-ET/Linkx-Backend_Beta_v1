@@ -1276,6 +1276,7 @@ def consume_firehose():
                         with psycopg.connect(os.getenv('LINKX_POSTGRES_DSN')) as conn:
                             with conn.cursor() as cur:
                                 cur.execute("UPDATE xvigilance_checkpoints SET total_graph_analyzed = total_graph_analyzed + %s", (data.get('total_records', 0),))
+                                cur.execute("UPDATE xvigilance_slice_runs SET status = 'succeeded', finished_at = NOW() WHERE window_end = %s", (data.get('window_id'),))
                             conn.commit()
                         print(f"[xVigilance-Consumer] Checkpoint total_graph_analyzed advanced by {data.get('total_records', 0)}.", flush=True)
                     except Exception as pg_e:
