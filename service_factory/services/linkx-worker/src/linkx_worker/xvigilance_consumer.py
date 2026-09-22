@@ -545,14 +545,12 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
 
                     CALL {{
                         WITH inbound
-                        MATCH (outbound:{label})
-                        WHERE outbound.ACCOUNTNO = inbound.BENACCOUNTNO
-                          AND ($session_id IS NULL OR outbound.session_id = $session_id)
+                        MATCH (outbound:{label} {ACCOUNTNO: inbound.BENACCOUNTNO, TRANSACTIONDATE: inbound.TRANSACTIONDATE})
+                        WHERE ($session_id IS NULL OR outbound.session_id = $session_id)
                           AND outbound.BENACCOUNTNO IS NOT NULL
                           AND outbound.BENACCOUNTNO <> ''
                           AND outbound.BENACCOUNTNO <> inbound.ACCOUNTNO
-                          AND coalesce(outbound.TRANSACTIONDATE, '') = coalesce(inbound.TRANSACTIONDATE, '')
-                          AND coalesce(outbound.TRANSACTIONTIME, '') >= coalesce(inbound.TRANSACTIONTIME, '')
+                          AND outbound.TRANSACTIONTIME >= inbound.TRANSACTIONTIME
                         WITH inbound, outbound,
                              coalesce(toFloat(inbound.AMOUNTINBIRR), toFloat(inbound.AMOUNT),
                                       toFloat(inbound.amount), toFloat(inbound.LOCAL_AMOUNT), 0.0) AS in_amt,
