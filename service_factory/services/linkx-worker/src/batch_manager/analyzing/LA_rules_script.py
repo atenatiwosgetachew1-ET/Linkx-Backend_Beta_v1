@@ -144,16 +144,16 @@ def batch_graph_analysis_transactions(
               AND inbound.BENACCOUNTNO IN $pass_through_accounts
               AND inbound.ACCOUNTNO IS NOT NULL AND inbound.ACCOUNTNO <> 
 
-            CALL {
+            CALL {{
                 WITH inbound
                 MATCH (outbound:{label})
                 WHERE outbound.ACCOUNTNO = inbound.BENACCOUNTNO
                   AND {_session_scope_clause("outbound")}
                   AND outbound.BENACCOUNTNO IS NOT NULL
-                  AND outbound.BENACCOUNTNO <> 
+                  AND outbound.BENACCOUNTNO <> ''
                   AND outbound.BENACCOUNTNO <> inbound.ACCOUNTNO
-                  AND coalesce(outbound.TRANSACTIONDATE, ) = coalesce(inbound.TRANSACTIONDATE, )
-                  AND coalesce(outbound.TRANSACTIONTIME, ) >= coalesce(inbound.TRANSACTIONTIME, )
+                  AND coalesce(outbound.TRANSACTIONDATE, '') = coalesce(inbound.TRANSACTIONDATE, '')
+                  AND coalesce(outbound.TRANSACTIONTIME, '') >= coalesce(inbound.TRANSACTIONTIME, '')
                 WITH inbound, outbound,
                      coalesce(toFloat(inbound.AMOUNTINBIRR), toFloat(inbound.AMOUNT),
                               toFloat(inbound.amount), toFloat(inbound.LOCAL_AMOUNT), 0.0) AS in_amt,
@@ -164,7 +164,7 @@ def batch_graph_analysis_transactions(
                 RETURN outbound, in_amt, out_amt
                 ORDER BY outbound.TRANSACTIONTIME ASC
                 LIMIT 1
-            }
+            }}
 
             MERGE (inbound)-[r:EFFECTIVE_FLOW {{session_id:$session_id}}]->(outbound)
             SET r.intermediary = inbound.BENACCOUNTNO,

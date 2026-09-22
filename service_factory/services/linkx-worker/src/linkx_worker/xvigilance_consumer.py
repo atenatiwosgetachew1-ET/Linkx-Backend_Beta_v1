@@ -543,7 +543,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                       AND inbound.BENACCOUNTNO IN $pass_through_accounts
                       AND inbound.ACCOUNTNO IS NOT NULL AND inbound.ACCOUNTNO <> ''
 
-                    CALL {
+                    CALL {{
                         WITH inbound
                         MATCH (outbound:{label})
                         WHERE outbound.ACCOUNTNO = inbound.BENACCOUNTNO
@@ -563,7 +563,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                         RETURN outbound, in_amt, out_amt
                         ORDER BY outbound.TRANSACTIONTIME ASC
                         LIMIT 1
-                    }
+                    }}
 
                     MERGE (inbound)-[r:EFFECTIVE_FLOW {{session_id:$session_id}}]->(outbound)
                     SET r.intermediary = inbound.BENACCOUNTNO,
