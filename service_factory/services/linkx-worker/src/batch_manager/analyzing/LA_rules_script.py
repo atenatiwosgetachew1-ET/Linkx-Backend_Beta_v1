@@ -138,7 +138,6 @@ def batch_graph_analysis_transactions(
         # 0. EFFECTIVE_FLOW: trace funds through pass-through intermediaries
         # ----------------------------
         if pass_through_accounts:
-                    if pass_through_accounts:
             log_writer(log_file, f"[{datetime.now()}] [Info] Starting EFFECTIVE_FLOW rule (Python accelerated)")
             try:
                 # 1. Fetch inbound
