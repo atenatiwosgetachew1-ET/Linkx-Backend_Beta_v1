@@ -1317,4 +1317,15 @@ def consume_firehose():
     c.close()
 
 if __name__ == "__main__":
-    consume_firehose()
+    import time
+    while RUNNING:
+        try:
+            consume_firehose()
+        except Exception as e:
+            print(f"[xVigilance-Consumer] FATAL CRASH CAUGHT: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            if RUNNING:
+                print("[xVigilance-Consumer] RESTARTING IN 5 SECONDS...", flush=True)
+                time.sleep(5)
+    print("[xVigilance-Consumer] Daemon successfully exited.", flush=True)
