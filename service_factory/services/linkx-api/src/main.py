@@ -1383,6 +1383,10 @@ def configuration():
 
                         # Merge back into configuration
                         save_temp_config("all", config_dict, session_id)
+                        
+                        actor = current_actor_from_request()
+                        if actor and actor.get("actor_type") == "user":
+                            save_user_config(actor.get("id"), config_dict)
 
                         return _configuration_success(config_dict)
                     else:
@@ -1443,9 +1447,14 @@ def configuration():
             if session_id:
                 save_temp_config("all", config_dict, session_id)
                 config_dict = load_temp_config("data", session_id) or config_dict
+                
+                actor = current_actor_from_request()
+                if actor and actor.get("actor_type") == "user":
+                    save_user_config(actor.get("id"), config_dict)
+                
                 _record_security_event_safe(
                     "config.session.save",
-                    actor=current_actor_from_request(),
+                    actor=actor,
                     target_type="session_config",
                     target_id=session_id,
                     session_id=session_id,
@@ -1510,6 +1519,11 @@ def configuration():
                     removed_paths.append(pyc_path)
 
         save_temp_config("all", config_dict, session_id)
+        
+        actor = current_actor_from_request()
+        if actor and actor.get("actor_type") == "user":
+            save_user_config(actor.get("id"), config_dict)
+            
         return _configuration_success(config_dict, extra={'removed_rule': rule_name, 'removed_files': removed_paths})
     else:
         current_app.logger.info("unknown configuration action fields=%s", redact_value(data))
