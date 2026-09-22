@@ -99,6 +99,9 @@ When instructing the user to pull code updates and restart services on remote se
 > 5. **ALWAYS include a `sleep 3` or `sleep 4` boot delay before running verification**:
 >    Services like Flask/eventlet require 2–4 seconds to initialize database connection pools and bind sockets. Running `verify-linkx-server.py` immediately after `systemctl restart` will cause false `Connection refused` (502) errors.
 
+> 6. **NEVER provide copy-paste bash blocks that can trigger aggressive terminal line wrapping**:
+>    Many SSH clients wrap text around 80 characters, causing line breaks on hyphens (`-`) or spaces. This shatters `cp` and `git` commands into invalid fragments (e.g., `cp: missing destination file operand`). Always provide ultra-short commands using sequential `cd` steps.
+
 ---
 
 ## 4. Standard Server Update Templates
