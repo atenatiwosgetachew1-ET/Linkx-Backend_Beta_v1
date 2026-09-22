@@ -6,6 +6,21 @@ from datetime import datetime
 import signal
 import sys
 
+from batch_manager.analyzing.LA_rules_script import (
+    get_smurfing_query,
+    get_circular_flow_query,
+    get_fund_flow_query,
+    get_dormant_to_active_query,
+    get_abnormal_balance_query,
+    get_hub_and_spoke_out_query,
+    get_hub_and_spoke_in_query,
+    get_shared_identifier_query,
+    get_rapid_withdrawal_query,
+    get_account_activity_spike_query,
+    get_high_risk_link_query
+)
+
+
 from batch_manager.services.risk_scoring_kafka_service import DEFAULT_KAFKA_BROKERS, _neo4j_credentials, _base_analyzer_payload
 from batch_manager.analyzing.analyzer import realtime_neo4j_message_ingest, rule_to_node_label
 from batch_manager.services.risk_scoring_kafka_service import create_neo4j_driver

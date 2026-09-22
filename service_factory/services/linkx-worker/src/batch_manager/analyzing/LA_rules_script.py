@@ -567,11 +567,11 @@ def batch_graph_analysis_transactions(
         # ----------------------------
         query = get_smurfing_query(
             label=label,
-            scope_clause_t="t.batch_id = $batch_id",
+            scope_clause_t="$session_id IS NULL OR t.session_id = $session_id OR t.batch_id STARTS WITH $session_id",
             trusted_pair_clause=_trusted_pair_clause('a', 'b'),
             is_provisional=False
         )
-        session.run(query, session_id=session_param, batch_id=batch_id, trusted_entries=trusted_entries, pt=pass_through_accounts,
+        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts,
              smurfing_single_tx_threshold=single_tx_threshold,
              smurfing_cumulative_threshold=total_threshold,
              smurfing_min_tx_count=min_tx_count)
@@ -581,26 +581,26 @@ def batch_graph_analysis_transactions(
         # ----------------------------
         query = get_circular_flow_query(
             label=label,
-            scope_clause_t="t.batch_id = $batch_id",
-            scope_clause_a="a.batch_id = $batch_id",
-            scope_clause_b="b.batch_id = $batch_id",
+            scope_clause_t="$session_id IS NULL OR t.session_id = $session_id OR t.batch_id STARTS WITH $session_id",
+            scope_clause_a="$session_id IS NULL OR a.session_id = $session_id OR a.batch_id STARTS WITH $session_id",
+            scope_clause_b="$session_id IS NULL OR b.session_id = $session_id OR b.batch_id STARTS WITH $session_id",
             trusted_pair_clause=_trusted_pair_clause('a', 'b'),
             is_provisional=False
         )
-        session.run(query, session_id=session_param, batch_id=batch_id, trusted_entries=trusted_entries, pt=pass_through_accounts)
+        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         # ----------------------------
         # 3. FUND_FLOW: beneficiary becomes sender in a later transaction
         # ----------------------------
         query = get_fund_flow_query(
             label=label,
-            scope_clause_t="t.batch_id = $batch_id",
-            scope_clause_a="a.batch_id = $batch_id",
-            scope_clause_b="b.batch_id = $batch_id",
+            scope_clause_t="$session_id IS NULL OR t.session_id = $session_id OR t.batch_id STARTS WITH $session_id",
+            scope_clause_a="$session_id IS NULL OR a.session_id = $session_id OR a.batch_id STARTS WITH $session_id",
+            scope_clause_b="$session_id IS NULL OR b.session_id = $session_id OR b.batch_id STARTS WITH $session_id",
             trusted_pair_clause=_trusted_pair_clause('a', 'b'),
             is_provisional=False
         )
-        session.run(query, session_id=session_param, batch_id=batch_id, trusted_entries=trusted_entries, pt=pass_through_accounts)
+        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         # ----------------------------
         # 4. DORMANT_TO_ACTIVE
