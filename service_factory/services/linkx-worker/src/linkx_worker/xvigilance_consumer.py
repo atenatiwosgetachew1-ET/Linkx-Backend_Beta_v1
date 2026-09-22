@@ -145,12 +145,20 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
                 m_props = dict(m)
                 r_props = dict(r)
                 
+                if n_props.get("LOGICAL_BENACCOUNTNO"):
+                    n_props["BENACCOUNTNO"] = n_props["LOGICAL_BENACCOUNTNO"]
+                    n_props["IS_LOGICAL_PASSTHROUGH"] = True
+                    
                 graphs[anomaly_type]["nodes"][n_id] = {
                     "id": n_id,
                     "label": n_props.get("NodeId", n_id),
                     **n_props
                 }
                 
+                if m_props.get("LOGICAL_BENACCOUNTNO"):
+                    m_props["BENACCOUNTNO"] = m_props["LOGICAL_BENACCOUNTNO"]
+                    m_props["IS_LOGICAL_PASSTHROUGH"] = True
+                    
                 graphs[anomaly_type]["nodes"][m_id] = {
                     "id": m_id,
                     "label": m_props.get("NodeId", m_id),
@@ -569,7 +577,6 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                         r.bgcolor = '#9b59b6',
                         r.textcolor = '#eeeeee',
                         r.provisional = false,
-                        r.reason = 'funds flow through trusted intermediary',
                         r.edge_semantic = 'EFFECTIVE_FLOW',
                         r.financial_flow = true,
                         r.directed_display = true

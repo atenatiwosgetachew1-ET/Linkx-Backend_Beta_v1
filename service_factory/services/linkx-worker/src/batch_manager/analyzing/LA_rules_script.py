@@ -178,7 +178,6 @@ def batch_graph_analysis_transactions(
                 r.bgcolor = '#9b59b6',
                 r.textcolor = '#eeeeee',
                 r.provisional = false,
-                r.reason = 'funds flow through trusted intermediary',
                 r.edge_semantic = 'EFFECTIVE_FLOW',
                 r.financial_flow = true,
                 r.directed_display = true
@@ -654,7 +653,6 @@ def incremental_graph_analysis_transactions(
                 r.bgcolor = '#9b59b6',
                 r.textcolor = '#eeeeee',
                 r.provisional = true,
-                r.reason = 'funds flow through trusted intermediary',
                 r.edge_semantic = 'EFFECTIVE_FLOW',
                 r.financial_flow = true,
                 r.directed_display = true
