@@ -1192,6 +1192,8 @@ def consume_firehose():
             session.run(f"CREATE INDEX idx_batch_id IF NOT EXISTS FOR (n:`{node_label}`) ON (n.batch_id)")
             session.run(f"CREATE INDEX idx_account_no IF NOT EXISTS FOR (n:`{node_label}`) ON (n.ACCOUNTNO)")
             session.run(f"CREATE INDEX idx_ben_account_no IF NOT EXISTS FOR (n:`{node_label}`) ON (n.BENACCOUNTNO)")
+            session.run(f"CREATE INDEX idx_logical_acc IF NOT EXISTS FOR (n:`{node_label}`) ON (n.LOGICAL_ACCOUNTNO)")
+            session.run(f"CREATE INDEX idx_logical_ben IF NOT EXISTS FOR (n:`{node_label}`) ON (n.LOGICAL_BENACCOUNTNO)")
             session.run(f"CREATE INDEX idx_tx_date IF NOT EXISTS FOR (n:`{node_label}`) ON (n.TRANSACTIONDATE)")
             session.run(f"CREATE INDEX idx_bus_phone IF NOT EXISTS FOR (n:`{node_label}`) ON (n.BUSINESSMOBILENO)")
             session.run(f"CREATE INDEX idx_ben_phone IF NOT EXISTS FOR (n:`{node_label}`) ON (n.BENTELNO)")

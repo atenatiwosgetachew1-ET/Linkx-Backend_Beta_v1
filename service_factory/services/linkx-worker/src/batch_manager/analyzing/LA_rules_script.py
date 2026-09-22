@@ -82,7 +82,7 @@ TRANSACTION_RELATIONSHIPS = [
 def _create_transaction_indexes(session, label):
     index_prefix = _safe_index_name(label)
     safe_label = _safe_label(label)
-    for prop in ["batch_id", "session_id", "ACCOUNTNO", "BENACCOUNTNO", "TRANSACTIONDATE", "BUSINESSMOBILENO", "BENTELNO"]:
+    for prop in ["batch_id", "session_id", "ACCOUNTNO", "BENACCOUNTNO", "LOGICAL_ACCOUNTNO", "LOGICAL_BENACCOUNTNO", "TRANSACTIONDATE", "BUSINESSMOBILENO", "BENTELNO"]:
         index_name = _safe_index_name("idx", index_prefix, prop)
         session.run(f"CREATE INDEX {index_name} IF NOT EXISTS FOR (n:{safe_label}) ON (n.{prop})")
 
