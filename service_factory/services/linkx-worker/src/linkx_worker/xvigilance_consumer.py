@@ -679,7 +679,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                   SET r2.bgcolor = '#e6e6e6', r2.provisional = false, r2.reason = 'same-day reverse transfer pair',
                       r2.edge_semantic = 'OBSERVED_FLOW', r2.financial_flow = true, r2.directed_display = true
                 }} IN TRANSACTIONS OF 1000 ROWS
-                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
+                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pass_through_accounts=pass_through_accounts)
             rules_completed.append("CIRCULAR_FLOW")
             print(f"  [Rule] CIRCULAR_FLOW ✓", flush=True)
         except Exception as e:
@@ -721,7 +721,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                       r.reason = 'beneficiary later acts as sender',
                       r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
                 }} IN TRANSACTIONS OF 1000 ROWS
-                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
+                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pass_through_accounts=pass_through_accounts)
             rules_completed.append("FUND_FLOW")
             print(f"  [Rule] FUND_FLOW ✓", flush=True)
         except Exception as e:
@@ -742,7 +742,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 SET r.bgcolor = '#c20f0f', r.textcolor = '#eeeeee', r.provisional = false,
                     r.reason = 'dormant source account transacts with active beneficiary',
                     r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
+                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pass_through_accounts=pass_through_accounts)
             rules_completed.append("DORMANT_TO_ACTIVE")
             print(f"  [Rule] DORMANT_TO_ACTIVE ✓", flush=True)
         except Exception as e:
@@ -782,7 +782,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                     r.reason = 'balance change exceeds recent account baseline',
                     r.change = current_change, r.average_recent_change = avg_change, r.threshold_multiplier = 3,
                     r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
-                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
+                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pass_through_accounts=pass_through_accounts)
             rules_completed.append("ABNORMAL_BALANCE_CHANGE")
             print(f"  [Rule] ABNORMAL_BALANCE_CHANGE ✓", flush=True)
         except Exception as e:
@@ -875,7 +875,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                       r.account_count = size(accounts),
                       r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
                 }} IN TRANSACTIONS OF 1000 ROWS
-                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
+                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pass_through_accounts=pass_through_accounts)
             rules_completed.append("SHARED_IDENTIFIER")
             print(f"  [Rule] SHARED_IDENTIFIER ✓", flush=True)
         except Exception as e:
@@ -1030,7 +1030,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                     SET r.bgcolor = '#de7d07', r.provisional = false, r.reason = 'Configured risk entity matched', r.risk_source = 'risk_entities', r.category = cat,
                         r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
                 )
-                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries)
+                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pass_through_accounts=pass_through_accounts)
             rules_completed.append("HIGH_RISK_LINK")
             print(f"  [Rule] HIGH_RISK_LINK / PEP / SANCTION ✓", flush=True)
         except Exception as e:

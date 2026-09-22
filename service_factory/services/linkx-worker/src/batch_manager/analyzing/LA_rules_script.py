@@ -267,7 +267,7 @@ def batch_graph_analysis_transactions(
         SET r1.bgcolor = '#e6e6e6', r1.provisional = false, r1.reason = 'same-day reverse transfer pair'
         MERGE (b)-[r2:CIRCULAR_FLOW {{session_id:$session_id}}]->(a)
         SET r2.bgcolor = '#e6e6e6', r2.provisional = false, r2.reason = 'same-day reverse transfer pair'
-        """, session_id=session_param, trusted_entries=trusted_entries)
+        """, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         # ----------------------------
         # 3. FUND_FLOW: beneficiary becomes sender in a later transaction
@@ -299,7 +299,7 @@ def batch_graph_analysis_transactions(
             r.provisional = false,
             r.reason = 'beneficiary later acts as sender',
             r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
-        """, session_id=session_param, trusted_entries=trusted_entries)
+        """, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         # ----------------------------
         # 4. DORMANT_TO_ACTIVE
@@ -315,7 +315,7 @@ def batch_graph_analysis_transactions(
             r.provisional = false,
             r.reason = 'dormant source account transacts with active beneficiary',
             r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-        """, session_id=session_param, trusted_entries=trusted_entries)
+        """, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         # ---------------------------- 
         # 5. HIGH_RISK_LINK: configured risky account directly appears in transaction
@@ -333,7 +333,7 @@ def batch_graph_analysis_transactions(
             r.account = acc,
             r.risk_source = 'built_in_account_list',
             r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-        """, accounts=high_risk_accounts, session_id=session_param, trusted_entries=trusted_entries)
+        """, accounts=high_risk_accounts, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         session.run(f"""
         UNWIND $risk_entries AS entry
@@ -398,7 +398,7 @@ def batch_graph_analysis_transactions(
             r.average_recent_change = avg_change,
             r.threshold_multiplier = $threshold,
             r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
-        """, threshold=threshold_multiplier, session_id=session_param, trusted_entries=trusted_entries)
+        """, threshold=threshold_multiplier, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         # ----------------------------
         # 7. HUB_AND_SPOKE: one account fans out to, or receives from, many counterparties
@@ -426,7 +426,7 @@ def batch_graph_analysis_transactions(
             r.tx_day = tx_day,
             r.spoke_count = spoke_count,
             r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
-        """, session_id=session_param, min_tx_count=min_tx_count, trusted_entries=trusted_entries)
+        """, session_id=session_param, min_tx_count=min_tx_count, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         session.run(f"""
         MATCH (t:{label})
@@ -451,7 +451,7 @@ def batch_graph_analysis_transactions(
             r.tx_day = tx_day,
             r.spoke_count = spoke_count,
             r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
-        """, session_id=session_param, min_tx_count=min_tx_count, trusted_entries=trusted_entries)
+        """, session_id=session_param, min_tx_count=min_tx_count, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         # ----------------------------
         # 8. SHARED_IDENTIFIER: same phone identifier appears on multiple accounts
@@ -485,7 +485,7 @@ def batch_graph_analysis_transactions(
             r.identifier_value = identifier_value,
             r.account_count = size(accounts),
             r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
-        """, session_id=session_param, trusted_entries=trusted_entries)
+        """, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         # ----------------------------
         # 9. LATE_NIGHT_TX
@@ -503,7 +503,7 @@ def batch_graph_analysis_transactions(
             r.provisional = false,
             r.reason = 'transaction occurred outside typical business hours',
             r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-        """, session_id=session_param, trusted_entries=trusted_entries)
+        """, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         # ----------------------------
         # 10. JUST_BELOW_THRESHOLD
@@ -548,7 +548,7 @@ def batch_graph_analysis_transactions(
             r.in_amount = in_amt,
             r.out_amount = out_amt,
             r.edge_semantic = 'OBSERVED_FLOW', r.financial_flow = true, r.directed_display = true
-        """, session_id=session_param, trusted_entries=trusted_entries)
+        """, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         # ----------------------------
         # 12. ACCOUNT_ACTIVITY_SPIKE
@@ -575,7 +575,7 @@ def batch_graph_analysis_transactions(
             r.daily_count = daily_count,
             r.avg_daily = avg_daily,
             r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-        """, session_id=session_param, trusted_entries=trusted_entries)
+        """, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         counts = _count_transaction_relationships(session, session_param) if session_param else {}
         _write_gds_metrics(session, f"{session_param}_transactions", nodes_label, session_param, TRANSACTION_RELATIONSHIPS, log_file)
@@ -739,7 +739,7 @@ def incremental_graph_analysis_transactions(
         SET r1.bgcolor = '#e6e6e6', r1.provisional = true, r1.reason = 'same-day reverse transfer pair'
         MERGE (other)-[r2:CIRCULAR_FLOW {{session_id:$session_id}}]->(seed)
         SET r2.bgcolor = '#e6e6e6', r2.provisional = true, r2.reason = 'same-day reverse transfer pair'
-        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
+        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         # Fund flow: new nodes can either precede or complete a downstream flow.
         session.run(f"""
@@ -769,7 +769,7 @@ def incremental_graph_analysis_transactions(
             r.provisional = true,
             r.reason = 'beneficiary later acts as sender',
             r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
-        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
+        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         # Cheap row-local flags: only new batch rows.
         session.run(f"""
@@ -783,7 +783,7 @@ def incremental_graph_analysis_transactions(
             r.provisional = true,
             r.reason = 'dormant source account transacts with active beneficiary',
             r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
+        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         session.run(f"""
         UNWIND $accounts AS acc
@@ -798,7 +798,7 @@ def incremental_graph_analysis_transactions(
             r.account = acc,
             r.risk_source = 'built_in_account_list',
             r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-        """, accounts=high_risk_accounts, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
+        """, accounts=high_risk_accounts, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         session.run(f"""
         UNWIND $risk_entries AS entry
@@ -866,7 +866,7 @@ def incremental_graph_analysis_transactions(
             r.average_recent_change = avg_change,
             r.threshold_multiplier = $threshold,
             r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
-        """, batch_id=batch_id, session_id=session_param, threshold=threshold_multiplier, trusted_entries=trusted_entries)
+        """, batch_id=batch_id, session_id=session_param, threshold=threshold_multiplier, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         # Hub-and-spoke: recalculate account fans touched by this batch.
         session.run(f"""
@@ -894,7 +894,7 @@ def incremental_graph_analysis_transactions(
             r.tx_day = tx_day,
             r.spoke_count = spoke_count,
             r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
-        """, batch_id=batch_id, session_id=session_param, min_tx_count=min_tx_count, trusted_entries=trusted_entries)
+        """, batch_id=batch_id, session_id=session_param, min_tx_count=min_tx_count, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         session.run(f"""
         MATCH (seed:{label})
@@ -921,7 +921,7 @@ def incremental_graph_analysis_transactions(
             r.tx_day = tx_day,
             r.spoke_count = spoke_count,
             r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
-        """, batch_id=batch_id, session_id=session_param, min_tx_count=min_tx_count, trusted_entries=trusted_entries)
+        """, batch_id=batch_id, session_id=session_param, min_tx_count=min_tx_count, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         # Shared identifier: recalculate phone identifiers touched by this batch.
         session.run(f"""
@@ -965,7 +965,7 @@ def incremental_graph_analysis_transactions(
             r.identifier_value = identifier_value,
             r.account_count = size(accounts),
             r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
-        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
+        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         session.run(f"""
         MATCH (t:{label})
@@ -980,7 +980,7 @@ def incremental_graph_analysis_transactions(
             r.provisional = true,
             r.reason = 'transaction occurred outside typical business hours',
             r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
+        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         session.run(f"""
         MATCH (t:{label})
@@ -1020,7 +1020,7 @@ def incremental_graph_analysis_transactions(
             r.in_amount = in_amt,
             r.out_amount = out_amt,
             r.edge_semantic = 'OBSERVED_FLOW', r.financial_flow = true, r.directed_display = true
-        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
+        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         session.run(f"""
         MATCH (t:{label})
@@ -1044,7 +1044,7 @@ def incremental_graph_analysis_transactions(
             r.daily_count = daily_count,
             r.avg_daily = avg_daily,
             r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries)
+        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         counts = _count_transaction_relationships(session, session_param)
 
