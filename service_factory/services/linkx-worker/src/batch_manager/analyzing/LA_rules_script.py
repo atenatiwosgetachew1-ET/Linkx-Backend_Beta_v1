@@ -116,7 +116,7 @@ def get_smurfing_query(label, scope_clause_t, trusted_pair_clause, is_provisiona
     WITH txns[i] AS a, txns[i+1] AS b, acc, beneficiary, tx_day, tx_count, total_amount
     WHERE {trusted_pair_clause}
     MERGE (a)-[r:SMURFING {{session_id:$session_id}}]->(b)
-    SET r.bgcolor = '#d5d276', r.provisional = {prov_str},
+    SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#d5d276', r.provisional = {prov_str},
         r.reason = 'multiple small same-day transfers below threshold',
         r.account = acc, r.beneficiary = beneficiary, r.tx_day = tx_day,
         r.tx_count = tx_count, r.total_amount = total_amount,
@@ -164,10 +164,10 @@ def get_circular_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_
     CALL {{
       WITH a, b
       MERGE (a)-[r1:CIRCULAR_FLOW {{session_id:$session_id}}]->(b)
-      SET r1.bgcolor = '#e6e6e6', r1.provisional = {prov_str}, r1.reason = 'same-day reverse transfer pair',
+      SET r1.is_evidence = true, r1.anomaly_score = 0.6, r1.bgcolor = '#e6e6e6', r1.provisional = {prov_str}, r1.reason = 'same-day reverse transfer pair',
           r1.edge_semantic = 'OBSERVED_FLOW', r1.financial_flow = true, r1.directed_display = true
       MERGE (b)-[r2:CIRCULAR_FLOW {{session_id:$session_id}}]->(a)
-      SET r2.bgcolor = '#e6e6e6', r2.provisional = {prov_str}, r2.reason = 'same-day reverse transfer pair',
+      SET r2.is_evidence = true, r2.anomaly_score = 0.6, r2.bgcolor = '#e6e6e6', r2.provisional = {prov_str}, r2.reason = 'same-day reverse transfer pair',
           r2.edge_semantic = 'OBSERVED_FLOW', r2.financial_flow = true, r2.directed_display = true
     }} IN TRANSACTIONS OF 5000 ROWS
     """
@@ -215,7 +215,7 @@ def get_fund_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, t
     CALL {{
       WITH a, b
       MERGE (a)-[r:FUND_FLOW {{session_id:$session_id}}]->(b)
-      SET r.bgcolor = '#d8a822', r.provisional = {prov_str},
+      SET r.is_evidence = true, r.anomaly_score = 0.5, r.bgcolor = '#d8a822', r.provisional = {prov_str},
           r.reason = 'beneficiary later acts as sender',
           r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
     }} IN TRANSACTIONS OF 5000 ROWS
@@ -227,7 +227,7 @@ def get_dormant_to_active_query(label, scope_clause_t, is_provisional=False, inc
     return f"""
     {seed_block}
     MERGE (t)-[r:DORMANT_TO_ACTIVE {{session_id:$session_id}}]->(t)
-    SET r.bgcolor = '#c20f0f', r.textcolor = '#eeeeee', r.provisional = {prov_str},
+    SET r.is_evidence = true, r.anomaly_score = 0.4, r.bgcolor = '#c20f0f', r.textcolor = '#eeeeee', r.provisional = {prov_str},
         r.reason = 'dormant source account transacts with active beneficiary',
         r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
     """
@@ -260,7 +260,7 @@ def get_abnormal_balance_query(label, scope_clause_t, is_provisional=False, incr
          reduce(s = 0.0, x IN history | s + abs(coalesce(toFloat(x.SENDERPREVIOUSBALANCE), 0.0))) / size(history) AS avg_change
     WHERE current_change > (avg_change * 3)
     MERGE (previous)-[r:ABNORMAL_BALANCE_CHANGE {{session_id:$session_id}}]->(current)
-    SET r.bgcolor = '#196e08', r.textcolor = '#eeeeee', r.provisional = {prov_str},
+    SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#196e08', r.textcolor = '#eeeeee', r.provisional = {prov_str},
         r.reason = 'balance change exceeds recent account baseline',
         r.change = current_change, r.average_recent_change = avg_change, r.threshold_multiplier = 3,
         r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
@@ -288,7 +288,7 @@ def get_hub_and_spoke_out_query(label, scope_clause_t, trusted_pair_clause, is_p
       WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
       WHERE {trusted_pair_clause}
       MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
-      SET r.bgcolor = '#6f42c1', r.textcolor = '#eeeeee', r.provisional = {prov_str},
+      SET r.is_evidence = true, r.anomaly_score = 0.5, r.bgcolor = '#6f42c1', r.textcolor = '#eeeeee', r.provisional = {prov_str},
           r.reason = 'account connects with multiple counterparties on same day',
           r.hub_account = hub, r.direction = 'outgoing', r.tx_day = tx_day, r.spoke_count = spoke_count,
           r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
@@ -317,7 +317,7 @@ def get_hub_and_spoke_in_query(label, scope_clause_t, trusted_pair_clause, is_pr
       WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
       WHERE {trusted_pair_clause}
       MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
-      SET r.bgcolor = '#6f42c1', r.textcolor = '#eeeeee', r.provisional = {prov_str},
+      SET r.is_evidence = true, r.anomaly_score = 0.5, r.bgcolor = '#6f42c1', r.textcolor = '#eeeeee', r.provisional = {prov_str},
           r.reason = 'account connects with multiple counterparties on same day',
           r.hub_account = hub, r.direction = 'incoming', r.tx_day = tx_day, r.spoke_count = spoke_count,
           r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
@@ -356,7 +356,7 @@ def get_shared_identifier_query(label, scope_clause_t, is_provisional=False, inc
       UNWIND range(0, size(txns)-2) AS i
       WITH txns[i] AS a, txns[i+1] AS b, identifier_type, identifier_value, accounts
       MERGE (a)-[r:SHARED_IDENTIFIER {{session_id:$session_id}}]->(b)
-      SET r.bgcolor = '#0d898a', r.textcolor = '#eeeeee', r.provisional = {prov_str},
+      SET r.is_evidence = true, r.anomaly_score = 0.8, r.bgcolor = '#0d898a', r.textcolor = '#eeeeee', r.provisional = {prov_str},
           r.reason = 'same identifier appears on multiple accounts',
           r.identifier_type = identifier_type, r.identifier_value = identifier_value,
           r.account_count = size(accounts),
@@ -397,7 +397,7 @@ def get_rapid_withdrawal_query(label, scope_clause_t, is_provisional=False, incr
       WHERE in_amt > 0 AND out_amt > 0
         AND abs(in_amt - out_amt) <= (in_amt * $rapid_withdrawal_amount_tolerance)
       MERGE (t1)-[r:RAPID_WITHDRAWAL {{session_id:$session_id}}]->(t2)
-      SET r.bgcolor = '#e07624', r.textcolor = '#eeeeee', r.provisional = {prov_str},
+      SET r.is_evidence = true, r.anomaly_score = 0.4, r.bgcolor = '#e07624', r.textcolor = '#eeeeee', r.provisional = {prov_str},
           r.reason = 'funds rapidly withdrawn or passed through on same day',
           r.in_amount = in_amt, r.out_amount = out_amt,
           r.edge_semantic = 'OBSERVED_FLOW', r.financial_flow = true, r.directed_display = true
@@ -434,7 +434,7 @@ def get_account_activity_spike_query(label, scope_clause_t, is_provisional=False
     CALL (txns, daily_count, avg_daily) {{
       UNWIND txns AS t
       MERGE (t)-[r:ACCOUNT_ACTIVITY_SPIKE {{session_id:$session_id}}]->(t)
-      SET r.bgcolor = '#99153c', r.textcolor = '#eeeeee', r.provisional = {prov_str},
+      SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#99153c', r.textcolor = '#eeeeee', r.provisional = {prov_str},
           r.reason = 'unusually high transaction volume for this account on this day',
           r.daily_count = daily_count, r.avg_daily = avg_daily,
           r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
@@ -460,7 +460,7 @@ def get_high_risk_link_query(label, scope_clause_t, is_provisional=False, increm
       UNWIND matched_categories AS cat
       FOREACH (ignore IN CASE WHEN NOT cat IN ['PEP', 'SANCTION', 'SANCTIONS', 'SANCTIONED'] THEN [1] ELSE [] END |
           MERGE (t)-[r:HIGH_RISK_LINK {{session_id:$session_id}}]->(t)
-          SET r.bgcolor = '#de7d07', r.provisional = {prov_str}, r.reason = 'Configured risk entity matched', r.risk_source = 'risk_entities', r.category = cat,
+          SET r.is_evidence = true, r.anomaly_score = 0.7, r.bgcolor = '#de7d07', r.provisional = {prov_str}, r.reason = 'Configured risk entity matched', r.risk_source = 'risk_entities', r.category = cat,
               r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
       )
     }} IN TRANSACTIONS OF 1000 ROWS
@@ -701,7 +701,7 @@ def batch_graph_analysis_transactions(
           AND toLower(coalesce(t.BENACCOUNTSTATE, '')) = 'active'
           AND {_trusted_node_clause('t')}
         MERGE (t)-[r:DORMANT_TO_ACTIVE {{session_id:$session_id}}]->(t)
-        SET r.bgcolor = '#ff8c8c',
+        SET r.is_evidence = true, r.anomaly_score = 0.4, r.bgcolor = '#ff8c8c',
             r.provisional = false,
             r.reason = 'dormant source account transacts with active beneficiary',
             r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
@@ -717,7 +717,7 @@ def batch_graph_analysis_transactions(
           AND (t.ACCOUNTNO = acc OR t.BENACCOUNTNO = acc)
           AND {_trusted_node_clause('t')}
         MERGE (t)-[r:HIGH_RISK_LINK {{session_id:$session_id}}]->(t)
-        SET r.bgcolor = '#de7d07',
+        SET r.is_evidence = true, r.anomaly_score = 0.7, r.bgcolor = '#de7d07',
             r.provisional = false,
             r.reason = 'configured high-risk account appears in transaction',
             r.account = acc,
@@ -735,15 +735,15 @@ def batch_graph_analysis_transactions(
         
         FOREACH (ignore IN CASE WHEN cat = 'PEP' THEN [1] ELSE [] END |
             MERGE (t)-[r:PEP_INVOLVED {{session_id:$session_id}}]->(t)
-            SET r.bgcolor = '#0099ff', r.provisional = false, r.reason = 'PEP matched', r.risk_source = 'risk_entities', r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
+            SET r.is_evidence = true, r.anomaly_score = 0.8, r.bgcolor = '#0099ff', r.provisional = false, r.reason = 'PEP matched', r.risk_source = 'risk_entities', r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
         )
         FOREACH (ignore IN CASE WHEN cat IN ['SANCTION', 'SANCTIONS', 'SANCTIONED'] THEN [1] ELSE [] END |
             MERGE (t)-[r:SANCTIONED_ENTITY_MATCH {{session_id:$session_id}}]->(t)
-            SET r.bgcolor = '#ff3b3b', r.provisional = false, r.reason = 'Sanctioned entity matched', r.risk_source = 'risk_entities', r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
+            SET r.is_evidence = true, r.anomaly_score = 1.0, r.bgcolor = '#ff3b3b', r.provisional = false, r.reason = 'Sanctioned entity matched', r.risk_source = 'risk_entities', r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
         )
         FOREACH (ignore IN CASE WHEN NOT cat IN ['PEP', 'SANCTION', 'SANCTIONS', 'SANCTIONED'] THEN [1] ELSE [] END |
             MERGE (t)-[r:HIGH_RISK_LINK {{session_id:$session_id}}]->(t)
-            SET r.bgcolor = '#de7d07', r.provisional = false, r.reason = 'Configured risk entity matched', r.risk_source = 'risk_entities', r.category = cat, r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
+            SET r.is_evidence = true, r.anomaly_score = 0.7, r.bgcolor = '#de7d07', r.provisional = false, r.reason = 'Configured risk entity matched', r.risk_source = 'risk_entities', r.category = cat, r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
         )
         """, session_id=session_param, trusted_entries=trusted_entries, risk_entries=risk_entries)
 
@@ -781,7 +781,7 @@ def batch_graph_analysis_transactions(
         WHERE avg_change > 0 AND current_change >= avg_change * $threshold
           AND {_trusted_pair_clause('previous', 'current')}
         MERGE (previous)-[r:ABNORMAL_BALANCE_CHANGE {{session_id:$session_id}}]->(current)
-        SET r.bgcolor = '#8fde86',
+        SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#8fde86',
             r.provisional = false,
             r.reason = 'balance change exceeds recent account baseline',
             r.change = current_change,
@@ -809,7 +809,7 @@ def batch_graph_analysis_transactions(
         WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
         WHERE {_trusted_pair_clause('a', 'b')}
         MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
-        SET r.bgcolor = '#d0b3ff',
+        SET r.is_evidence = true, r.anomaly_score = 0.5, r.bgcolor = '#d0b3ff',
             r.provisional = false,
             r.reason = 'account connects with multiple counterparties on same day',
             r.hub_account = hub,
@@ -835,7 +835,7 @@ def batch_graph_analysis_transactions(
         WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
         WHERE {_trusted_pair_clause('a', 'b')}
         MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
-        SET r.bgcolor = '#d0b3ff',
+        SET r.is_evidence = true, r.anomaly_score = 0.5, r.bgcolor = '#d0b3ff',
             r.provisional = false,
             r.reason = 'account connects with multiple counterparties on same day',
             r.hub_account = hub,
@@ -870,7 +870,7 @@ def batch_graph_analysis_transactions(
         WITH txns[i] AS a, txns[i+1] AS b, identifier_type, identifier_value, accounts
         WHERE {_trusted_pair_clause('a', 'b')}
         MERGE (a)-[r:SHARED_IDENTIFIER {{session_id:$session_id}}]->(b)
-        SET r.bgcolor = '#8be0f0',
+        SET r.is_evidence = true, r.anomaly_score = 0.8, r.bgcolor = '#8be0f0',
             r.provisional = false,
             r.reason = 'same identifier appears on multiple accounts',
             r.identifier_type = identifier_type,
@@ -891,7 +891,7 @@ def batch_graph_analysis_transactions(
         WITH t, toInteger(substring(replace(toString(t.TRANSACTIONTIME), ':', ''), 0, 4)) AS t_time
         WHERE t_time >= 2300 OR t_time <= 400
         MERGE (t)-[r:LATE_NIGHT_TX {{session_id:$session_id}}]->(t)
-        SET r.bgcolor = '#00c1a2',
+        SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#00c1a2',
             r.provisional = false,
             r.reason = 'transaction occurred outside typical business hours',
             r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
@@ -908,7 +908,7 @@ def batch_graph_analysis_transactions(
         WITH t, coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) AS amt
         WHERE amt >= ($single_tx_threshold * 0.9) AND amt < $single_tx_threshold
         MERGE (t)-[r:JUST_BELOW_THRESHOLD {{session_id:$session_id}}]->(t)
-        SET r.bgcolor = '#dba124',
+        SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#dba124',
             r.provisional = false,
             r.reason = 'transaction amount is suspiciously close to reporting threshold',
             r.amount = amt,
@@ -934,7 +934,7 @@ def batch_graph_analysis_transactions(
              coalesce(toFloat(b.AMOUNTINBIRR), toFloat(b.AMOUNT), toFloat(b.amount), toFloat(b.LOCAL_AMOUNT), 0.0) AS out_amt
         WHERE in_amt > 0 AND out_amt >= (in_amt * 0.9) AND out_amt <= (in_amt * 1.1)
         MERGE (a)-[r:RAPID_WITHDRAWAL {{session_id:$session_id}}]->(b)
-        SET r.bgcolor = '#d5d276',
+        SET r.is_evidence = true, r.anomaly_score = 0.4, r.bgcolor = '#d5d276',
             r.provisional = false,
             r.reason = 'funds rapidly withdrawn or passed through on same day',
             r.in_amount = in_amt,
@@ -961,7 +961,7 @@ def batch_graph_analysis_transactions(
         WITH t, acc, tx_day, daily_count, avg_daily
         WHERE {_trusted_node_clause('t')}
         MERGE (t)-[r:ACCOUNT_ACTIVITY_SPIKE {{session_id:$session_id}}]->(t)
-        SET r.bgcolor = '#e6e6e6',
+        SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#e6e6e6',
             r.provisional = false,
             r.reason = 'unusually high transaction volume for this account on this day',
             r.daily_count = daily_count,
@@ -1070,7 +1070,7 @@ def incremental_graph_analysis_transactions(
           AND toLower(coalesce(t.BENACCOUNTSTATE, '')) = 'active'
           AND {_trusted_node_clause('t')}
         MERGE (t)-[r:DORMANT_TO_ACTIVE {{session_id:$session_id}}]->(t)
-        SET r.bgcolor = '#ff8c8c',
+        SET r.is_evidence = true, r.anomaly_score = 0.4, r.bgcolor = '#ff8c8c',
             r.provisional = true,
             r.reason = 'dormant source account transacts with active beneficiary',
             r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
@@ -1083,7 +1083,7 @@ def incremental_graph_analysis_transactions(
           AND (t.ACCOUNTNO = acc OR t.BENACCOUNTNO = acc)
           AND {_trusted_node_clause('t')}
         MERGE (t)-[r:HIGH_RISK_LINK {{session_id:$session_id}}]->(t)
-        SET r.bgcolor = '#de7d07',
+        SET r.is_evidence = true, r.anomaly_score = 0.7, r.bgcolor = '#de7d07',
             r.provisional = true,
             r.reason = 'configured high-risk account appears in transaction',
             r.account = acc,
@@ -1101,15 +1101,15 @@ def incremental_graph_analysis_transactions(
         
         FOREACH (ignore IN CASE WHEN cat = 'PEP' THEN [1] ELSE [] END |
             MERGE (t)-[r:PEP_INVOLVED {{session_id:$session_id}}]->(t)
-            SET r.bgcolor = '#0099ff', r.provisional = true, r.reason = 'PEP matched', r.risk_source = 'risk_entities', r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
+            SET r.is_evidence = true, r.anomaly_score = 0.8, r.bgcolor = '#0099ff', r.provisional = true, r.reason = 'PEP matched', r.risk_source = 'risk_entities', r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
         )
         FOREACH (ignore IN CASE WHEN cat IN ['SANCTION', 'SANCTIONS', 'SANCTIONED'] THEN [1] ELSE [] END |
             MERGE (t)-[r:SANCTIONED_ENTITY_MATCH {{session_id:$session_id}}]->(t)
-            SET r.bgcolor = '#ff3b3b', r.provisional = true, r.reason = 'Sanctioned entity matched', r.risk_source = 'risk_entities', r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
+            SET r.is_evidence = true, r.anomaly_score = 1.0, r.bgcolor = '#ff3b3b', r.provisional = true, r.reason = 'Sanctioned entity matched', r.risk_source = 'risk_entities', r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
         )
         FOREACH (ignore IN CASE WHEN NOT cat IN ['PEP', 'SANCTION', 'SANCTIONS', 'SANCTIONED'] THEN [1] ELSE [] END |
             MERGE (t)-[r:HIGH_RISK_LINK {{session_id:$session_id}}]->(t)
-            SET r.bgcolor = '#de7d07', r.provisional = true, r.reason = 'Configured risk entity matched', r.risk_source = 'risk_entities', r.category = cat, r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
+            SET r.is_evidence = true, r.anomaly_score = 0.7, r.bgcolor = '#de7d07', r.provisional = true, r.reason = 'Configured risk entity matched', r.risk_source = 'risk_entities', r.category = cat, r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
         )
         """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, risk_entries=risk_entries)
 
@@ -1150,7 +1150,7 @@ def incremental_graph_analysis_transactions(
         WHERE avg_change > 0 AND current_change >= avg_change * $threshold
           AND {_trusted_pair_clause('previous', 'current')}
         MERGE (previous)-[r:ABNORMAL_BALANCE_CHANGE {{session_id:$session_id}}]->(current)
-        SET r.bgcolor = '#8fde86',
+        SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#8fde86',
             r.provisional = true,
             r.reason = 'balance change exceeds recent account baseline',
             r.change = current_change,
@@ -1178,7 +1178,7 @@ def incremental_graph_analysis_transactions(
         UNWIND range(0, size(txns)-2) AS i
         WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
         MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
-        SET r.bgcolor = '#d0b3ff',
+        SET r.is_evidence = true, r.anomaly_score = 0.5, r.bgcolor = '#d0b3ff',
             r.provisional = true,
             r.reason = 'account connects with multiple counterparties on same day',
             r.hub_account = hub,
@@ -1206,7 +1206,7 @@ def incremental_graph_analysis_transactions(
         UNWIND range(0, size(txns)-2) AS i
         WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
         MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
-        SET r.bgcolor = '#d0b3ff',
+        SET r.is_evidence = true, r.anomaly_score = 0.5, r.bgcolor = '#d0b3ff',
             r.provisional = true,
             r.reason = 'account connects with multiple counterparties on same day',
             r.hub_account = hub,
@@ -1251,7 +1251,7 @@ def incremental_graph_analysis_transactions(
         WITH txns[i] AS a, txns[i+1] AS b, identifier_type, identifier_value, accounts
         WHERE {_trusted_pair_clause('a', 'b')}
         MERGE (a)-[r:SHARED_IDENTIFIER {{session_id:$session_id}}]->(b)
-        SET r.bgcolor = '#8be0f0',
+        SET r.is_evidence = true, r.anomaly_score = 0.8, r.bgcolor = '#8be0f0',
             r.provisional = true,
             r.reason = 'same identifier appears on multiple accounts',
             r.identifier_type = identifier_type,
@@ -1269,7 +1269,7 @@ def incremental_graph_analysis_transactions(
         WITH t, toInteger(substring(replace(toString(t.TRANSACTIONTIME), ':', ''), 0, 4)) AS t_time
         WHERE t_time >= 2300 OR t_time <= 400
         MERGE (t)-[r:LATE_NIGHT_TX {{session_id:$session_id}}]->(t)
-        SET r.bgcolor = '#00c1a2',
+        SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#00c1a2',
             r.provisional = true,
             r.reason = 'transaction occurred outside typical business hours',
             r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
@@ -1283,7 +1283,7 @@ def incremental_graph_analysis_transactions(
         WITH t, coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) AS amt
         WHERE amt >= ($single_tx_threshold * 0.9) AND amt < $single_tx_threshold
         MERGE (t)-[r:JUST_BELOW_THRESHOLD {{session_id:$session_id}}]->(t)
-        SET r.bgcolor = '#dba124',
+        SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#dba124',
             r.provisional = true,
             r.reason = 'transaction amount is suspiciously close to reporting threshold',
             r.amount = amt,
@@ -1307,7 +1307,7 @@ def incremental_graph_analysis_transactions(
              coalesce(toFloat(b.AMOUNTINBIRR), toFloat(b.AMOUNT), toFloat(b.amount), toFloat(b.LOCAL_AMOUNT), 0.0) AS out_amt
         WHERE in_amt > 0 AND out_amt >= (in_amt * 0.9) AND out_amt <= (in_amt * 1.1)
         MERGE (a)-[r:RAPID_WITHDRAWAL {{session_id:$session_id}}]->(b)
-        SET r.bgcolor = '#d5d276',
+        SET r.is_evidence = true, r.anomaly_score = 0.4, r.bgcolor = '#d5d276',
             r.provisional = true,
             r.reason = 'funds rapidly withdrawn or passed through on same day',
             r.in_amount = in_amt,
@@ -1331,7 +1331,7 @@ def incremental_graph_analysis_transactions(
         WITH t, acc, tx_day, daily_count, avg_daily
         WHERE {_trusted_node_clause('t')}
         MERGE (t)-[r:ACCOUNT_ACTIVITY_SPIKE {{session_id:$session_id}}]->(t)
-        SET r.bgcolor = '#e6e6e6',
+        SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#e6e6e6',
             r.provisional = true,
             r.reason = 'unusually high transaction volume for this account on this day',
             r.daily_count = daily_count,
@@ -1457,7 +1457,7 @@ def _run_post_rules(session, label, session_id, provisional, batch_id=None):
     MERGE (u:User {{Username: coalesce(t.USERNAME, t.Username, t.username), session_id: $session_id}})
     SET u.generated_by = 'link_analysis'
     MERGE (u)-[r:CREATED {{session_id:$session_id}}]->(t)
-    SET r.bgcolor = '#e6e6e6',
+    SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#e6e6e6',
         r.provisional = $provisional,
         r.reason = 'user created post'
     """, session_id=session_id, batch_id=batch_id, provisional=provisional)
@@ -1470,7 +1470,7 @@ def _run_post_rules(session, label, session_id, provisional, batch_id=None):
     MERGE (c:LowEngagementCluster {{flag:'LOW_ENG', session_id:$session_id}})
     SET c.generated_by = 'link_analysis'
     MERGE (t)-[r:LOW_ENGAGEMENT {{session_id:$session_id}}]->(c)
-    SET r.bgcolor = '#e6e6e6',
+    SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#e6e6e6',
         r.provisional = $provisional,
         r.reason = 'low likes and retweets'
     """, session_id=session_id, batch_id=batch_id, provisional=provisional)
@@ -1486,7 +1486,7 @@ def _run_post_rules(session, label, session_id, provisional, batch_id=None):
     MERGE (u:User {{Username: coalesce(t.USERNAME, t.Username, t.username), session_id: $session_id}})
     SET u.generated_by = 'link_analysis'
     MERGE (t)-[r:INFLUENCER_POST {{session_id:$session_id}}]->(u)
-    SET r.bgcolor = '#363636',
+    SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#363636',
         r.textcolor = '#eeeeee',
         r.provisional = $provisional,
         r.reason = 'post belongs to influencer account'
@@ -1502,7 +1502,7 @@ def _run_post_rules(session, label, session_id, provisional, batch_id=None):
     MERGE (c:NegativeSentiment {{flag:'NEG_SENTIMENT', session_id:$session_id}})
     SET c.generated_by = 'link_analysis'
     MERGE (t)-[r:NEGATIVE_CONTENT {{session_id:$session_id}}]->(c)
-    SET r.bgcolor = '#dba124',
+    SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#dba124',
         r.provisional = $provisional,
         r.reason = 'negative post sentiment'
     """, session_id=session_id, batch_id=batch_id, provisional=provisional)
@@ -1514,7 +1514,7 @@ def _run_post_rules(session, label, session_id, provisional, batch_id=None):
     MERGE (sc:SuspiciousCluster {{type:'LOW_ENG_NEG_SENT', session_id:$session_id}})
     SET sc.generated_by = 'link_analysis'
     MERGE (t)-[r:SUSPICIOUS_PATTERN {{session_id:$session_id}}]->(sc)
-    SET r.bgcolor = '#d5d276',
+    SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#d5d276',
         r.provisional = $provisional,
         r.reason = 'low engagement negative post'
     """, session_id=session_id, batch_id=batch_id, provisional=provisional)
@@ -1525,7 +1525,7 @@ def _run_post_rules(session, label, session_id, provisional, batch_id=None):
     WHERE u1.Username < u2.Username
       AND {pair_scope}
     MERGE (u1)-[r:SHARED_NEG_NET {{session_id:$session_id}}]->(u2)
-    SET r.bgcolor = '#d5d276',
+    SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#d5d276',
         r.provisional = $provisional,
         r.reason = 'users share negative post pattern'
     """, session_id=session_id, batch_id=batch_id, provisional=provisional)
@@ -1624,7 +1624,7 @@ def _run_cdr_rules(session, label, session_id, high_risk_numbers, provisional, b
     UNWIND range(0, size(calls)-2) AS i
     WITH calls[i] AS a, calls[i+1] AS b
     MERGE (a)-[r:CALL_SEQUENCE {{session_id:$session_id}}]->(b)
-    SET r.bgcolor = '#c7c7ff',
+    SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#c7c7ff',
         r.provisional = $provisional,
         r.reason = 'successive calls from same caller'
     """, session_id=session_id, batch_id=batch_id, provisional=provisional)
@@ -1640,7 +1640,7 @@ def _run_cdr_rules(session, label, session_id, high_risk_numbers, provisional, b
       AND elementId(a) <> elementId(b)
       AND coalesce(toString(b.START_TIME), '') > coalesce(toString(a.START_TIME), '')
     MERGE (a)-[r:CALLBACK_PATTERN {{session_id:$session_id}}]->(b)
-    SET r.bgcolor = '#ffb347',
+    SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#ffb347',
         r.provisional = $provisional,
         r.reason = 'callee later calls the original caller'
     """, session_id=session_id, batch_id=batch_id, provisional=provisional)
@@ -1658,7 +1658,7 @@ def _run_cdr_rules(session, label, session_id, high_risk_numbers, provisional, b
       AND x.CALLING_NO = caller
       AND x.CALLED_NO = callee
     MERGE (x)-[r:FREQUENT_CONTACT {{session_id:$session_id}}]->(x)
-    SET r.bgcolor = '#00c1a2',
+    SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#00c1a2',
         r.provisional = $provisional,
         r.reason = 'frequent caller-callee pair',
         r.frequency = freq
@@ -1676,7 +1676,7 @@ def _run_cdr_rules(session, label, session_id, high_risk_numbers, provisional, b
       AND x.CALLING_NO = caller
       AND coalesce(toInteger(x.DURATION_SECONDS), toInteger(x.DURATION), 0) < 20
     MERGE (x)-[r:SHORT_DURATION_BURST {{session_id:$session_id}}]->(x)
-    SET r.bgcolor = '#ff6f91',
+    SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#ff6f91',
         r.provisional = $provisional,
         r.reason = 'burst of short calls',
         r.short_calls = short_calls
@@ -1687,7 +1687,7 @@ def _run_cdr_rules(session, label, session_id, high_risk_numbers, provisional, b
     WHERE {scope}
       AND coalesce(toInteger(c.DURATION_SECONDS), toInteger(c.DURATION), 0) > 1800
     MERGE (c)-[r:LONG_DURATION_CALL {{session_id:$session_id}}]->(c)
-    SET r.bgcolor = '#7d3cff',
+    SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#7d3cff',
         r.textcolor = '#eeeeee',
         r.provisional = $provisional,
         r.reason = 'call duration exceeds 30 minutes'
@@ -1698,7 +1698,7 @@ def _run_cdr_rules(session, label, session_id, high_risk_numbers, provisional, b
     WHERE {scope}
       AND coalesce(toInteger(c.DURATION_SECONDS), toInteger(c.DURATION), 0) = 0
     MERGE (c)-[r:MISSED_CALL_SIGNAL {{session_id:$session_id}}]->(c)
-    SET r.bgcolor = '#ffcc00',
+    SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#ffcc00',
         r.provisional = $provisional,
         r.reason = 'zero-duration call'
     """, session_id=session_id, batch_id=batch_id, provisional=provisional)
@@ -1713,7 +1713,7 @@ def _run_cdr_rules(session, label, session_id, high_risk_numbers, provisional, b
       AND elementId(a) <> elementId(b)
       AND coalesce(toString(b.START_TIME), '') > coalesce(toString(a.START_TIME), '')
     MERGE (a)-[r:CALL_RELAY {{session_id:$session_id}}]->(b)
-    SET r.bgcolor = '#4caf50',
+    SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#4caf50',
         r.provisional = $provisional,
         r.reason = 'called party later initiates another call'
     """, session_id=session_id, batch_id=batch_id, provisional=provisional)
@@ -1729,7 +1729,7 @@ def _run_cdr_rules(session, label, session_id, high_risk_numbers, provisional, b
     WHERE {_session_scope_clause("x")}
       AND x.CALLING_NO = caller
     MERGE (x)-[r:STAR_PATTERN {{session_id:$session_id}}]->(x)
-    SET r.bgcolor = '#0099ff',
+    SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#0099ff',
         r.provisional = $provisional,
         r.reason = 'caller reaches many distinct targets',
         r.targets = targets
@@ -1749,7 +1749,7 @@ def _run_cdr_rules(session, label, session_id, high_risk_numbers, provisional, b
       AND coalesce(b.LOCATION_ID, '') <> ''
       AND a.LOCATION_ID <> b.LOCATION_ID
     MERGE (a)-[r:LOCATION_JUMP {{session_id:$session_id}}]->(b)
-    SET r.bgcolor = '#ff3b3b',
+    SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#ff3b3b',
         r.provisional = $provisional,
         r.reason = 'successive calls use different locations'
     """, session_id=session_id, batch_id=batch_id, provisional=provisional)
@@ -1759,7 +1759,7 @@ def _run_cdr_rules(session, label, session_id, high_risk_numbers, provisional, b
     WHERE {scope}
       AND coalesce(toInteger(c.START_HOUR), toInteger(substring(toString(c.START_TIME), 11, 2)), 12) < 5
     MERGE (c)-[r:NIGHT_ACTIVITY {{session_id:$session_id}}]->(c)
-    SET r.bgcolor = '#1c1c54',
+    SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#1c1c54',
         r.textcolor = '#eeeeee',
         r.provisional = $provisional,
         r.reason = 'call starts between midnight and 05:00'
@@ -1771,7 +1771,7 @@ def _run_cdr_rules(session, label, session_id, high_risk_numbers, provisional, b
     WHERE {scope}
       AND (c.CALLING_NO = num OR c.CALLED_NO = num)
     MERGE (c)-[r:HIGH_RISK_CONTACT {{session_id:$session_id}}]->(c)
-    SET r.bgcolor = '#de7d07',
+    SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#de7d07',
         r.provisional = $provisional,
         r.reason = 'configured high-risk number appears in call',
         r.number = num
@@ -1788,7 +1788,7 @@ def _run_cdr_rules(session, label, session_id, high_risk_numbers, provisional, b
     WHERE {_session_scope_clause("x")}
       AND x.CALLING_NO = caller
     MERGE (x)-[r:FAN_OUT {{session_id:$session_id}}]->(x)
-    SET r.bgcolor = '#00ffaa',
+    SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#00ffaa',
         r.provisional = $provisional,
         r.reason = 'caller has high distinct outbound reach',
         r.targets = targets
@@ -1805,7 +1805,7 @@ def _run_cdr_rules(session, label, session_id, high_risk_numbers, provisional, b
     WHERE {_session_scope_clause("x")}
       AND x.CALLED_NO = callee
     MERGE (x)-[r:FAN_IN {{session_id:$session_id}}]->(x)
-    SET r.bgcolor = '#ffaa00',
+    SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#ffaa00',
         r.provisional = $provisional,
         r.reason = 'callee has high distinct inbound reach',
         r.sources = sources
@@ -1822,7 +1822,7 @@ def _run_cdr_rules(session, label, session_id, high_risk_numbers, provisional, b
       AND abs(coalesce(toInteger(a.START_EPOCH), 0) - coalesce(toInteger(b.START_EPOCH), 0)) < 10
       AND coalesce(toInteger(a.START_EPOCH), 0) > 0
     MERGE (a)-[r:SIMULTANEOUS_CALL {{session_id:$session_id}}]->(b)
-    SET r.bgcolor = '#ff66cc',
+    SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#ff66cc',
         r.provisional = $provisional,
         r.reason = 'same caller has near-simultaneous calls'
     """, session_id=session_id, batch_id=batch_id, provisional=provisional)
@@ -1863,3 +1863,30 @@ def incremental_graph_analysis_cdr(driver, session_id, nodes_label, batch_id, lo
 
     log_writer(log_file, f"[{datetime.now()}] [Info] Incremental CDR analysis for batch {batch_id} flags: {counts}")
     return counts
+
+def get_fraud_aggregator_query(label, scope_clause_t, session_id=None):
+    return f'''
+    MATCH (t:{label})-[r]->()
+    WHERE ({scope_clause_t}) 
+      AND r.is_evidence = true
+    WITH coalesce(t.LOGICAL_ACCOUNTNO, t.ACCOUNTNO) AS account_no,
+         sum(r.anomaly_score) AS total_score,
+         collect(distinct type(r)) AS evidence_types,
+         count(r) AS evidence_count
+    WHERE total_score >= 1.0  // Configurable threshold for Fraud Alert
+      AND account_no IS NOT NULL AND account_no <> ''
+    MERGE (a:AccountAlert {{account_no: account_no, session_id: $session_id}})
+    SET a.total_score = total_score,
+        a.evidence_types = evidence_types,
+        a.evidence_count = evidence_count,
+        a.created_at = datetime(),
+        a.alert_type = 'FRAUD_ALERT_TARGET'
+    
+    // Link the alert back to the transactions
+    WITH a, account_no
+    MATCH (t:{label})
+    WHERE ({scope_clause_t}) 
+      AND coalesce(t.LOGICAL_ACCOUNTNO, t.ACCOUNTNO) = account_no
+    MERGE (a)-[fa:FRAUD_ALERT_TARGET {{session_id:$session_id}}]->(t)
+    SET fa.bgcolor = '#ff0000', fa.directed_display = true, fa.reason = 'Aggregated Fraud Evidence'
+    '''
