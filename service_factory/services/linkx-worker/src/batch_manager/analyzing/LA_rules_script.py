@@ -578,6 +578,10 @@ def batch_graph_analysis_transactions(
         WHERE ($session_id IS NULL OR {_session_scope_clause("t")})
         SET t.LOGICAL_ACCOUNTNO = coalesce(t.ACCOUNTNO, ''),
             t.LOGICAL_BENACCOUNTNO = coalesce(t.BENACCOUNTNO, ''),
+            t.RAW_SENDER = coalesce(t.ACCOUNTNO, ''),
+            t.RAW_RECEIVER = coalesce(t.BENACCOUNTNO, ''),
+            t.LOGICAL_TRANSFORMATION_REASON = 'NONE',
+            t.PASSTHROUGH_HOPS = 0,
             t.IGNORE_LOGICAL = false
         ''', session_id=session_param)
         
@@ -586,7 +590,21 @@ def batch_graph_analysis_transactions(
             MATCH (inbound:{label})-[r:EFFECTIVE_FLOW]->(outbound:{label})
             WHERE ($session_id IS NULL OR {_session_scope_clause("inbound")})
             SET inbound.LOGICAL_BENACCOUNTNO = coalesce(outbound.BENACCOUNTNO, ''),
-                outbound.IGNORE_LOGICAL = true
+                outbound.IGNORE_LOGICAL = true,
+                inbound.PASSTHROUGH_HOPS = 1,
+                inbound.LOGICAL_TRANSFORMATION_REASON = 'EFFECTIVE_FLOW_COLLAPSE',
+                inbound.LOGICAL_PATH = '[' + coalesce(inbound.ACCOUNTNO, '') + ', ' + coalesce(r.intermediary, '') + ', ' + coalesce(outbound.BENACCOUNTNO, '') + ']'
+            
+            MERGE (inbound)-[df:DERIVED_FLOW {session_id:$session_id}]->(outbound)
+            SET df.edge_semantic = 'DERIVED_EFFECTIVE_FLOW',
+                df.raw_sender = coalesce(inbound.ACCOUNTNO, ''),
+                df.logical_sender = coalesce(inbound.ACCOUNTNO, ''),
+                df.raw_receiver = coalesce(outbound.BENACCOUNTNO, ''),
+                df.passthrough_entity = coalesce(r.intermediary, ''),
+                df.passthrough_hops = 1,
+                df.financial_flow = false,
+                df.bgcolor = '#3498db',
+                df.directed_display = true
             ''', session_id=session_param)
         log_writer(log_file, f"[{datetime.now()}] [Info] Logical Layer initialized")
 
@@ -993,6 +1011,10 @@ def incremental_graph_analysis_transactions(
         WHERE t.batch_id = $batch_id
         SET t.LOGICAL_ACCOUNTNO = coalesce(t.ACCOUNTNO, ''),
             t.LOGICAL_BENACCOUNTNO = coalesce(t.BENACCOUNTNO, ''),
+            t.RAW_SENDER = coalesce(t.ACCOUNTNO, ''),
+            t.RAW_RECEIVER = coalesce(t.BENACCOUNTNO, ''),
+            t.LOGICAL_TRANSFORMATION_REASON = 'NONE',
+            t.PASSTHROUGH_HOPS = 0,
             t.IGNORE_LOGICAL = false
         ''', batch_id=batch_id)
         
@@ -1001,8 +1023,22 @@ def incremental_graph_analysis_transactions(
             MATCH (inbound:{label})-[r:EFFECTIVE_FLOW]->(outbound:{label})
             WHERE inbound.batch_id = $batch_id
             SET inbound.LOGICAL_BENACCOUNTNO = coalesce(outbound.BENACCOUNTNO, ''),
-                outbound.IGNORE_LOGICAL = true
-            ''', batch_id=batch_id)
+                outbound.IGNORE_LOGICAL = true,
+                inbound.PASSTHROUGH_HOPS = 1,
+                inbound.LOGICAL_TRANSFORMATION_REASON = 'EFFECTIVE_FLOW_COLLAPSE',
+                inbound.LOGICAL_PATH = '[' + coalesce(inbound.ACCOUNTNO, '') + ', ' + coalesce(r.intermediary, '') + ', ' + coalesce(outbound.BENACCOUNTNO, '') + ']'
+            
+            MERGE (inbound)-[df:DERIVED_FLOW {session_id:$session_id}]->(outbound)
+            SET df.edge_semantic = 'DERIVED_EFFECTIVE_FLOW',
+                df.raw_sender = coalesce(inbound.ACCOUNTNO, ''),
+                df.logical_sender = coalesce(inbound.ACCOUNTNO, ''),
+                df.raw_receiver = coalesce(outbound.BENACCOUNTNO, ''),
+                df.passthrough_entity = coalesce(r.intermediary, ''),
+                df.passthrough_hops = 1,
+                df.financial_flow = false,
+                df.bgcolor = '#3498db',
+                df.directed_display = true
+            ''', batch_id=batch_id, session_id=session_param)
         log_writer(log_file, f"[{datetime.now()}] [Info] Logical Layer initialized")
             """, session_id=session_param, batch_id=batch_id, pass_through_accounts=pass_through_accounts)
 
