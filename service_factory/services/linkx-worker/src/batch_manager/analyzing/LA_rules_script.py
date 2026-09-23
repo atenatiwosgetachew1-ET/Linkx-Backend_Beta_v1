@@ -127,7 +127,7 @@ def get_smurfing_query(label, scope_clause_t, trusted_pair_clause, is_provisiona
 def get_circular_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, trusted_pair_clause, is_provisional=False, boundary_clause=None):
     prov_str = "true" if is_provisional else "false"
     boundary_str = f"AND ({boundary_clause})" if boundary_clause else ""
-    return f"""
+    return f'''
     MATCH (t:{label})
     WHERE ({scope_clause_t})
       AND coalesce(t.IGNORE_LOGICAL, false) = false
@@ -144,7 +144,7 @@ def get_circular_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_
     WITH acc, list_a, [x IN list_a | x.LOGICAL_BENACCOUNTNO] AS target_b_accs
 
     MATCH (b:{label})
-    WHERE ({scope_clause_b}) AND b.ACCOUNTNO IN target_b_accs
+    WHERE ({scope_clause_b}) AND b.ACCOUNTNO IN target_b_accs AND b.BENACCOUNTNO = acc
     WITH list_a, collect(b) AS list_b
 
     UNWIND list_a AS a
@@ -170,7 +170,7 @@ def get_circular_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_
       SET r2.is_evidence = true, r2.anomaly_score = 0.6, r2.bgcolor = '#e6e6e6', r2.provisional = {prov_str}, r2.reason = 'same-day reverse transfer pair',
           r2.edge_semantic = 'OBSERVED_FLOW', r2.financial_flow = true, r2.directed_display = true
     }} IN TRANSACTIONS OF 5000 ROWS
-    """
+    '''
 
 def get_fund_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, trusted_pair_clause, is_provisional=False, boundary_clause=None):
     prov_str = "true" if is_provisional else "false"
