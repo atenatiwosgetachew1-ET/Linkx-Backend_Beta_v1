@@ -134,21 +134,21 @@ def get_circular_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_
       AND coalesce(a.IGNORE_LOGICAL, false) = false
       AND a.LOGICAL_ACCOUNTNO IS NOT NULL AND a.LOGICAL_BENACCOUNTNO IS NOT NULL
       AND NOT a.LOGICAL_ACCOUNTNO IN $pt AND NOT a.LOGICAL_BENACCOUNTNO IN $pt
-    WITH a.LOGICAL_ACCOUNTNO AS acc, a.LOGICAL_BENACCOUNTNO AS ben, coalesce(a.TRANSACTIONDATE, '') AS tdate, count(a) AS a_count
+    WITH a.ACCOUNTNO AS a_acc, a.LOGICAL_BENACCOUNTNO AS a_lben, a.LOGICAL_ACCOUNTNO AS a_lacc, coalesce(a.TRANSACTIONDATE, '') AS tdate, count(a) AS a_count
     WHERE a_count < 1000
 
     // 2. Ensure reverse flow exists on the same day
     MATCH (b:{label})
     WHERE ({scope_clause_b})
-      AND b.LOGICAL_ACCOUNTNO = ben AND b.LOGICAL_BENACCOUNTNO = acc
+      AND b.ACCOUNTNO = a_lben AND b.BENACCOUNTNO = a_lacc
       AND coalesce(b.TRANSACTIONDATE, '') = tdate
-    WITH acc, ben, tdate, a_count, count(b) AS b_count
+    WITH a_acc, a_lben, a_lacc, tdate, a_count, count(b) AS b_count
     WHERE b_count > 0 AND b_count < 1000
 
-    // 3. Match actual pairs and create edges (avoiding Cartesian explosion)
-    MATCH (a:{label} {{ACCOUNTNO: acc, BENACCOUNTNO: ben}})
+    // 3. Match actual pairs and create edges
+    MATCH (a:{label} {{ACCOUNTNO: a_acc, LOGICAL_BENACCOUNTNO: a_lben, LOGICAL_ACCOUNTNO: a_lacc}})
     WHERE ({scope_clause_a}) AND coalesce(a.TRANSACTIONDATE, '') = tdate
-    MATCH (b:{label} {{ACCOUNTNO: ben, BENACCOUNTNO: acc}})
+    MATCH (b:{label} {{ACCOUNTNO: a_lben, BENACCOUNTNO: a_lacc}})
     WHERE ({scope_clause_b}) AND coalesce(b.TRANSACTIONDATE, '') = tdate
       AND elementId(a) < elementId(b)
       AND {trusted_pair_clause}
@@ -186,9 +186,9 @@ def get_fund_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, t
     WHERE out_count > 0 AND out_count < 1000
 
     // 3. Match actual flows
-    MATCH (a:{label} {{BENACCOUNTNO: intermediary}})
+    MATCH (a:{label} {{LOGICAL_BENACCOUNTNO: intermediary}})
     WHERE ({scope_clause_a})
-    MATCH (b:{label} {{ACCOUNTNO: intermediary}})
+    MATCH (b:{label} {{LOGICAL_ACCOUNTNO: intermediary}})
     WHERE ({scope_clause_b})
       AND elementId(a) <> elementId(b)
       AND (
