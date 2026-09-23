@@ -158,7 +158,8 @@ def get_circular_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_
     WHERE amt_a > 0 AND amt_b > 0
       AND abs(amt_a - amt_b) <= (amt_a * 0.05)
 
-    CALL (a, b) {{
+    CALL {{
+      WITH a, b
       MERGE (a)-[r1:CIRCULAR_FLOW {{session_id:$session_id}}]->(b)
       SET r1.is_evidence = true, r1.anomaly_score = 0.6, r1.bgcolor = '#e6e6e6', r1.provisional = {prov_str}, r1.reason = 'same-day reverse transfer pair',
           r1.edge_semantic = 'OBSERVED_FLOW', r1.financial_flow = true, r1.directed_display = true
@@ -204,7 +205,8 @@ def get_fund_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, t
     WITH a, downstream[..5] AS limited_downstream
     UNWIND limited_downstream AS b
 
-    CALL (a, b) {{
+    CALL {{
+      WITH a, b
       MERGE (a)-[r:FUND_FLOW {{session_id:$session_id}}]->(b)
       SET r.is_evidence = true, r.anomaly_score = 0.5, r.bgcolor = '#d8a822', r.provisional = {prov_str},
           r.reason = 'beneficiary later acts as sender',
