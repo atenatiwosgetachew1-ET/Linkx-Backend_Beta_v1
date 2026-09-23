@@ -497,54 +497,73 @@ def _count_transaction_relationships(session, session_id):
 
 
 
-def get_effective_flow_query(label, scope_clause_t, session_id):
-    # Pure Cypher implementation of EFFECTIVE_FLOW with Correlated Subquery to prevent Cartesian explosion
-    return f"""
-    MATCH (inbound:{label})
-    WHERE ({scope_clause_t})
-      AND inbound.BENACCOUNTNO IN $pt
-      AND inbound.ACCOUNTNO IS NOT NULL AND inbound.ACCOUNTNO <> ''
-
-    CALL {{
-        WITH inbound
-        MATCH (outbound:{label})
-        WHERE outbound.ACCOUNTNO = inbound.BENACCOUNTNO
-          AND ($session_id IS NULL OR outbound.session_id = $session_id)
-          AND outbound.BENACCOUNTNO IS NOT NULL
-          AND outbound.BENACCOUNTNO <> ''
-          AND outbound.BENACCOUNTNO <> inbound.ACCOUNTNO
-          AND coalesce(outbound.TRANSACTIONDATE, '') = coalesce(inbound.TRANSACTIONDATE, '')
-          AND coalesce(outbound.TRANSACTIONTIME, '') >= coalesce(inbound.TRANSACTIONTIME, '')
-        
-        WITH inbound, outbound,
-             coalesce(toFloat(inbound.AMOUNTINBIRR), toFloat(inbound.AMOUNT),
-                      toFloat(inbound.amount), toFloat(inbound.LOCAL_AMOUNT), 0.0) AS in_amt,
-             coalesce(toFloat(outbound.AMOUNTINBIRR), toFloat(outbound.AMOUNT),
-                      toFloat(outbound.amount), toFloat(outbound.LOCAL_AMOUNT), 0.0) AS out_amt
-        WHERE in_amt > 0 AND out_amt > 0
-          AND abs(out_amt - in_amt) <= (in_amt * 0.1)
-          
-        RETURN outbound, in_amt, out_amt
-        ORDER BY outbound.TRANSACTIONTIME ASC
-        LIMIT 1
-    }}
-
-    MERGE (inbound)-[r:EFFECTIVE_FLOW {{session_id:$session_id}}]->(outbound)
-    SET r.intermediary = inbound.BENACCOUNTNO,
-        r.hop_count = 2,
-        r.in_amount = in_amt,
-        r.out_amount = out_amt,
-        r.fee_delta = in_amt - out_amt,
-        r.effective_sender = inbound.ACCOUNTNO,
-        r.effective_receiver = outbound.BENACCOUNTNO,
-        r.tx_date = inbound.TRANSACTIONDATE,
-        r.bgcolor = '#9b59b6',
-        r.textcolor = '#eeeeee',
-        r.provisional = false,
-        r.edge_semantic = 'EFFECTIVE_FLOW',
-        r.financial_flow = true,
-        r.directed_display = true
+def execute_effective_flow_rule(session, label, scope_clause_t, session_id, pass_through_accounts):
     """
+    Python-accelerated central implementation of EFFECTIVE_FLOW.
+    This prevents the Cartesian explosion that occurs in pure Cypher when pass-through nodes are extremely dense.
+    """
+    if not pass_through_accounts:
+        return 0
+
+    # 1. Fetch inbound
+    inbound_res = session.run(
+        f"MATCH (n:{label}) WHERE ({scope_clause_t}) AND n.BENACCOUNTNO IN $pt AND n.ACCOUNTNO IS NOT NULL AND n.ACCOUNTNO <> '' "
+        f"RETURN elementId(n) AS id, n.ACCOUNTNO AS acc, n.BENACCOUNTNO AS ben, n.TRANSACTIONDATE AS date, n.TRANSACTIONTIME AS time, "
+        f"coalesce(toFloat(n.AMOUNTINBIRR), toFloat(n.AMOUNT), toFloat(n.amount), toFloat(n.LOCAL_AMOUNT), 0.0) AS amt",
+        session_id=session_id, pt=pass_through_accounts
+    )
+    inbounds = [dict(r) for r in inbound_res]
+    
+    # 2. Fetch outbound
+    outbound_res = session.run(
+        f"MATCH (n:{label}) WHERE ({scope_clause_t}) AND n.ACCOUNTNO IN $pt AND n.BENACCOUNTNO IS NOT NULL AND n.BENACCOUNTNO <> '' "
+        f"RETURN elementId(n) AS id, n.ACCOUNTNO AS acc, n.BENACCOUNTNO AS ben, n.TRANSACTIONDATE AS date, n.TRANSACTIONTIME AS time, "
+        f"coalesce(toFloat(n.AMOUNTINBIRR), toFloat(n.AMOUNT), toFloat(n.amount), toFloat(n.LOCAL_AMOUNT), 0.0) AS amt",
+        session_id=session_id, pt=pass_through_accounts
+    )
+    outbounds = [dict(r) for r in outbound_res]
+    
+    from collections import defaultdict
+    out_map = defaultdict(list)
+    for o in outbounds:
+        out_map[(o["acc"], o["date"])].append(o)
+        
+    for k in out_map:
+        out_map[k].sort(key=lambda x: str(x["time"]))
+        
+    edges_to_create = []
+    for i in inbounds:
+        candidates = out_map.get((i["ben"], i["date"]), [])
+        for o in candidates:
+            if o["ben"] != i["acc"] and str(o["time"]) >= str(i["time"]):
+                if i["amt"] > 0 and o["amt"] > 0 and abs(o["amt"] - i["amt"]) <= (i["amt"] * 0.1):
+                    edges_to_create.append({
+                        "in_id": i["id"],
+                        "out_id": o["id"],
+                        "intermediary": i["ben"],
+                        "in_amt": i["amt"],
+                        "out_amt": o["amt"],
+                        "fee": i["amt"] - o["amt"],
+                        "sender": i["acc"],
+                        "receiver": o["ben"],
+                        "date": i["date"]
+                    })
+                    break  # Prevent cartesian multiplication per inbound row
+                    
+    if edges_to_create:
+        session.run(
+            f"UNWIND $edges AS e "
+            f"MATCH (inbound) WHERE elementId(inbound) = e.in_id "
+            f"MATCH (outbound) WHERE elementId(outbound) = e.out_id "
+            f"MERGE (inbound)-[r:EFFECTIVE_FLOW {{session_id:$session_id}}]->(outbound) "
+            f"SET r.intermediary = e.intermediary, r.hop_count = 2, r.in_amount = e.in_amt, r.out_amount = e.out_amt, "
+            f"r.fee_delta = e.fee, r.effective_sender = e.sender, r.effective_receiver = e.receiver, r.tx_date = e.date, "
+            f"r.bgcolor = '#9b59b6', r.textcolor = '#eeeeee', r.provisional = false, r.edge_semantic = 'EFFECTIVE_FLOW', "
+            f"r.financial_flow = true, r.directed_display = true",
+            session_id=session_id, edges=edges_to_create
+        )
+    return len(edges_to_create)
+
 
 def get_logical_layer_query(label, scope_clause_t, apply_pass_through=False):
     q1 = f"""
@@ -615,10 +634,9 @@ def batch_graph_analysis_transactions(
         # ----------------------------
         if pass_through_accounts:
             try:
-                log_writer(log_file, f"[{datetime.now()}] [Info] Starting EFFECTIVE_FLOW rule (Cypher)")
-                query = get_effective_flow_query(label, f"$session_id IS NULL OR {_session_scope_clause('inbound')}", session_param)
-                session.run(query, session_id=session_param, pt=pass_through_accounts)
-                log_writer(log_file, f"[{datetime.now()}] [Info] EFFECTIVE_FLOW rule completed.")
+                log_writer(log_file, f"[{datetime.now()}] [Info] Starting EFFECTIVE_FLOW rule (Python accelerated)")
+                edge_count = execute_effective_flow_rule(session, label, f"$session_id IS NULL OR {_session_scope_clause('n')}", session_param, pass_through_accounts)
+                log_writer(log_file, f"[{datetime.now()}] [Info] EFFECTIVE_FLOW rule completed. Created {edge_count} edges.")
             except Exception as e:
                 log_writer(log_file, f"[{datetime.now()}] [Error] EFFECTIVE_FLOW rule failed: {e}")
 
@@ -990,10 +1008,9 @@ def incremental_graph_analysis_transactions(
         # ----------------------------
         if pass_through_accounts:
             try:
-                log_writer(log_file, f"[{datetime.now()}] [Info] Starting EFFECTIVE_FLOW rule (Cypher incremental)")
-                query = get_effective_flow_query(label, "inbound.batch_id = $batch_id", session_param)
-                session.run(query, session_id=session_param, pt=pass_through_accounts, batch_id=batch_id)
-                log_writer(log_file, f"[{datetime.now()}] [Info] EFFECTIVE_FLOW rule completed.")
+                log_writer(log_file, f"[{datetime.now()}] [Info] Starting EFFECTIVE_FLOW rule (Python accelerated incremental)")
+                edge_count = execute_effective_flow_rule(session, label, "n.batch_id = $session_id", batch_id, pass_through_accounts)
+                log_writer(log_file, f"[{datetime.now()}] [Info] EFFECTIVE_FLOW rule completed. Created {edge_count} edges.")
             except Exception as e:
                 log_writer(log_file, f"[{datetime.now()}] [Error] EFFECTIVE_FLOW rule failed: {e}")
 

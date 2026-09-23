@@ -7,7 +7,7 @@ import signal
 import sys
 
 from batch_manager.analyzing.LA_rules_script import (
-    get_effective_flow_query,
+    execute_effective_flow_rule,
     get_logical_layer_query,
     get_account_activity_spike_query,
     get_high_risk_link_query,
@@ -555,11 +555,16 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
         # ---- 0. EFFECTIVE_FLOW ----
         if pass_through_accounts:
             try:
-                query = get_effective_flow_query(label=label, scope_clause_t="$session_id IS NULL OR inbound.session_id = $session_id", session_id=sp)
-                with driver.session() as s:
-                    s.run(query, session_id=sp, pt=pass_through_accounts)
-                rules_completed.append("EFFECTIVE_FLOW")
-                print("  [Rule] EFFECTIVE_FLOW ✓ (Cypher execution)", flush=True)
+                    with driver.session() as s:
+                        edge_count = execute_effective_flow_rule(
+                            session=s, 
+                            label=label, 
+                            scope_clause_t="$session_id IS NULL OR n.session_id = $session_id", 
+                            session_id=sp, 
+                            pass_through_accounts=pass_through_accounts
+                        )
+                    rules_completed.append("EFFECTIVE_FLOW")
+                    print(f"  [Rule] EFFECTIVE_FLOW ✓ (Python accelerated: {edge_count} edges)", flush=True)
             except Exception as e:
                 rules_failed.append(("EFFECTIVE_FLOW", str(e)[:100]))
                 print(f"  [Rule] EFFECTIVE_FLOW ✗ {str(e)[:100]}", flush=True)
