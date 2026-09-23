@@ -1,41 +1,19 @@
 import sys
-import os
 
-try:
-    from neo4j import GraphDatabase
-except ImportError:
-    print("Error: neo4j python driver is not installed in this environment.")
+# Point to the live daemon's source directory
+sys.path.append("/opt/linkx-worker/src")
+
+from batch_manager.services.risk_scoring_kafka_service import create_neo4j_driver, _neo4j_credentials
+
+print("Fetching Neo4j credentials using session ID 128778...")
+credentials = _neo4j_credentials('128778')
+
+if not credentials:
+    print("Failed to get credentials.")
     sys.exit(1)
 
-# Try to find the running daemon's environment variables
-url = os.getenv("LINKX_NEO4J_URL")
-username = os.getenv("LINKX_NEO4J_USERNAME")
-password = os.getenv("LINKX_NEO4J_PASSWORD")
-
-if not url:
-    try:
-        import subprocess
-        # Find daemon PID
-        pid = subprocess.check_output(["pgrep", "-f", "xvigilance_consumer.py"]).decode().split('\n')[0]
-        env_raw = subprocess.check_output(["sudo", "cat", f"/proc/{pid}/environ"]).decode()
-        env_dict = {kv.split('=')[0]: kv.split('=')[1] for kv in env_raw.split('\0') if '=' in kv}
-        
-        url = env_dict.get("LINKX_NEO4J_URL", "bolt://localhost:7687")
-        username = env_dict.get("LINKX_NEO4J_USERNAME", "neo4j")
-        password = env_dict.get("LINKX_NEO4J_PASSWORD", "password")
-    except Exception as e:
-        print(f"Warning: Could not read daemon environment. Fallback to localhost. ({e})")
-        url = "bolt://localhost:7687"
-        username = "neo4j"
-        password = "password"
-
-print(f"Connecting to Neo4j at {url} as {username}...")
-
-try:
-    driver = GraphDatabase.driver(url, auth=(username, password))
-except Exception as e:
-    print(f"Failed to connect: {e}")
-    sys.exit(1)
+print(f"Connecting to Neo4j at {credentials.get('url')}...")
+driver = create_neo4j_driver(credentials)
 
 with driver.session() as s:
     print("\n--- Top 20 Device IDs ---")
