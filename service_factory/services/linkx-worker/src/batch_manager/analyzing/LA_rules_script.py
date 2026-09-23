@@ -175,7 +175,7 @@ def get_circular_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_
 def get_fund_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, trusted_pair_clause, is_provisional=False, boundary_clause=None):
     prov_str = "true" if is_provisional else "false"
     boundary_str = f"AND ({boundary_clause})" if boundary_clause else ""
-    return f"""
+    return f'''
     MATCH (t:{label})
     WHERE ({scope_clause_t})
       AND coalesce(t.IGNORE_LOGICAL, false) = false
@@ -183,19 +183,14 @@ def get_fund_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, t
     WITH t.LOGICAL_ACCOUNTNO AS acc, count(t) AS out_count
     WHERE out_count < 1000 AND NOT acc IN $pt
 
-    // Partition by trigger account to prevent Cartesian explosion
+    // Directly index-match the inbound transactions
     MATCH (a:{label})
     WHERE ({scope_clause_a}) AND a.LOGICAL_BENACCOUNTNO = acc
-    WITH acc, collect(a) AS list_a
 
+    // Directly index-match the outbound transactions
     MATCH (b:{label})
     WHERE ({scope_clause_b}) AND b.LOGICAL_ACCOUNTNO = acc
-    WITH list_a, collect(b) AS list_b
-
-    UNWIND list_a AS a
-    UNWIND list_b AS b
-    WITH a, b
-    WHERE elementId(a) <> elementId(b)
+      AND elementId(a) <> elementId(b)
       AND (
         coalesce(a.TRANSACTIONDATE, '') < coalesce(b.TRANSACTIONDATE, '')
         OR (
@@ -219,7 +214,7 @@ def get_fund_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, t
           r.reason = 'beneficiary later acts as sender',
           r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
     }} IN TRANSACTIONS OF 5000 ROWS
-    """
+    '''
 
 def get_dormant_to_active_query(label, scope_clause_t, is_provisional=False, incremental_batch_id=None):
     prov_str = "true" if is_provisional else "false"
