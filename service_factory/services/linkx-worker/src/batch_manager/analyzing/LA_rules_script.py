@@ -374,7 +374,8 @@ def get_rapid_withdrawal_query(label, scope_clause_t, is_provisional=False, incr
     WHERE ({scope_clause_t})
       AND coalesce(t.IGNORE_LOGICAL, false) = false
       {where_filter}
-    WITH {with_acc} [t IN collect(t) WHERE t.LOGICAL_BENACCOUNTNO = acc] AS in_txns, [t IN collect(t) WHERE t.LOGICAL_ACCOUNTNO = acc] AS out_txns
+    WITH {with_acc} collect(t) AS txns
+    WITH acc, tx_day, [x IN txns WHERE x.LOGICAL_BENACCOUNTNO = acc] AS in_txns, [x IN txns WHERE x.LOGICAL_ACCOUNTNO = acc] AS out_txns
     WHERE size(in_txns) > 0 AND size(out_txns) > 0 AND (size(in_txns) + size(out_txns)) < 1000
     CALL (in_txns, out_txns, acc, tx_day) {{
       UNWIND in_txns AS t1
