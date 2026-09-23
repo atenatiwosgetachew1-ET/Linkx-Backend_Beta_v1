@@ -524,89 +524,27 @@ def batch_graph_analysis_transactions(
             _clear_transaction_relationships(session, session_id)
 
         # ----------------------------
-        # 0. EFFECTIVE_FLOW: trace funds through pass-through intermediaries
+        # 0. EFFECTIVE_FLOW
         # ----------------------------
         if pass_through_accounts:
-            log_writer(log_file, f"[{datetime.now()}] [Info] Starting EFFECTIVE_FLOW rule (Python accelerated)")
             try:
-                # 1. Fetch inbound
-                inbound_res = session.run(f"MATCH (n:{label}) WHERE {_session_scope_clause('n')} AND n.BENACCOUNTNO IN $pt AND n.ACCOUNTNO IS NOT NULL AND n.ACCOUNTNO <> '' RETURN id(n) AS id, n.ACCOUNTNO AS acc, n.BENACCOUNTNO AS ben, n.TRANSACTIONDATE AS date, n.TRANSACTIONTIME AS time, coalesce(toFloat(n.AMOUNTINBIRR), toFloat(n.AMOUNT), toFloat(n.amount), toFloat(n.LOCAL_AMOUNT), 0.0) AS amt", session_param=session_param, pt=pass_through_accounts)
-                inbounds = [dict(r) for r in inbound_res]
-                
-                # 2. Fetch outbound
-                outbound_res = session.run(f"MATCH (n:{label}) WHERE {_session_scope_clause('n')} AND n.ACCOUNTNO IN $pt AND n.BENACCOUNTNO IS NOT NULL AND n.BENACCOUNTNO <> '' RETURN id(n) AS id, n.ACCOUNTNO AS acc, n.BENACCOUNTNO AS ben, n.TRANSACTIONDATE AS date, n.TRANSACTIONTIME AS time, coalesce(toFloat(n.AMOUNTINBIRR), toFloat(n.AMOUNT), toFloat(n.amount), toFloat(n.LOCAL_AMOUNT), 0.0) AS amt", session_param=session_param, pt=pass_through_accounts)
-                outbounds = [dict(r) for r in outbound_res]
-                
-                from collections import defaultdict
-                out_map = defaultdict(list)
-                for o in outbounds:
-                    out_map[(o["acc"], o["date"])].append(o)
-                    
-                for k in out_map:
-                    out_map[k].sort(key=lambda x: str(x["time"]))
-                    
-                edges_to_create = []
-                for i in inbounds:
-                    candidates = out_map.get((i["ben"], i["date"]), [])
-                    for o in candidates:
-                        if o["ben"] != i["acc"] and str(o["time"]) >= str(i["time"]):
-                            if i["amt"] > 0 and o["amt"] > 0 and abs(o["amt"] - i["amt"]) <= (i["amt"] * 0.1):
-                                edges_to_create.append({
-                                    "in_id": i["id"],
-                                    "out_id": o["id"],
-                                    "intermediary": i["ben"],
-                                    "in_amt": i["amt"],
-                                    "out_amt": o["amt"],
-                                    "fee": i["amt"] - o["amt"],
-                                    "sender": i["acc"],
-                                    "receiver": o["ben"],
-                                    "date": i["date"]
-                                })
-                                break
-                                
-                if edges_to_create:
-                    session.run(f"UNWIND $edges AS e MATCH (inbound) WHERE id(inbound) = e.in_id MATCH (outbound) WHERE id(outbound) = e.out_id MERGE (inbound)-[r:EFFECTIVE_FLOW {{session_id:$session_id}}]->(outbound) SET r.intermediary = e.intermediary, r.hop_count = 2, r.in_amount = e.in_amt, r.out_amount = e.out_amt, r.fee_delta = e.fee, r.effective_sender = e.sender, r.effective_receiver = e.receiver, r.tx_date = e.date, r.bgcolor = '#9b59b6', r.textcolor = '#eeeeee', r.provisional = false, r.edge_semantic = 'EFFECTIVE_FLOW', r.financial_flow = true, r.directed_display = true", session_id=session_param, edges=edges_to_create)
-                log_writer(log_file, f"[{datetime.now()}] [Info] EFFECTIVE_FLOW rule completed. Python matched {len(edges_to_create)} edges.")
+                log_writer(log_file, f"[{datetime.now()}] [Info] Starting EFFECTIVE_FLOW rule (Cypher)")
+                query = get_effective_flow_query(label, f"$session_id IS NULL OR {_session_scope_clause('inbound')}", session_param)
+                session.run(query, session_id=session_param, pt=pass_through_accounts)
+                log_writer(log_file, f"[{datetime.now()}] [Info] EFFECTIVE_FLOW rule completed.")
             except Exception as e:
                 log_writer(log_file, f"[{datetime.now()}] [Error] EFFECTIVE_FLOW rule failed: {e}")
 
         # ----------------------------
-        # 0.5 LOGICAL TRANSACTION LAYER INITIALIZATION
+        # 0.5 LOGICAL TRANSACTION LAYER
         # ----------------------------
-        session.run(f'''
-        MATCH (t:{label})
-        WHERE ($session_id IS NULL OR {_session_scope_clause("t")})
-        SET t.LOGICAL_ACCOUNTNO = coalesce(t.ACCOUNTNO, ''),
-            t.LOGICAL_BENACCOUNTNO = coalesce(t.BENACCOUNTNO, ''),
-            t.RAW_SENDER = coalesce(t.ACCOUNTNO, ''),
-            t.RAW_RECEIVER = coalesce(t.BENACCOUNTNO, ''),
-            t.LOGICAL_TRANSFORMATION_REASON = 'NONE',
-            t.PASSTHROUGH_HOPS = 0,
-            t.IGNORE_LOGICAL = false
-        ''', session_id=session_param)
-        
-        if pass_through_accounts:
-            session.run(f'''
-            MATCH (inbound:{label})-[r:EFFECTIVE_FLOW]->(outbound:{label})
-            WHERE ($session_id IS NULL OR {_session_scope_clause("inbound")})
-            SET inbound.LOGICAL_BENACCOUNTNO = coalesce(outbound.BENACCOUNTNO, ''),
-                outbound.IGNORE_LOGICAL = true,
-                inbound.PASSTHROUGH_HOPS = 1,
-                inbound.LOGICAL_TRANSFORMATION_REASON = 'EFFECTIVE_FLOW_COLLAPSE',
-                inbound.LOGICAL_PATH = '[' + coalesce(inbound.ACCOUNTNO, '') + ', ' + coalesce(r.intermediary, '') + ', ' + coalesce(outbound.BENACCOUNTNO, '') + ']'
-            
-            MERGE (inbound)-[df:DERIVED_FLOW {session_id:$session_id}]->(outbound)
-            SET df.edge_semantic = 'DERIVED_EFFECTIVE_FLOW',
-                df.raw_sender = coalesce(inbound.ACCOUNTNO, ''),
-                df.logical_sender = coalesce(inbound.ACCOUNTNO, ''),
-                df.raw_receiver = coalesce(outbound.BENACCOUNTNO, ''),
-                df.passthrough_entity = coalesce(r.intermediary, ''),
-                df.passthrough_hops = 1,
-                df.financial_flow = false,
-                df.bgcolor = '#3498db',
-                df.directed_display = true
-            ''', session_id=session_param)
-        log_writer(log_file, f"[{datetime.now()}] [Info] Logical Layer initialized")
+        try:
+            queries = get_logical_layer_query(label, f"$session_id IS NULL OR {_session_scope_clause('t')}", apply_pass_through=bool(pass_through_accounts))
+            for q in queries:
+                session.run(q, session_id=session_param)
+            log_writer(log_file, f"[{datetime.now()}] [Info] Logical Layer initialized")
+        except Exception as e:
+            log_writer(log_file, f"[{datetime.now()}] [Error] Logical Layer failed: {e}")
 
         # ----------------------------
         # 1. SMURFING: repeated small transfers from one account to one beneficiary
@@ -961,86 +899,27 @@ def incremental_graph_analysis_transactions(
         _create_transaction_indexes(session, nodes_label)
 
         # ----------------------------
-        # 0. EFFECTIVE_FLOW (incremental): trace funds through pass-through intermediaries for new batch
+        # 0. EFFECTIVE_FLOW (incremental)
         # ----------------------------
         if pass_through_accounts:
-            session.run(f"""
-            MATCH (inbound:{label})
-            WHERE inbound.batch_id = $batch_id
-              AND inbound.BENACCOUNTNO IN $pass_through_accounts
-              AND inbound.ACCOUNTNO IS NOT NULL AND inbound.ACCOUNTNO <> ''
-
-            MATCH (outbound:{label})
-            WHERE outbound.ACCOUNTNO = inbound.BENACCOUNTNO
-              AND {_session_scope_clause("outbound")}
-              AND outbound.BENACCOUNTNO IS NOT NULL
-              AND outbound.BENACCOUNTNO <> ''
-              AND outbound.BENACCOUNTNO <> inbound.ACCOUNTNO
-              AND coalesce(outbound.TRANSACTIONDATE, '') = coalesce(inbound.TRANSACTIONDATE, '')
-              AND coalesce(outbound.TRANSACTIONTIME, '') >= coalesce(inbound.TRANSACTIONTIME, '')
-
-            WITH inbound, outbound,
-                 coalesce(toFloat(inbound.AMOUNTINBIRR), toFloat(inbound.AMOUNT),
-                          toFloat(inbound.amount), toFloat(inbound.LOCAL_AMOUNT), 0.0) AS in_amt,
-                 coalesce(toFloat(outbound.AMOUNTINBIRR), toFloat(outbound.AMOUNT),
-                          toFloat(outbound.amount), toFloat(outbound.LOCAL_AMOUNT), 0.0) AS out_amt
-            WHERE in_amt > 0 AND out_amt > 0
-              AND abs(out_amt - in_amt) <= (in_amt * 0.1)
-
-            MERGE (inbound)-[r:EFFECTIVE_FLOW {{session_id:$session_id}}]->(outbound)
-            SET r.intermediary = inbound.BENACCOUNTNO,
-                r.hop_count = 2,
-                r.in_amount = in_amt,
-                r.out_amount = out_amt,
-                r.fee_delta = in_amt - out_amt,
-                r.effective_sender = inbound.ACCOUNTNO,
-                r.effective_receiver = outbound.BENACCOUNTNO,
-                r.tx_date = inbound.TRANSACTIONDATE,
-                r.bgcolor = '#9b59b6',
-                r.textcolor = '#eeeeee',
-                r.provisional = true,
-                r.edge_semantic = 'EFFECTIVE_FLOW',
-                r.financial_flow = true,
-                r.directed_display = true
+            try:
+                log_writer(log_file, f"[{datetime.now()}] [Info] Starting EFFECTIVE_FLOW rule (Cypher incremental)")
+                query = get_effective_flow_query(label, "inbound.batch_id = $batch_id", session_param)
+                session.run(query, session_id=session_param, pt=pass_through_accounts, batch_id=batch_id)
+                log_writer(log_file, f"[{datetime.now()}] [Info] EFFECTIVE_FLOW rule completed.")
+            except Exception as e:
+                log_writer(log_file, f"[{datetime.now()}] [Error] EFFECTIVE_FLOW rule failed: {e}")
 
         # ----------------------------
-        # 0.5 LOGICAL TRANSACTION LAYER INITIALIZATION
+        # 0.5 LOGICAL TRANSACTION LAYER
         # ----------------------------
-        session.run(f'''
-        MATCH (t:{label})
-        WHERE t.batch_id = $batch_id
-        SET t.LOGICAL_ACCOUNTNO = coalesce(t.ACCOUNTNO, ''),
-            t.LOGICAL_BENACCOUNTNO = coalesce(t.BENACCOUNTNO, ''),
-            t.RAW_SENDER = coalesce(t.ACCOUNTNO, ''),
-            t.RAW_RECEIVER = coalesce(t.BENACCOUNTNO, ''),
-            t.LOGICAL_TRANSFORMATION_REASON = 'NONE',
-            t.PASSTHROUGH_HOPS = 0,
-            t.IGNORE_LOGICAL = false
-        ''', batch_id=batch_id)
-        
-        if pass_through_accounts:
-            session.run(f'''
-            MATCH (inbound:{label})-[r:EFFECTIVE_FLOW]->(outbound:{label})
-            WHERE inbound.batch_id = $batch_id
-            SET inbound.LOGICAL_BENACCOUNTNO = coalesce(outbound.BENACCOUNTNO, ''),
-                outbound.IGNORE_LOGICAL = true,
-                inbound.PASSTHROUGH_HOPS = 1,
-                inbound.LOGICAL_TRANSFORMATION_REASON = 'EFFECTIVE_FLOW_COLLAPSE',
-                inbound.LOGICAL_PATH = '[' + coalesce(inbound.ACCOUNTNO, '') + ', ' + coalesce(r.intermediary, '') + ', ' + coalesce(outbound.BENACCOUNTNO, '') + ']'
-            
-            MERGE (inbound)-[df:DERIVED_FLOW {session_id:$session_id}]->(outbound)
-            SET df.edge_semantic = 'DERIVED_EFFECTIVE_FLOW',
-                df.raw_sender = coalesce(inbound.ACCOUNTNO, ''),
-                df.logical_sender = coalesce(inbound.ACCOUNTNO, ''),
-                df.raw_receiver = coalesce(outbound.BENACCOUNTNO, ''),
-                df.passthrough_entity = coalesce(r.intermediary, ''),
-                df.passthrough_hops = 1,
-                df.financial_flow = false,
-                df.bgcolor = '#3498db',
-                df.directed_display = true
-            ''', batch_id=batch_id, session_id=session_param)
-        log_writer(log_file, f"[{datetime.now()}] [Info] Logical Layer initialized")
-            """, session_id=session_param, batch_id=batch_id, pass_through_accounts=pass_through_accounts)
+        try:
+            queries = get_logical_layer_query(label, "t.batch_id = $batch_id", apply_pass_through=bool(pass_through_accounts))
+            for q in queries:
+                session.run(q, session_id=session_param, batch_id=batch_id)
+            log_writer(log_file, f"[{datetime.now()}] [Info] Logical Layer initialized")
+        except Exception as e:
+            log_writer(log_file, f"[{datetime.now()}] [Error] Logical Layer failed: {e}")
 
         # Smurfing: start from new rows, then inspect only matching account/beneficiary/day groups.
         query = get_smurfing_query(
