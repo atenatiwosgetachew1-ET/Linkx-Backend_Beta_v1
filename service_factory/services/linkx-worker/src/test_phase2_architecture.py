@@ -1,5 +1,13 @@
 import os
+
+import os
 import sys
+from unittest.mock import MagicMock
+
+# Mock third-party dependencies that aren't in the global environment
+sys.modules['flask_socketio'] = MagicMock()
+sys.modules['py4j'] = MagicMock()
+sys.modules['py4j.java_gateway'] = MagicMock()
 
 # Ensure imports work regardless of where script is run from
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))

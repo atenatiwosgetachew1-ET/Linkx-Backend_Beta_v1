@@ -437,22 +437,6 @@ def fast_ingest_batch(credentials, session_id, df, batch_number, node_label):
                 SET n = row, n.node_identity = 'Entity Node'
             """, rows=clean_rows)
 
-        # ---- 14. FRAUD_AGGREGATOR ----
-        try:
-            with driver.session() as s:
-                query = get_fraud_aggregator_query(
-                    label=label,
-                    scope_clause_t="$session_id IS NULL OR t.session_id = $session_id",
-                    session_id=sp
-                )
-                s.run(query, session_id=sp)
-            rules_completed.append("FRAUD_AGGREGATOR")
-            print("  [Rule] FRAUD_AGGREGATOR ✓", flush=True)
-        except Exception as e:
-            rules_failed.append(("FRAUD_AGGREGATOR", str(e)[:100]))
-            print(f"  [Rule] FRAUD_AGGREGATOR ✗ {str(e)[:100]}", flush=True)
-
-
     finally:
         driver.close()
 
