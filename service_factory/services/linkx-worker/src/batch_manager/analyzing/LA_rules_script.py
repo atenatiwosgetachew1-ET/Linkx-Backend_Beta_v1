@@ -495,6 +495,86 @@ def _count_transaction_relationships(session, session_id):
     return {record["relationship_type"]: record["count"] for record in result}
 
 
+
+
+def get_effective_flow_query(label, scope_clause_t, session_id):
+    # Pure Cypher implementation of EFFECTIVE_FLOW
+    return f"""
+    MATCH (inbound:{label})
+    WHERE ({scope_clause_t})
+      AND inbound.BENACCOUNTNO IN $pt
+      AND inbound.ACCOUNTNO IS NOT NULL AND inbound.ACCOUNTNO <> ''
+
+    MATCH (outbound:{label})
+    WHERE outbound.ACCOUNTNO = inbound.BENACCOUNTNO
+      AND ($session_id IS NULL OR outbound.session_id = $session_id)
+      AND outbound.BENACCOUNTNO IS NOT NULL
+      AND outbound.BENACCOUNTNO <> ''
+      AND outbound.BENACCOUNTNO <> inbound.ACCOUNTNO
+      AND coalesce(outbound.TRANSACTIONDATE, '') = coalesce(inbound.TRANSACTIONDATE, '')
+      AND coalesce(outbound.TRANSACTIONTIME, '') >= coalesce(inbound.TRANSACTIONTIME, '')
+
+    WITH inbound, outbound,
+         coalesce(toFloat(inbound.AMOUNTINBIRR), toFloat(inbound.AMOUNT),
+                  toFloat(inbound.amount), toFloat(inbound.LOCAL_AMOUNT), 0.0) AS in_amt,
+         coalesce(toFloat(outbound.AMOUNTINBIRR), toFloat(outbound.AMOUNT),
+                  toFloat(outbound.amount), toFloat(outbound.LOCAL_AMOUNT), 0.0) AS out_amt
+    WHERE in_amt > 0 AND out_amt > 0
+      AND abs(out_amt - in_amt) <= (in_amt * 0.1)
+
+    MERGE (inbound)-[r:EFFECTIVE_FLOW {{session_id:$session_id}}]->(outbound)
+    SET r.intermediary = inbound.BENACCOUNTNO,
+        r.hop_count = 2,
+        r.in_amount = in_amt,
+        r.out_amount = out_amt,
+        r.fee_delta = in_amt - out_amt,
+        r.effective_sender = inbound.ACCOUNTNO,
+        r.effective_receiver = outbound.BENACCOUNTNO,
+        r.tx_date = inbound.TRANSACTIONDATE,
+        r.bgcolor = '#9b59b6',
+        r.textcolor = '#eeeeee',
+        r.provisional = false,
+        r.edge_semantic = 'EFFECTIVE_FLOW',
+        r.financial_flow = true,
+        r.directed_display = true
+    """
+
+def get_logical_layer_query(label, scope_clause_t, apply_pass_through=False):
+    q1 = f"""
+    MATCH (t:{label})
+    WHERE ({scope_clause_t})
+    SET t.LOGICAL_ACCOUNTNO = coalesce(t.ACCOUNTNO, ''),
+        t.LOGICAL_BENACCOUNTNO = coalesce(t.BENACCOUNTNO, ''),
+        t.RAW_SENDER = coalesce(t.ACCOUNTNO, ''),
+        t.RAW_RECEIVER = coalesce(t.BENACCOUNTNO, ''),
+        t.LOGICAL_TRANSFORMATION_REASON = 'NONE',
+        t.PASSTHROUGH_HOPS = 0,
+        t.IGNORE_LOGICAL = false
+    """
+    
+    q2 = f"""
+    MATCH (inbound:{label})-[r:EFFECTIVE_FLOW]->(outbound:{label})
+    WHERE ({scope_clause_t.replace('t.', 'inbound.')})
+    SET inbound.LOGICAL_BENACCOUNTNO = coalesce(outbound.BENACCOUNTNO, ''),
+        outbound.IGNORE_LOGICAL = true,
+        inbound.PASSTHROUGH_HOPS = 1,
+        inbound.LOGICAL_TRANSFORMATION_REASON = 'EFFECTIVE_FLOW_COLLAPSE',
+        inbound.LOGICAL_PATH = '[' + coalesce(inbound.ACCOUNTNO, '') + ', ' + coalesce(r.intermediary, '') + ', ' + coalesce(outbound.BENACCOUNTNO, '') + ']'
+    
+    MERGE (inbound)-[df:DERIVED_FLOW {{session_id:$session_id}}]->(outbound)
+    SET df.edge_semantic = 'DERIVED_EFFECTIVE_FLOW',
+        df.raw_sender = coalesce(inbound.ACCOUNTNO, ''),
+        df.logical_sender = coalesce(inbound.ACCOUNTNO, ''),
+        df.raw_receiver = coalesce(outbound.BENACCOUNTNO, ''),
+        df.passthrough_entity = coalesce(r.intermediary, ''),
+        df.passthrough_hops = 1,
+        df.financial_flow = false,
+        df.bgcolor = '#3498db',
+        df.directed_display = true
+    """
+    
+    return [q1, q2] if apply_pass_through else [q1]
+
 def batch_graph_analysis_transactions(
     driver,
     log_file,
