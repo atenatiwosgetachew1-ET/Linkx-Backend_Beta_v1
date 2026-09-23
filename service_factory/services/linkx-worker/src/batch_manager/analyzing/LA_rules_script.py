@@ -133,7 +133,7 @@ def get_circular_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_
       AND coalesce(t.IGNORE_LOGICAL, false) = false
       AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> ''
     WITH t.LOGICAL_ACCOUNTNO AS acc, count(t) AS out_count
-    WHERE out_count <= 50
+    WHERE out_count < 1000
 
     MATCH (a:{label})
     WHERE ({scope_clause_a}) AND a.ACCOUNTNO = acc
@@ -178,7 +178,7 @@ def get_fund_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, t
       AND coalesce(t.IGNORE_LOGICAL, false) = false
       AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> ''
     WITH t.LOGICAL_ACCOUNTNO AS acc, count(t) AS out_count
-    WHERE out_count <= 50 AND NOT acc IN $pt
+    WHERE out_count < 1000 AND NOT acc IN $pt
 
     MATCH (a:{label})
     WHERE ({scope_clause_a}) AND a.LOGICAL_BENACCOUNTNO = acc
