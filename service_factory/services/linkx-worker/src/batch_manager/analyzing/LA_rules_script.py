@@ -230,8 +230,8 @@ def get_abnormal_balance_query(label, scope_clause_t, is_provisional=False, incr
     seed_block = ""
     match_filters = ""
     if incremental_batch_id:
-        seed_block = f"MATCH (seed:{label}) WHERE seed.batch_id = {incremental_batch_id} WITH DISTINCT seed.LOGICAL_ACCOUNTNO AS acc WHERE acc IS NOT NULL AND acc <> ''"
-        match_filters = "AND t.LOGICAL_ACCOUNTNO = acc"
+        seed_block = f"MATCH (seed:{label}) WHERE seed.batch_id = {incremental_batch_id} WITH DISTINCT seed.LOGICAL_ACCOUNTNO AS acc, coalesce(seed.TRANSACTIONDATE, toString(date())) AS seed_day WHERE acc IS NOT NULL AND acc <> ''"
+        match_filters = "AND t.LOGICAL_ACCOUNTNO = acc AND coalesce(t.TRANSACTIONDATE, '') >= toString(date(seed_day) - duration({days: $historical_baseline_days}))"
         
     return f"""
     {seed_block}
@@ -374,16 +374,13 @@ def get_rapid_withdrawal_query(label, scope_clause_t, is_provisional=False, incr
     WHERE ({scope_clause_t})
       AND coalesce(t.IGNORE_LOGICAL, false) = false
       {where_filter}
-    WITH {with_acc} collect(t) AS txns
-    WHERE size(txns) >= 2 AND size(txns) < 1000
-    CALL (txns, acc, tx_day) {{
-      UNWIND txns AS t1
-      UNWIND txns AS t2
+    WITH {with_acc} [t IN collect(t) WHERE t.LOGICAL_BENACCOUNTNO = acc] AS in_txns, [t IN collect(t) WHERE t.LOGICAL_ACCOUNTNO = acc] AS out_txns
+    WHERE size(in_txns) > 0 AND size(out_txns) > 0 AND (size(in_txns) + size(out_txns)) < 1000
+    CALL (in_txns, out_txns, acc, tx_day) {{
+      UNWIND in_txns AS t1
+      UNWIND out_txns AS t2
       WITH t1, t2, acc, tx_day
-      WHERE elementId(t1) < elementId(t2)
-        AND t1.LOGICAL_BENACCOUNTNO = acc
-        AND t2.LOGICAL_ACCOUNTNO = acc
-        AND coalesce(t1.TRANSACTIONTIME, '') <= coalesce(t2.TRANSACTIONTIME, '')
+      WHERE coalesce(t1.TRANSACTIONTIME, '') <= coalesce(t2.TRANSACTIONTIME, '')
       WITH t1, t2, acc, tx_day,
            coalesce(toFloat(t1.AMOUNTINBIRR), toFloat(t1.AMOUNT), toFloat(t1.LOCAL_AMOUNT), 0.0) AS in_amt,
            coalesce(toFloat(t2.AMOUNTINBIRR), toFloat(t2.AMOUNT), toFloat(t2.LOCAL_AMOUNT), 0.0) AS out_amt
@@ -420,6 +417,7 @@ def get_account_activity_spike_query(label, scope_clause_t, is_provisional=False
     MATCH (history:{label} {{LOGICAL_ACCOUNTNO: acc}})
     WHERE coalesce(history.IGNORE_LOGICAL, false) = false
       AND history.TRANSACTIONDATE IS NOT NULL AND history.TRANSACTIONDATE <> tx_day
+      AND history.TRANSACTIONDATE >= toString(date(tx_day) - duration({{days: $historical_baseline_days}}))
     WITH acc, tx_day, daily_count, txns, count(history) AS hist_count, count(DISTINCT history.TRANSACTIONDATE) AS hist_days
     WHERE hist_days > 0
     WITH acc, tx_day, daily_count, txns, (toFloat(hist_count) / hist_days) AS avg_daily

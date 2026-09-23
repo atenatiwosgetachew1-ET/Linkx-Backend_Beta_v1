@@ -680,7 +680,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                     scope_clause_t="$session_id IS NULL OR t.session_id = $session_id",
                     is_provisional=False
                 )
-                s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts)
+                s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts, historical_baseline_days=thresholds.get("historical_baseline_days", 30))
             rules_completed.append("ABNORMAL_BALANCE_CHANGE")
             print(f"  [Rule] ABNORMAL_BALANCE_CHANGE ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
         except Exception as e:
@@ -768,7 +768,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 )
                 s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries,
                       activity_spike_min_daily_count=thresholds.get("activity_spike_min_daily_count"),
-                      activity_spike_multiplier=thresholds.get("activity_spike_multiplier"), pt=pass_through_accounts)
+                      activity_spike_multiplier=thresholds.get("activity_spike_multiplier"), pt=pass_through_accounts, historical_baseline_days=thresholds.get("historical_baseline_days", 30))
             rules_completed.append("ACCOUNT_ACTIVITY_SPIKE")
             print(f"  [Rule] ACCOUNT_ACTIVITY_SPIKE ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
         except Exception as e:
