@@ -557,7 +557,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
         # ---- 0. EFFECTIVE_FLOW ----
         if pass_through_accounts:
             try:
-                    start_time = __import__("datetime").datetime.now()
+                    start_time = datetime.now()
                     with driver.session() as s:
                         edge_count = execute_effective_flow_rule(
                             session=s, 
@@ -577,7 +577,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
 
         # ---- 0.5. LOGICAL TRANSACTION LAYER ----
         try:
-            start_time = __import__('datetime').datetime.now()
+            start_time = datetime.now()
             queries = get_logical_layer_query(
                 label=label,
                 scope_clause_t="$session_id IS NULL OR t.session_id = $session_id",
@@ -587,15 +587,15 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 for q in queries:
                     s.run(q, session_id=sp)
             rules_completed.append("LOGICAL_LAYER")
-            print(f"  [Rule] LOGICAL_LAYER ✓ ({(__import__("datetime").datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
+            print(f"  [Rule] LOGICAL_LAYER ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
         except Exception as e:
             rules_failed.append(("LOGICAL_LAYER", str(e)[:100]))
             print(f"  [Rule] LOGICAL_LAYER ✗ {str(e)[:100]}", flush=True)
 
         # ---- 1. SMURFING ----
         try:
-            start_time = __import__('datetime').datetime.now()
-            start_time = __import__("datetime").datetime.now()
+            start_time = datetime.now()
+            start_time = datetime.now()
             with driver.session() as s:
                 query = get_smurfing_query(
                     label=label,
@@ -608,15 +608,15 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                      smurfing_min_tx_count=thresholds.get("smurfing_min_tx_count"),
                      smurfing_cumulative_threshold=thresholds.get("smurfing_cumulative_threshold"))
             rules_completed.append("SMURFING")
-            print(f"  [Rule] SMURFING ✓ ({(__import__(\'datetime\').datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
+            print(f"  [Rule] SMURFING ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
         except Exception as e:
             rules_failed.append(("SMURFING", str(e)[:100]))
             print(f"  [Rule] SMURFING ✗ {str(e)[:100]}", flush=True)
 
         # ---- 2. CIRCULAR_FLOW (OPTIMIZED: index-assisted, no cartesian product) ----
         try:
-            start_time = __import__('datetime').datetime.now()
-            start_time = __import__("datetime").datetime.now()
+            start_time = datetime.now()
+            start_time = datetime.now()
             with driver.session() as s:
                 query = get_circular_flow_query(
                     label=label,
@@ -628,15 +628,15 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 )
                 s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts)
             rules_completed.append("CIRCULAR_FLOW")
-            print(f"  [Rule] CIRCULAR_FLOW ✓ ({(__import__(\'datetime\').datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
+            print(f"  [Rule] CIRCULAR_FLOW ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
         except Exception as e:
             rules_failed.append(("CIRCULAR_FLOW", str(e)[:100]))
             print(f"  [Rule] CIRCULAR_FLOW ✗ {str(e)[:100]}", flush=True)
 
         # ---- 3. FUND_FLOW (OPTIMIZED: index-assisted, no cartesian product) ----
         try:
-            start_time = __import__('datetime').datetime.now()
-            start_time = __import__("datetime").datetime.now()
+            start_time = datetime.now()
+            start_time = datetime.now()
             with driver.session() as s:
                 query = get_fund_flow_query(
                     label=label,
@@ -648,15 +648,15 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 )
                 s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts)
             rules_completed.append("FUND_FLOW")
-            print(f"  [Rule] FUND_FLOW ✓ ({(__import__(\'datetime\').datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
+            print(f"  [Rule] FUND_FLOW ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
         except Exception as e:
             rules_failed.append(("FUND_FLOW", str(e)[:100]))
             print(f"  [Rule] FUND_FLOW ✗ {str(e)[:100]}", flush=True)
 
         # ---- 4. DORMANT_TO_ACTIVE ----
         try:
-            start_time = __import__('datetime').datetime.now()
-            start_time = __import__("datetime").datetime.now()
+            start_time = datetime.now()
+            start_time = datetime.now()
             with driver.session() as s:
                 query = get_dormant_to_active_query(
                     label=label,
@@ -665,15 +665,15 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 )
                 s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts)
             rules_completed.append("DORMANT_TO_ACTIVE")
-            print(f"  [Rule] DORMANT_TO_ACTIVE ✓ ({(__import__(\'datetime\').datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
+            print(f"  [Rule] DORMANT_TO_ACTIVE ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
         except Exception as e:
             rules_failed.append(("DORMANT_TO_ACTIVE", str(e)[:100]))
             print(f"  [Rule] DORMANT_TO_ACTIVE ✗ {str(e)[:100]}", flush=True)
 
         # ---- 5. ABNORMAL_BALANCE_CHANGE ----
         try:
-            start_time = __import__('datetime').datetime.now()
-            start_time = __import__("datetime").datetime.now()
+            start_time = datetime.now()
+            start_time = datetime.now()
             with driver.session() as s:
                 query = get_abnormal_balance_query(
                     label=label,
@@ -682,15 +682,15 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 )
                 s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts)
             rules_completed.append("ABNORMAL_BALANCE_CHANGE")
-            print(f"  [Rule] ABNORMAL_BALANCE_CHANGE ✓ ({(__import__(\'datetime\').datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
+            print(f"  [Rule] ABNORMAL_BALANCE_CHANGE ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
         except Exception as e:
             rules_failed.append(("ABNORMAL_BALANCE_CHANGE", str(e)[:100]))
             print(f"  [Rule] ABNORMAL_BALANCE_CHANGE ✗ {str(e)[:100]}", flush=True)
 
         # ---- 6. HUB_AND_SPOKE (outgoing) ----
         try:
-            start_time = __import__('datetime').datetime.now()
-            start_time = __import__("datetime").datetime.now()
+            start_time = datetime.now()
+            start_time = datetime.now()
             with driver.session() as s:
                 query = get_hub_and_spoke_out_query(
                     label=label,
@@ -700,15 +700,15 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 )
                 s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts, hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties"))
             rules_completed.append("HUB_AND_SPOKE_OUT")
-            print(f"  [Rule] HUB_AND_SPOKE (outgoing) ✓ ({(__import__(\'datetime\').datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
+            print(f"  [Rule] HUB_AND_SPOKE (outgoing) ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
         except Exception as e:
             rules_failed.append(("HUB_AND_SPOKE_OUT", str(e)[:100]))
             print(f"  [Rule] HUB_AND_SPOKE (outgoing) ✗ {str(e)[:100]}", flush=True)
 
         # ---- 7. HUB_AND_SPOKE (incoming) ----
         try:
-            start_time = __import__('datetime').datetime.now()
-            start_time = __import__("datetime").datetime.now()
+            start_time = datetime.now()
+            start_time = datetime.now()
             with driver.session() as s:
                 query = get_hub_and_spoke_in_query(
                     label=label,
@@ -718,15 +718,15 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 )
                 s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts, hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties"))
             rules_completed.append("HUB_AND_SPOKE_IN")
-            print(f"  [Rule] HUB_AND_SPOKE (incoming) ✓ ({(__import__(\'datetime\').datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
+            print(f"  [Rule] HUB_AND_SPOKE (incoming) ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
         except Exception as e:
             rules_failed.append(("HUB_AND_SPOKE_IN", str(e)[:100]))
             print(f"  [Rule] HUB_AND_SPOKE (incoming) ✗ {str(e)[:100]}", flush=True)
 
         # ---- 8. SHARED_IDENTIFIER ----
         try:
-            start_time = __import__('datetime').datetime.now()
-            start_time = __import__("datetime").datetime.now()
+            start_time = datetime.now()
+            start_time = datetime.now()
             with driver.session() as s:
                 query = get_shared_identifier_query(
                     label=label,
@@ -735,15 +735,15 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 )
                 s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts)
             rules_completed.append("SHARED_IDENTIFIER")
-            print(f"  [Rule] SHARED_IDENTIFIER ✓ ({(__import__(\'datetime\').datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
+            print(f"  [Rule] SHARED_IDENTIFIER ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
         except Exception as e:
             rules_failed.append(("SHARED_IDENTIFIER", str(e)[:100]))
             print(f"  [Rule] SHARED_IDENTIFIER ✗ {str(e)[:100]}", flush=True)
 
         # ---- 9. LATE_NIGHT_TX ----
         try:
-            start_time = __import__('datetime').datetime.now()
-            start_time = __import__("datetime").datetime.now()
+            start_time = datetime.now()
+            start_time = datetime.now()
             with driver.session() as s:
                 query = get_rapid_withdrawal_query(
                     label=label,
@@ -752,15 +752,15 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 )
                 s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts, rapid_withdrawal_amount_tolerance=thresholds.get("rapid_withdrawal_amount_tolerance"))
             rules_completed.append("RAPID_WITHDRAWAL")
-            print(f"  [Rule] RAPID_WITHDRAWAL ✓ ({(__import__(\'datetime\').datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
+            print(f"  [Rule] RAPID_WITHDRAWAL ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
         except Exception as e:
             rules_failed.append(("RAPID_WITHDRAWAL", str(e)[:100]))
             print(f"  [Rule] RAPID_WITHDRAWAL ✗ {str(e)[:100]}", flush=True)
 
         # ---- 12. ACCOUNT_ACTIVITY_SPIKE ----
         try:
-            start_time = __import__('datetime').datetime.now()
-            start_time = __import__("datetime").datetime.now()
+            start_time = datetime.now()
+            start_time = datetime.now()
             with driver.session() as s:
                 query = get_account_activity_spike_query(
                     label=label,
@@ -770,15 +770,15 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                       activity_spike_min_daily_count=thresholds.get("activity_spike_min_daily_count"),
                       activity_spike_multiplier=thresholds.get("activity_spike_multiplier"), pt=pass_through_accounts)
             rules_completed.append("ACCOUNT_ACTIVITY_SPIKE")
-            print(f"  [Rule] ACCOUNT_ACTIVITY_SPIKE ✓ ({(__import__("datetime").datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
+            print(f"  [Rule] ACCOUNT_ACTIVITY_SPIKE ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
         except Exception as e:
             rules_failed.append(("ACCOUNT_ACTIVITY_SPIKE", str(e)[:100]))
             print(f"  [Rule] ACCOUNT_ACTIVITY_SPIKE ✗ {str(e)[:100]}", flush=True)
 
         # ---- 13. HIGH_RISK_LINK (from risk_entities) ----
         try:
-            start_time = __import__('datetime').datetime.now()
-            start_time = __import__("datetime").datetime.now()
+            start_time = datetime.now()
+            start_time = datetime.now()
             with driver.session() as s:
                 query = get_high_risk_link_query(
                     label=label,
@@ -786,7 +786,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 )
                 s.run(query, session_id=sp, risk_entries=risk_entries)
             rules_completed.append("HIGH_RISK_LINK")
-            print(f"  [Rule] HIGH_RISK_LINK / PEP / SANCTION ✓ ({(__import__("datetime").datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
+            print(f"  [Rule] HIGH_RISK_LINK / PEP / SANCTION ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
         except Exception as e:
             rules_failed.append(("HIGH_RISK_LINK", str(e)[:100]))
             print(f"  [Rule] HIGH_RISK_LINK / PEP / SANCTION ✗ {str(e)[:100]}", flush=True)
@@ -794,8 +794,8 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
 
         # ---- 14. FRAUD_AGGREGATOR ----
         try:
-            start_time = __import__('datetime').datetime.now()
-            start_time = __import__("datetime").datetime.now()
+            start_time = datetime.now()
+            start_time = datetime.now()
             with driver.session() as s:
                 query = get_fraud_aggregator_query(
                     label=label,
@@ -804,7 +804,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 )
                 s.run(query, session_id=sp)
             rules_completed.append("FRAUD_AGGREGATOR")
-            print(f"  [Rule] FRAUD_AGGREGATOR ✓ ({(__import__("datetime").datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
+            print(f"  [Rule] FRAUD_AGGREGATOR ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
         except Exception as e:
             rules_failed.append(("FRAUD_AGGREGATOR", str(e)[:100]))
             print(f"  [Rule] FRAUD_AGGREGATOR ✗ {str(e)[:100]}", flush=True)
