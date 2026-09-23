@@ -135,14 +135,24 @@ def get_circular_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_
     WITH t.LOGICAL_ACCOUNTNO AS acc, count(t) AS out_count
     WHERE out_count < 1000
 
-    MATCH (a:{label} {{ACCOUNTNO: acc}})
-    WHERE ({scope_clause_a})
+    // Partition by trigger account to prevent Cartesian explosion
+    MATCH (a:{label})
+    WHERE ({scope_clause_a}) AND a.ACCOUNTNO = acc
       AND a.LOGICAL_BENACCOUNTNO IS NOT NULL AND a.LOGICAL_BENACCOUNTNO <> ''
       AND NOT a.LOGICAL_BENACCOUNTNO IN $pt
+    WITH acc, collect(a) AS list_a
+    WITH acc, list_a, [x IN list_a | x.LOGICAL_BENACCOUNTNO] AS target_b_accs
 
-    MATCH (b:{label} {{ACCOUNTNO: a.LOGICAL_BENACCOUNTNO, BENACCOUNTNO: a.LOGICAL_ACCOUNTNO}})
-    WHERE ({scope_clause_b})
-      AND elementId(a) < elementId(b)
+    MATCH (b:{label})
+    WHERE ({scope_clause_b}) AND b.ACCOUNTNO IN target_b_accs
+    WITH list_a, collect(b) AS list_b
+
+    UNWIND list_a AS a
+    UNWIND list_b AS b
+    WITH a, b
+    WHERE elementId(a) < elementId(b)
+      AND b.ACCOUNTNO = a.LOGICAL_BENACCOUNTNO 
+      AND b.BENACCOUNTNO = a.LOGICAL_ACCOUNTNO
       AND coalesce(a.TRANSACTIONDATE, '') = coalesce(b.TRANSACTIONDATE, '')
       AND {trusted_pair_clause}
       {boundary_str}
@@ -169,12 +179,19 @@ def get_fund_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, t
     WITH t.LOGICAL_ACCOUNTNO AS acc, count(t) AS out_count
     WHERE out_count < 1000 AND NOT acc IN $pt
 
-    MATCH (a:{label} {{LOGICAL_BENACCOUNTNO: acc}})
-    WHERE ({scope_clause_a})
+    // Partition by trigger account to prevent Cartesian explosion
+    MATCH (a:{label})
+    WHERE ({scope_clause_a}) AND a.LOGICAL_BENACCOUNTNO = acc
+    WITH acc, collect(a) AS list_a
 
-    MATCH (b:{label} {{LOGICAL_ACCOUNTNO: acc}})
-    WHERE ({scope_clause_b})
-      AND elementId(a) <> elementId(b)
+    MATCH (b:{label})
+    WHERE ({scope_clause_b}) AND b.LOGICAL_ACCOUNTNO = acc
+    WITH list_a, collect(b) AS list_b
+
+    UNWIND list_a AS a
+    UNWIND list_b AS b
+    WITH a, b
+    WHERE elementId(a) <> elementId(b)
       AND (
         coalesce(a.TRANSACTIONDATE, '') < coalesce(b.TRANSACTIONDATE, '')
         OR (
