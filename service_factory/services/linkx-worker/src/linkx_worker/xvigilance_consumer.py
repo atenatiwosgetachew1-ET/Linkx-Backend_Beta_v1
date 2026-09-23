@@ -742,8 +742,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             with driver.session() as s:
                 query = get_account_activity_spike_query(
                     label=label,
-                    scope_clause_t="$session_id IS NULL OR t.session_id = $session_id",
-                    trusted_node_clause=_trusted_node_clause('t')
+                    scope_clause_t="$session_id IS NULL OR t.session_id = $session_id"
                 )
                 s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries,
                       activity_spike_min_daily_count=thresholds.get("activity_spike_min_daily_count"),
@@ -759,9 +758,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             with driver.session() as s:
                 query = get_high_risk_link_query(
                     label=label,
-                    scope_clause_t="$session_id IS NULL OR t.session_id = $session_id",
-                    trusted_node_clause=_trusted_node_clause('t'),
-                    trusted_entry_match=_trusted_entry_match('t')
+                    scope_clause_t="$session_id IS NULL OR t.session_id = $session_id"
                 )
                 s.run(query, session_id=sp, risk_entries=risk_entries)
             rules_completed.append("HIGH_RISK_LINK")
