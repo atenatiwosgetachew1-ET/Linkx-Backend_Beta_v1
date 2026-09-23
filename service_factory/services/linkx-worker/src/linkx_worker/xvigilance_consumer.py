@@ -577,7 +577,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
 
         # ---- 0.5. LOGICAL TRANSACTION LAYER ----
         try:
-        start_time = __import__('datetime').datetime.now()
+            start_time = __import__('datetime').datetime.now()
             queries = get_logical_layer_query(
                 label=label,
                 scope_clause_t="$session_id IS NULL OR t.session_id = $session_id",
@@ -594,7 +594,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
 
         # ---- 1. SMURFING ----
         try:
-        start_time = __import__('datetime').datetime.now()
+            start_time = __import__('datetime').datetime.now()
             start_time = __import__("datetime").datetime.now()
             with driver.session() as s:
                 query = get_smurfing_query(
@@ -615,7 +615,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
 
         # ---- 2. CIRCULAR_FLOW (OPTIMIZED: index-assisted, no cartesian product) ----
         try:
-        start_time = __import__('datetime').datetime.now()
+            start_time = __import__('datetime').datetime.now()
             start_time = __import__("datetime").datetime.now()
             with driver.session() as s:
                 query = get_circular_flow_query(
@@ -635,7 +635,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
 
         # ---- 3. FUND_FLOW (OPTIMIZED: index-assisted, no cartesian product) ----
         try:
-        start_time = __import__('datetime').datetime.now()
+            start_time = __import__('datetime').datetime.now()
             start_time = __import__("datetime").datetime.now()
             with driver.session() as s:
                 query = get_fund_flow_query(
@@ -655,7 +655,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
 
         # ---- 4. DORMANT_TO_ACTIVE ----
         try:
-        start_time = __import__('datetime').datetime.now()
+            start_time = __import__('datetime').datetime.now()
             start_time = __import__("datetime").datetime.now()
             with driver.session() as s:
                 query = get_dormant_to_active_query(
@@ -672,7 +672,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
 
         # ---- 5. ABNORMAL_BALANCE_CHANGE ----
         try:
-        start_time = __import__('datetime').datetime.now()
+            start_time = __import__('datetime').datetime.now()
             start_time = __import__("datetime").datetime.now()
             with driver.session() as s:
                 query = get_abnormal_balance_query(
@@ -689,7 +689,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
 
         # ---- 6. HUB_AND_SPOKE (outgoing) ----
         try:
-        start_time = __import__('datetime').datetime.now()
+            start_time = __import__('datetime').datetime.now()
             start_time = __import__("datetime").datetime.now()
             with driver.session() as s:
                 query = get_hub_and_spoke_out_query(
@@ -707,7 +707,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
 
         # ---- 7. HUB_AND_SPOKE (incoming) ----
         try:
-        start_time = __import__('datetime').datetime.now()
+            start_time = __import__('datetime').datetime.now()
             start_time = __import__("datetime").datetime.now()
             with driver.session() as s:
                 query = get_hub_and_spoke_in_query(
@@ -725,7 +725,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
 
         # ---- 8. SHARED_IDENTIFIER ----
         try:
-        start_time = __import__('datetime').datetime.now()
+            start_time = __import__('datetime').datetime.now()
             start_time = __import__("datetime").datetime.now()
             with driver.session() as s:
                 query = get_shared_identifier_query(
@@ -742,7 +742,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
 
         # ---- 9. LATE_NIGHT_TX ----
         try:
-        start_time = __import__('datetime').datetime.now()
+            start_time = __import__('datetime').datetime.now()
             start_time = __import__("datetime").datetime.now()
             with driver.session() as s:
                 query = get_rapid_withdrawal_query(
@@ -759,7 +759,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
 
         # ---- 12. ACCOUNT_ACTIVITY_SPIKE ----
         try:
-        start_time = __import__('datetime').datetime.now()
+            start_time = __import__('datetime').datetime.now()
             start_time = __import__("datetime").datetime.now()
             with driver.session() as s:
                 query = get_account_activity_spike_query(
@@ -777,7 +777,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
 
         # ---- 13. HIGH_RISK_LINK (from risk_entities) ----
         try:
-        start_time = __import__('datetime').datetime.now()
+            start_time = __import__('datetime').datetime.now()
             start_time = __import__("datetime").datetime.now()
             with driver.session() as s:
                 query = get_high_risk_link_query(
@@ -794,7 +794,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
 
         # ---- 14. FRAUD_AGGREGATOR ----
         try:
-        start_time = __import__('datetime').datetime.now()
+            start_time = __import__('datetime').datetime.now()
             start_time = __import__("datetime").datetime.now()
             with driver.session() as s:
                 query = get_fraud_aggregator_query(
