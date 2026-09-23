@@ -135,18 +135,18 @@ def get_circular_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_
     WITH t.LOGICAL_ACCOUNTNO AS acc, count(t) AS out_count
     WHERE out_count <= 50
 
-    // Partition by trigger account to prevent Cartesian explosion
-    // Directly index-match the outbound transactions
     MATCH (a:{label})
     WHERE ({scope_clause_a}) AND a.ACCOUNTNO = acc
       AND a.LOGICAL_BENACCOUNTNO IS NOT NULL AND a.LOGICAL_BENACCOUNTNO <> ''
       AND NOT a.LOGICAL_BENACCOUNTNO IN $pt
+      
+    // Force planner to resolve 'a' before scanning 'b'
+    WITH acc, a
 
-    // Directly hash-join the corresponding inbound transactions
     MATCH (b:{label})
     WHERE ({scope_clause_b}) 
       AND b.ACCOUNTNO = a.LOGICAL_BENACCOUNTNO 
-      AND b.BENACCOUNTNO = a.LOGICAL_ACCOUNTNO
+      AND b.BENACCOUNTNO = acc
       AND elementId(a) < elementId(b)
       AND coalesce(a.TRANSACTIONDATE, '') = coalesce(b.TRANSACTIONDATE, '')
       AND {trusted_pair_clause}
@@ -180,11 +180,12 @@ def get_fund_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, t
     WITH t.LOGICAL_ACCOUNTNO AS acc, count(t) AS out_count
     WHERE out_count <= 50 AND NOT acc IN $pt
 
-    // Directly index-match the inbound transactions
     MATCH (a:{label})
     WHERE ({scope_clause_a}) AND a.LOGICAL_BENACCOUNTNO = acc
+    
+    // Force planner to resolve 'a' before scanning 'b'
+    WITH acc, a
 
-    // Directly index-match the outbound transactions
     MATCH (b:{label})
     WHERE ({scope_clause_b}) AND b.LOGICAL_ACCOUNTNO = acc
       AND elementId(a) <> elementId(b)
