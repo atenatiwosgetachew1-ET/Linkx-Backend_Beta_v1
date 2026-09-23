@@ -149,11 +149,15 @@ def get_circular_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_
 
     UNWIND list_a AS a
     UNWIND list_b AS b
-    WITH a, b
+    WITH a, b, 
+         coalesce(toFloat(a.AMOUNTINBIRR), toFloat(a.AMOUNT), toFloat(a.amount), toFloat(a.LOCAL_AMOUNT), 0.0) AS amt_a,
+         coalesce(toFloat(b.AMOUNTINBIRR), toFloat(b.AMOUNT), toFloat(b.amount), toFloat(b.LOCAL_AMOUNT), 0.0) AS amt_b
     WHERE elementId(a) < elementId(b)
       AND b.ACCOUNTNO = a.LOGICAL_BENACCOUNTNO 
       AND b.BENACCOUNTNO = a.LOGICAL_ACCOUNTNO
       AND coalesce(a.TRANSACTIONDATE, '') = coalesce(b.TRANSACTIONDATE, '')
+      AND amt_a > 0 AND amt_b > 0
+      AND abs(amt_a - amt_b) <= (amt_a * 0.05)
       AND {trusted_pair_clause}
       {boundary_str}
 

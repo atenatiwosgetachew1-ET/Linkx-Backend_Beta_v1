@@ -613,6 +613,10 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 WHERE ($session_id IS NULL OR t.session_id = $session_id)
                 SET t.LOGICAL_ACCOUNTNO = coalesce(t.ACCOUNTNO, ''),
                     t.LOGICAL_BENACCOUNTNO = coalesce(t.BENACCOUNTNO, ''),
+                    t.RAW_SENDER = coalesce(t.ACCOUNTNO, ''),
+                    t.RAW_RECEIVER = coalesce(t.BENACCOUNTNO, ''),
+                    t.LOGICAL_TRANSFORMATION_REASON = 'NONE',
+                    t.PASSTHROUGH_HOPS = 0,
                     t.IGNORE_LOGICAL = false
                 ''', session_id=sp)
                 
@@ -621,7 +625,21 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                     MATCH (inbound:{label})-[r:EFFECTIVE_FLOW]->(outbound:{label})
                     WHERE ($session_id IS NULL OR inbound.session_id = $session_id)
                     SET inbound.LOGICAL_BENACCOUNTNO = coalesce(outbound.BENACCOUNTNO, ''),
-                        outbound.IGNORE_LOGICAL = true
+                        outbound.IGNORE_LOGICAL = true,
+                        inbound.PASSTHROUGH_HOPS = 1,
+                        inbound.LOGICAL_TRANSFORMATION_REASON = 'EFFECTIVE_FLOW_COLLAPSE',
+                        inbound.LOGICAL_PATH = '[' + coalesce(inbound.ACCOUNTNO, '') + ', ' + coalesce(r.intermediary, '') + ', ' + coalesce(outbound.BENACCOUNTNO, '') + ']'
+                    
+                    MERGE (inbound)-[df:DERIVED_FLOW {session_id:$session_id}]->(outbound)
+                    SET df.edge_semantic = 'DERIVED_EFFECTIVE_FLOW',
+                        df.raw_sender = coalesce(inbound.ACCOUNTNO, ''),
+                        df.logical_sender = coalesce(inbound.ACCOUNTNO, ''),
+                        df.raw_receiver = coalesce(outbound.BENACCOUNTNO, ''),
+                        df.passthrough_entity = coalesce(r.intermediary, ''),
+                        df.passthrough_hops = 1,
+                        df.financial_flow = false,
+                        df.bgcolor = '#3498db',
+                        df.directed_display = true
                     ''', session_id=sp)
             rules_completed.append("LOGICAL_LAYER")
             print("  [Rule] LOGICAL_LAYER ✓", flush=True)
