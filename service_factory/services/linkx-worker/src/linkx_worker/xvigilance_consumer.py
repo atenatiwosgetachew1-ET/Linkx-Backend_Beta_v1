@@ -7,6 +7,10 @@ import signal
 import sys
 
 from batch_manager.analyzing.LA_rules_script import (
+    get_effective_flow_query,
+    get_logical_layer_query,
+    get_account_activity_spike_query,
+    get_high_risk_link_query,
     get_smurfing_query,
     get_circular_flow_query,
     get_fund_flow_query,
@@ -548,99 +552,31 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
     print(f"[xVigilance-Consumer] Rule thresholds loaded: {', '.join(f'{k}={v}' for k, v in thresholds.items())}", flush=True)
 
     try:
-        # ---- 0. EFFECTIVE_FLOW: trace funds through pass-through intermediaries ----
+        # ---- 0. EFFECTIVE_FLOW ----
         if pass_through_accounts:
-            t_eff = time.time()
             try:
+                query = get_effective_flow_query(label=label, scope_clause_t="$session_id IS NULL OR inbound.session_id = $session_id", session_id=sp)
                 with driver.session() as s:
-                    # 1. Fetch inbound
-                    inbound_res = s.run(f"MATCH (n:{label}) WHERE ($session_id IS NULL OR n.session_id = $session_id) AND n.BENACCOUNTNO IN $pt AND n.ACCOUNTNO IS NOT NULL AND n.ACCOUNTNO <> '' RETURN id(n) AS id, n.ACCOUNTNO AS acc, n.BENACCOUNTNO AS ben, n.TRANSACTIONDATE AS date, n.TRANSACTIONTIME AS time, coalesce(toFloat(n.AMOUNTINBIRR), toFloat(n.AMOUNT), toFloat(n.amount), toFloat(n.LOCAL_AMOUNT), 0.0) AS amt", session_id=sp, pt=pass_through_accounts)
-                    inbounds = [dict(r) for r in inbound_res]
-                    
-                    # 2. Fetch outbound
-                    outbound_res = s.run(f"MATCH (n:{label}) WHERE ($session_id IS NULL OR n.session_id = $session_id) AND n.ACCOUNTNO IN $pt AND n.BENACCOUNTNO IS NOT NULL AND n.BENACCOUNTNO <> '' RETURN id(n) AS id, n.ACCOUNTNO AS acc, n.BENACCOUNTNO AS ben, n.TRANSACTIONDATE AS date, n.TRANSACTIONTIME AS time, coalesce(toFloat(n.AMOUNTINBIRR), toFloat(n.AMOUNT), toFloat(n.amount), toFloat(n.LOCAL_AMOUNT), 0.0) AS amt", session_id=sp, pt=pass_through_accounts)
-                    outbounds = [dict(r) for r in outbound_res]
-                
-                # 3. Match in Python (O(N))
-                # Group outbounds by (acc, date)
-                from collections import defaultdict
-                out_map = defaultdict(list)
-                for o in outbounds:
-                    out_map[(o["acc"], o["date"])].append(o)
-                
-                # Sort outbounds by time to allow fast sequential matching or just finding the first
-                for k in out_map:
-                    out_map[k].sort(key=lambda x: str(x["time"]))
-                
-                edges_to_create = []
-                for i in inbounds:
-                    candidates = out_map.get((i["ben"], i["date"]), [])
-                    for o in candidates:
-                        if o["ben"] != i["acc"] and str(o["time"]) >= str(i["time"]):
-                            if i["amt"] > 0 and o["amt"] > 0 and abs(o["amt"] - i["amt"]) <= (i["amt"] * 0.1):
-                                edges_to_create.append({
-                                    "in_id": i["id"],
-                                    "out_id": o["id"],
-                                    "intermediary": i["ben"],
-                                    "in_amt": i["amt"],
-                                    "out_amt": o["amt"],
-                                    "fee": i["amt"] - o["amt"],
-                                    "sender": i["acc"],
-                                    "receiver": o["ben"],
-                                    "date": i["date"]
-                                })
-                                break # LIMIT 1 equivalent
-                
-                # 4. Write back to Neo4j
-                if edges_to_create:
-                    with driver.session() as s:
-                        s.run(f"UNWIND $edges AS e MATCH (inbound) WHERE id(inbound) = e.in_id MATCH (outbound) WHERE id(outbound) = e.out_id MERGE (inbound)-[r:EFFECTIVE_FLOW {{session_id:$session_id}}]->(outbound) SET r.intermediary = e.intermediary, r.hop_count = 2, r.in_amount = e.in_amt, r.out_amount = e.out_amt, r.fee_delta = e.fee, r.effective_sender = e.sender, r.effective_receiver = e.receiver, r.tx_date = e.date, r.bgcolor = '#9b59b6', r.textcolor = '#eeeeee', r.provisional = false, r.edge_semantic = 'EFFECTIVE_FLOW', r.financial_flow = true, r.directed_display = true", session_id=sp, edges=edges_to_create)
-                
+                    s.run(query, session_id=sp, pt=pass_through_accounts)
                 rules_completed.append("EFFECTIVE_FLOW")
-                print(f"  [Rule] EFFECTIVE_FLOW ✓ (Python matched {len(edges_to_create)} edges in {time.time() - t_eff:.1f}s)", flush=True)
+                print("  [Rule] EFFECTIVE_FLOW ✓ (Cypher execution)", flush=True)
             except Exception as e:
                 rules_failed.append(("EFFECTIVE_FLOW", str(e)[:100]))
                 print(f"  [Rule] EFFECTIVE_FLOW ✗ {str(e)[:100]}", flush=True)
         else:
             rules_completed.append("EFFECTIVE_FLOW")
-            print(f"  [Rule] EFFECTIVE_FLOW ✓ (skipped: no pass-through accounts configured)", flush=True)
+            print("  [Rule] EFFECTIVE_FLOW ✓ (skipped: no pass-through accounts configured)", flush=True)
 
         # ---- 0.5. LOGICAL TRANSACTION LAYER ----
         try:
+            queries = get_logical_layer_query(
+                label=label,
+                scope_clause_t="$session_id IS NULL OR t.session_id = $session_id",
+                apply_pass_through=bool(pass_through_accounts)
+            )
             with driver.session() as s:
-                s.run(f'''
-                MATCH (t:{label})
-                WHERE ($session_id IS NULL OR t.session_id = $session_id)
-                SET t.LOGICAL_ACCOUNTNO = coalesce(t.ACCOUNTNO, ''),
-                    t.LOGICAL_BENACCOUNTNO = coalesce(t.BENACCOUNTNO, ''),
-                    t.RAW_SENDER = coalesce(t.ACCOUNTNO, ''),
-                    t.RAW_RECEIVER = coalesce(t.BENACCOUNTNO, ''),
-                    t.LOGICAL_TRANSFORMATION_REASON = 'NONE',
-                    t.PASSTHROUGH_HOPS = 0,
-                    t.IGNORE_LOGICAL = false
-                ''', session_id=sp)
-                
-                if pass_through_accounts:
-                    s.run(f'''
-                    MATCH (inbound:{label})-[r:EFFECTIVE_FLOW]->(outbound:{label})
-                    WHERE ($session_id IS NULL OR inbound.session_id = $session_id)
-                    SET inbound.LOGICAL_BENACCOUNTNO = coalesce(outbound.BENACCOUNTNO, ''),
-                        outbound.IGNORE_LOGICAL = true,
-                        inbound.PASSTHROUGH_HOPS = 1,
-                        inbound.LOGICAL_TRANSFORMATION_REASON = 'EFFECTIVE_FLOW_COLLAPSE',
-                        inbound.LOGICAL_PATH = '[' + coalesce(inbound.ACCOUNTNO, '') + ', ' + coalesce(r.intermediary, '') + ', ' + coalesce(outbound.BENACCOUNTNO, '') + ']'
-                    
-                    MERGE (inbound)-[df:DERIVED_FLOW {session_id:$session_id}]->(outbound)
-                    SET df.edge_semantic = 'DERIVED_EFFECTIVE_FLOW',
-                        df.raw_sender = coalesce(inbound.ACCOUNTNO, ''),
-                        df.logical_sender = coalesce(inbound.ACCOUNTNO, ''),
-                        df.raw_receiver = coalesce(outbound.BENACCOUNTNO, ''),
-                        df.passthrough_entity = coalesce(r.intermediary, ''),
-                        df.passthrough_hops = 1,
-                        df.financial_flow = false,
-                        df.bgcolor = '#3498db',
-                        df.directed_display = true
-                    ''', session_id=sp)
+                for q in queries:
+                    s.run(q, session_id=sp)
             rules_completed.append("LOGICAL_LAYER")
             print("  [Rule] LOGICAL_LAYER ✓", flush=True)
         except Exception as e:
@@ -797,32 +733,16 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
         # ---- 12. ACCOUNT_ACTIVITY_SPIKE ----
         try:
             with driver.session() as s:
-                s.run(f"""
-                MATCH (t:{label})
-                WHERE ($session_id IS NULL OR t.session_id = $session_id)
-                  AND coalesce(t.IGNORE_LOGICAL, false) = false
-                  AND coalesce(toString(t.LOGICAL_ACCOUNTNO), '') <> ''
-                  AND coalesce(toString(t.TRANSACTIONDATE), '') <> ''
-                WITH t.LOGICAL_ACCOUNTNO AS acc, t.TRANSACTIONDATE AS tx_day, count(t) AS daily_count, collect(t) AS day_txns
-                WHERE daily_count >= $activity_spike_min_daily_count AND NOT acc IN $pt AND NOT acc IN $pt AND NOT acc IN $pt
-                MATCH (all_t:{label})
-                WHERE all_t.LOGICAL_ACCOUNTNO = acc AND coalesce(toString(all_t.TRANSACTIONDATE), '') <> '' AND coalesce(all_t.IGNORE_LOGICAL, false) = false
-                WITH acc, tx_day, daily_count, day_txns, count(all_t) AS total_count, count(DISTINCT all_t.TRANSACTIONDATE) AS total_days
-                WITH acc, tx_day, daily_count, day_txns, (toFloat(total_count) / toFloat(CASE WHEN total_days = 0 THEN 1 ELSE total_days END)) AS avg_daily
-                WHERE daily_count >= (avg_daily * $activity_spike_multiplier)
-                UNWIND day_txns AS t
-                WITH t, acc, tx_day, daily_count, avg_daily
-                WHERE {_trusted_node_clause('t')}
-                MERGE (t)-[r:ACCOUNT_ACTIVITY_SPIKE {{session_id:$session_id}}]->(t)
-                SET r.bgcolor = '#e6e6e6', r.provisional = false,
-                    r.reason = 'unusually high transaction volume for this account on this day',
-                    r.daily_count = daily_count, r.avg_daily = avg_daily,
-                    r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries,
-                     activity_spike_min_daily_count=thresholds.get("activity_spike_min_daily_count"),
-                     activity_spike_multiplier=thresholds.get("activity_spike_multiplier"), pt=pass_through_accounts)
+                query = get_account_activity_spike_query(
+                    label=label,
+                    scope_clause_t="$session_id IS NULL OR t.session_id = $session_id",
+                    trusted_node_clause=_trusted_node_clause('t')
+                )
+                s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries,
+                      activity_spike_min_daily_count=thresholds.get("activity_spike_min_daily_count"),
+                      activity_spike_multiplier=thresholds.get("activity_spike_multiplier"), pt=pass_through_accounts)
             rules_completed.append("ACCOUNT_ACTIVITY_SPIKE")
-            print(f"  [Rule] ACCOUNT_ACTIVITY_SPIKE ✓", flush=True)
+            print("  [Rule] ACCOUNT_ACTIVITY_SPIKE ✓", flush=True)
         except Exception as e:
             rules_failed.append(("ACCOUNT_ACTIVITY_SPIKE", str(e)[:100]))
             print(f"  [Rule] ACCOUNT_ACTIVITY_SPIKE ✗ {str(e)[:100]}", flush=True)
@@ -830,33 +750,15 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
         # ---- 13. HIGH_RISK_LINK (from risk_entities) ----
         try:
             with driver.session() as s:
-                s.run(f"""
-                UNWIND $risk_entries AS entry
-                MATCH (t:{label})
-                WHERE ($session_id IS NULL OR t.session_id = $session_id)
-                  AND coalesce(t.IGNORE_LOGICAL, false) = false
-                  AND {_trusted_node_clause('t')}
-                  AND {_trusted_entry_match('t')}
-                WITH t, entry, toUpper(coalesce(entry.category, entry.CATEGORY, entry.type, entry.TYPE, 'RISK')) AS cat
-
-                FOREACH (ignore IN CASE WHEN cat = 'PEP' THEN [1] ELSE [] END |
-                    MERGE (t)-[r:PEP_INVOLVED {{session_id:$session_id}}]->(t)
-                    SET r.bgcolor = '#0099ff', r.provisional = false, r.reason = 'PEP matched', r.risk_source = 'risk_entities',
-                        r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
+                query = get_high_risk_link_query(
+                    label=label,
+                    scope_clause_t="$session_id IS NULL OR t.session_id = $session_id",
+                    trusted_node_clause=_trusted_node_clause('t'),
+                    trusted_entry_match=_trusted_entry_match('t')
                 )
-                FOREACH (ignore IN CASE WHEN cat IN ['SANCTION', 'SANCTIONS', 'SANCTIONED'] THEN [1] ELSE [] END |
-                    MERGE (t)-[r:SANCTIONED_ENTITY_MATCH {{session_id:$session_id}}]->(t)
-                    SET r.bgcolor = '#ff3b3b', r.provisional = false, r.reason = 'Sanctioned entity matched', r.risk_source = 'risk_entities',
-                        r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-                )
-                FOREACH (ignore IN CASE WHEN NOT cat IN ['PEP', 'SANCTION', 'SANCTIONS', 'SANCTIONED'] THEN [1] ELSE [] END |
-                    MERGE (t)-[r:HIGH_RISK_LINK {{session_id:$session_id}}]->(t)
-                    SET r.bgcolor = '#de7d07', r.provisional = false, r.reason = 'Configured risk entity matched', r.risk_source = 'risk_entities', r.category = cat,
-                        r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-                )
-                """, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pass_through_accounts=pass_through_accounts, pt=pass_through_accounts)
+                s.run(query, session_id=sp, risk_entries=risk_entries)
             rules_completed.append("HIGH_RISK_LINK")
-            print(f"  [Rule] HIGH_RISK_LINK / PEP / SANCTION ✓", flush=True)
+            print("  [Rule] HIGH_RISK_LINK / PEP / SANCTION ✓", flush=True)
         except Exception as e:
             rules_failed.append(("HIGH_RISK_LINK", str(e)[:100]))
             print(f"  [Rule] HIGH_RISK_LINK / PEP / SANCTION ✗ {str(e)[:100]}", flush=True)
