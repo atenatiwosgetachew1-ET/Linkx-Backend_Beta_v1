@@ -158,8 +158,7 @@ def get_circular_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_
     WHERE amt_a > 0 AND amt_b > 0
       AND abs(amt_a - amt_b) <= (amt_a * 0.05)
 
-    CALL {{
-      WITH a, b
+    CALL (a, b) {{
       MERGE (a)-[r1:CIRCULAR_FLOW {{session_id:$session_id}}]->(b)
       SET r1.is_evidence = true, r1.anomaly_score = 0.6, r1.bgcolor = '#e6e6e6', r1.provisional = {prov_str}, r1.reason = 'same-day reverse transfer pair',
           r1.edge_semantic = 'OBSERVED_FLOW', r1.financial_flow = true, r1.directed_display = true
@@ -205,8 +204,7 @@ def get_fund_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, t
     WITH a, downstream[..5] AS limited_downstream
     UNWIND limited_downstream AS b
 
-    CALL {{
-      WITH a, b
+    CALL (a, b) {{
       MERGE (a)-[r:FUND_FLOW {{session_id:$session_id}}]->(b)
       SET r.is_evidence = true, r.anomaly_score = 0.5, r.bgcolor = '#d8a822', r.provisional = {prov_str},
           r.reason = 'beneficiary later acts as sender',
@@ -1869,8 +1867,7 @@ def get_fraud_aggregator_query(label, scope_clause_t, session_id=None):
     WHERE total_score >= 1.0
       AND account_no IS NOT NULL AND account_no <> ''
     
-    CALL {{
-      WITH account_no, total_score, evidence_types, evidence_count, involved_tx_nodes
+    CALL (account_no, total_score, evidence_types, evidence_count, involved_tx_nodes) {{
       MERGE (a:AccountAlert {{account_no: account_no, session_id: $session_id}})
       SET a.total_score = total_score,
           a.evidence_types = evidence_types,
