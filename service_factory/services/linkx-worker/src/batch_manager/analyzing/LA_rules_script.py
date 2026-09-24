@@ -177,9 +177,10 @@ def get_circular_flow_query(
         """
 
     else:
+        scope_clause_seed = scope_clause_t.replace("t.", "seed.")
         seed_block = """
         MATCH (seed:{label})
-        WHERE ({scope_clause_t})
+        WHERE ({scope_clause_seed})
           AND coalesce(seed.IGNORE_LOGICAL, false) = false
           AND seed.LOGICAL_ACCOUNTNO IS NOT NULL
           AND seed.LOGICAL_ACCOUNTNO <> ''
@@ -195,7 +196,7 @@ def get_circular_flow_query(
           AND seed_sender <> seed_receiver
           AND NOT seed_sender IN $pt
           AND NOT seed_receiver IN $pt
-        """.format(label=label, scope_clause_t=scope_clause_t)
+        """.format(label=label, scope_clause_seed=scope_clause_seed)
 
         seed_filter_a = """
           AND a.LOGICAL_ACCOUNTNO = seed_sender
