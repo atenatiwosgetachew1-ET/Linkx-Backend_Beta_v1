@@ -969,25 +969,23 @@ def get_score_lineage():
 def update_score_lineage():
     payload = request.get_json()
     if not payload or not isinstance(payload, dict):
-        return jsonify({"error": "invalid_payload_must_be_dict"}), 400
+        return jsonify({"message": "validation_error", "detail": "invalid_payload_must_be_dict"}), 400
 
-    # Log payload for debugging
-    current_app.logger.info(f"Received payload for score lineage: {list(payload.keys())}")
-    
-    # Relax structural validation to accept frontend aliases
+    # Strict validation and guardrails
     if "base_scores" not in payload:
-        payload["base_scores"] = {}
-    
-    # Map frontend aliases if they used different names
-    if "node_thresholds" not in payload and "node_count_multipliers" in payload:
-        payload["node_thresholds"] = payload["node_count_multipliers"]
-    if "money_thresholds" not in payload and "financial_value_multipliers" in payload:
-        payload["money_thresholds"] = payload["financial_value_multipliers"]
-        
-    required_keys = ["base_scores", "node_thresholds", "money_thresholds"]
-    for key in required_keys:
-        if key not in payload:
-            payload[key] = [] # provide empty default instead of rejecting
+        return jsonify({"message": "validation_error", "detail": "Missing required key: base_scores"}), 400
+    if not isinstance(payload["base_scores"], dict):
+        return jsonify({"message": "validation_error", "detail": "base_scores must be an object"}), 400
+
+    if "node_thresholds" not in payload:
+        return jsonify({"message": "validation_error", "detail": "Missing required key: node_thresholds"}), 400
+    if not isinstance(payload["node_thresholds"], list):
+        return jsonify({"message": "validation_error", "detail": "node_thresholds must be an array"}), 400
+
+    if "money_thresholds" not in payload:
+        return jsonify({"message": "validation_error", "detail": "Missing required key: money_thresholds"}), 400
+    if not isinstance(payload["money_thresholds"], list):
+        return jsonify({"message": "validation_error", "detail": "money_thresholds must be an array"}), 400
 
     actor = current_actor_from_request()
     updated_by_str = actor.get("username") or actor.get("id") or "unknown" if isinstance(actor, dict) else str(actor) if actor else "unknown"
@@ -1006,7 +1004,7 @@ def update_score_lineage():
         return jsonify({"message": "success", "version_id": version_id}), 200
     except Exception as e:
         _record_security_event_safe("config.score_lineage.update", actor=actor, success=False, metadata={"error": str(e)})
-        return jsonify({"error": f"update_failed: {str(e)}"}), 500
+        return jsonify({"message": "failed", "error": f"update_failed: {str(e)}"}), 500
 @app.route('/db/health', methods=['GET'])
 def db_health():
     try:
