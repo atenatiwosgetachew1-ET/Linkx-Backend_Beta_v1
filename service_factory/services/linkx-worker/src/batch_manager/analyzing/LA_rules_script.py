@@ -137,11 +137,11 @@ def get_circular_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_
     WITH collect(acc) AS eligible_accounts
 
     CALL {{
-        MATCH (x:{label})
+        MATCH (t:{label})
         WHERE ({scope_clause_t})
-          AND coalesce(x.IGNORE_LOGICAL, false) = false
-          AND x.ACCOUNTNO IS NOT NULL AND x.ACCOUNTNO <> ''
-        WITH x.ACCOUNTNO AS account, count(x) AS outgoing_count
+          AND coalesce(t.IGNORE_LOGICAL, false) = false
+          AND t.ACCOUNTNO IS NOT NULL AND t.ACCOUNTNO <> ''
+        WITH t.ACCOUNTNO AS account, count(t) AS outgoing_count
         WHERE outgoing_count < 1000 AND NOT account IN $pt
         RETURN collect(account) AS eligible_beneficiaries
     }}
@@ -193,11 +193,11 @@ def get_fund_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, t
     WITH collect(acc) AS eligible_middlemen
 
     CALL {{
-        MATCH (x:{label})
+        MATCH (t:{label})
         WHERE ({scope_clause_t})
-          AND coalesce(x.IGNORE_LOGICAL, false) = false
-          AND x.ACCOUNTNO IS NOT NULL AND x.ACCOUNTNO <> ''
-        WITH x.ACCOUNTNO AS account, count(x) AS outgoing_count
+          AND coalesce(t.IGNORE_LOGICAL, false) = false
+          AND t.ACCOUNTNO IS NOT NULL AND t.ACCOUNTNO <> ''
+        WITH t.ACCOUNTNO AS account, count(t) AS outgoing_count
         WHERE outgoing_count < 1000 AND NOT account IN $pt
         RETURN collect(account) AS eligible_senders
     }}
