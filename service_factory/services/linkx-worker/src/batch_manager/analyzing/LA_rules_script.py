@@ -129,7 +129,11 @@ def get_circular_flow_query(
     scope_clause_t,
     trusted_pair_clause,
     is_provisional=False,
-    incremental_batch_id=None
+    incremental_batch_id=None,
+    scope_clause_a=None,
+    scope_clause_b=None,
+    boundary_clause=None,
+    **kwargs
 ):
     prov_str = "true" if is_provisional else "false"
 
