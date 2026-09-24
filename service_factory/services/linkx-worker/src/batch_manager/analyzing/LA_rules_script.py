@@ -274,16 +274,16 @@ def get_circular_flow_query(
 
         AND {trusted_pair_clause}
 
-    CALL {{
-        WITH
-            a,
-            b,
-            sender_a,
-            receiver_a,
-            sender_b,
-            receiver_b,
-            amt_a,
-            amt_b
+    CALL (
+        a,
+        b,
+        sender_a,
+        receiver_a,
+        sender_b,
+        receiver_b,
+        amt_a,
+        amt_b
+    ) {
 
         MERGE (a)-[r1:CIRCULAR_FLOW {{session_id:$session_id}}]->(b)
 
