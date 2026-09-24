@@ -1001,7 +1001,7 @@ def update_score_lineage():
             conn.commit()
             
         _record_security_event_safe("config.score_lineage.update", actor=actor, success=True, metadata={"version_id": version_id})
-        return jsonify({"message": "success", "version_id": version_id}), 200
+        return jsonify({"message": "success", "results": {"config": payload, "updated_by": updated_by_str}}), 200
     except Exception as e:
         _record_security_event_safe("config.score_lineage.update", actor=actor, success=False, metadata={"error": str(e)})
         return jsonify({"message": "failed", "error": f"update_failed: {str(e)}"}), 500
