@@ -8,9 +8,9 @@ env_paths = ['/opt/linkx-backend-api/.env', '/opt/linkx-worker/.env', '.env']
 env_file = next((p for p in env_paths if os.path.exists(p)), None)
 if env_file:
     with open(env_file, 'r') as f:
-    for line in f:
-        if line.startswith('LINKX_POSTGRES_DSN='):
-            dsn = line.strip().split('=', 1)[1].strip(' "\'')
+        for line in f:
+            if line.startswith('LINKX_POSTGRES_DSN='):
+                dsn = line.strip().split('=', 1)[1].strip(' "\'')
 
 if not dsn:
     print("Error: LINKX_POSTGRES_DSN not found. Make sure you are running this on Node-21.")

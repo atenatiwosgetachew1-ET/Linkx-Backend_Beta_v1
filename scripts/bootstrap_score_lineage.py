@@ -7,9 +7,9 @@ env_paths = ['/opt/linkx-backend-api/.env', '/opt/linkx-worker/.env', '.env']
 env_file = next((p for p in env_paths if os.path.exists(p)), None)
 if env_file:
     with open(env_file, 'r') as f:
-    for line in f:
-        if line.startswith('LINKX_POSTGRES_DSN='):
-            dsn = line.strip().split('=', 1)[1].strip(' "\'')
+        for line in f:
+            if line.startswith('LINKX_POSTGRES_DSN='):
+                dsn = line.strip().split('=', 1)[1].strip(' "\'')
 
 default_config = {
     "base_scores": {
