@@ -11,49 +11,49 @@ except ImportError:
     sys.exit(1)
 
 def run_test():
-    credentials = _neo4j_credentials("test-session")
+    credentials = _neo4j_credentials("458624")
     driver = create_neo4j_driver(credentials)
 
     setup_query = """
     // TEST 1: Direct Reversal (A->B, B->A)
     CREATE (t1_a:Transactions {
-        NodeId: 't1-a', session_id: 'test-session',
+        NodeId: 't1-a', session_id: '458624',
         LOGICAL_ACCOUNTNO: 'TEST1_A', LOGICAL_BENACCOUNTNO: 'TEST1_B',
         TRANSACTIONDATE: '2026-09-24', AMOUNT: 500, IGNORE_LOGICAL: false, PASSTHROUGH_HOPS: 0
     })
     CREATE (t1_b:Transactions {
-        NodeId: 't1-b', session_id: 'test-session',
+        NodeId: 't1-b', session_id: '458624',
         LOGICAL_ACCOUNTNO: 'TEST1_B', LOGICAL_BENACCOUNTNO: 'TEST1_A',
         TRANSACTIONDATE: '2026-09-24', AMOUNT: 500, IGNORE_LOGICAL: false, PASSTHROUGH_HOPS: 0
     })
 
     // TEST 2: 1 Passthrough (A->X->B, B->A)
     CREATE (t2_a:Transactions {
-        NodeId: 't2-a', session_id: 'test-session',
+        NodeId: 't2-a', session_id: '458624',
         LOGICAL_ACCOUNTNO: 'TEST2_A', LOGICAL_BENACCOUNTNO: 'TEST2_B',
         TRANSACTIONDATE: '2026-09-24', AMOUNT: 500, IGNORE_LOGICAL: false, PASSTHROUGH_HOPS: 1, LOGICAL_PATH: 'TEST2_A->TEST2_X->TEST2_B'
     })
     CREATE (t2_b:Transactions {
-        NodeId: 't2-b', session_id: 'test-session',
+        NodeId: 't2-b', session_id: '458624',
         LOGICAL_ACCOUNTNO: 'TEST2_B', LOGICAL_BENACCOUNTNO: 'TEST2_A',
         TRANSACTIONDATE: '2026-09-24', AMOUNT: 500, IGNORE_LOGICAL: false, PASSTHROUGH_HOPS: 0
     })
 
     // TEST 3: 2 Passthroughs (A->X->B, B->Y->A)
     CREATE (t3_a:Transactions {
-        NodeId: 't3-a', session_id: 'test-session',
+        NodeId: 't3-a', session_id: '458624',
         LOGICAL_ACCOUNTNO: 'TEST3_A', LOGICAL_BENACCOUNTNO: 'TEST3_B',
         TRANSACTIONDATE: '2026-09-24', AMOUNT: 500, IGNORE_LOGICAL: false, PASSTHROUGH_HOPS: 1, LOGICAL_PATH: 'TEST3_A->TEST3_X->TEST3_B'
     })
     CREATE (t3_b:Transactions {
-        NodeId: 't3-b', session_id: 'test-session',
+        NodeId: 't3-b', session_id: '458624',
         LOGICAL_ACCOUNTNO: 'TEST3_B', LOGICAL_BENACCOUNTNO: 'TEST3_A',
         TRANSACTIONDATE: '2026-09-24', AMOUNT: 500, IGNORE_LOGICAL: false, PASSTHROUGH_HOPS: 1, LOGICAL_PATH: 'TEST3_B->TEST3_Y->TEST3_A'
     })
     """
 
     cleanup_query = """
-    MATCH (n:Transactions {session_id: 'test-session'})
+    MATCH (n:Transactions {session_id: '458624'})
     DETACH DELETE n
     """
 
@@ -67,7 +67,7 @@ def run_test():
     )
 
     verify_query = """
-    MATCH (a)-[r:CIRCULAR_FLOW {session_id: 'test-session'}]->(b)
+    MATCH (a)-[r:CIRCULAR_FLOW {session_id: '458624'}]->(b)
     WHERE a.LOGICAL_ACCOUNTNO STARTS WITH 'TEST'
     RETURN 
         a.LOGICAL_ACCOUNTNO AS start_node,
@@ -82,7 +82,7 @@ def run_test():
     with driver.session() as session:
         session.run(cleanup_query)
         session.run(setup_query)
-        session.run(rule_query, session_id='test-session', pt=[])
+        session.run(rule_query, session_id='458624', pt=[])
         result = session.run(verify_query)
         records = list(result)
         
