@@ -420,7 +420,7 @@ def _clean_neo4j_props(row, column_mapping=None):
             cleaned[tgt_col] = cleaned[actual_src_key]
             cleaned_lower[tgt_lower] = tgt_col
 
-    return cleaned
+    return neo4j_row_data_adjuster(cleaned)
 
 
 def _relationship_node_props(row):
