@@ -122,13 +122,46 @@ def _neo4j_inject_with_retry(params, max_attempts=4):
 def neo4j_row_data_adjuster(row_dict):
     # Time adjustment
     try:
-        if 'TRANSACTIONDATE' in row_dict and 'TRANSACTIONTIME' in row_dict:
-            date_obj = datetime.strptime(row_dict['TRANSACTIONDATE'], "%m/%d/%Y")
-            time_obj = datetime.strptime(row_dict['TRANSACTIONTIME'], "%I:%M:%S %p")
-            row_dict['TRANSACTIONDATE'] = date_obj.date().isoformat()
-            row_dict['TRANSACTIONTIME'] = time_obj.time().isoformat()
+        # 1. Fallback to CREATEDDATE millisecond timestamp (like the daemon does)
+        if not row_dict.get('TRANSACTIONTIME') and row_dict.get('CREATEDDATE'):
+            try:
+                ts = float(row_dict['CREATEDDATE']) / 1000.0
+                dt_obj = datetime.utcfromtimestamp(ts)
+                row_dict['TRANSACTIONDATE'] = dt_obj.date().isoformat()
+                row_dict['TRANSACTIONTIME'] = dt_obj.time().isoformat()
+            except (ValueError, TypeError):
+                pass
+                
+        # 2. First try parsing the date
+        if 'TRANSACTIONDATE' in row_dict and row_dict['TRANSACTIONDATE']:
+            try:
+                date_obj = datetime.strptime(row_dict['TRANSACTIONDATE'], "%m/%d/%Y")
+                row_dict['TRANSACTIONDATE'] = date_obj.date().isoformat()
+            except ValueError:
+                pass # Leave it if it's already in iso format or unparseable
+                
+        # 3. Try parsing the time with multiple formats
+        if 'TRANSACTIONTIME' in row_dict and row_dict['TRANSACTIONTIME']:
+            time_str = str(row_dict['TRANSACTIONTIME']).strip()
+            
+            # If it's a full ISO timestamp, extract just the time
+            if 'T' in time_str and time_str.endswith('Z'):
+                try:
+                    dt_obj = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+                    row_dict['TRANSACTIONTIME'] = dt_obj.time().isoformat()
+                except ValueError:
+                    pass
+            else:
+                for fmt in ["%I:%M:%S %p", "%H:%M:%S"]:
+                    try:
+                        time_obj = datetime.strptime(time_str, fmt)
+                        row_dict['TRANSACTIONTIME'] = time_obj.time().isoformat()
+                        break
+                    except ValueError:
+                        continue
     except Exception as e:
         pass
+        
     return row_dict
 
 def _parent_session_id(session_id):
