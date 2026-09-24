@@ -897,7 +897,7 @@ def save_rule_thresholds():
                 updated_by = actor.get("username") or actor.get("id") or "unknown" if actor else "unknown"
 
                 cur.execute(
-                    "INSERT INTO global_rule_thresholds (config_data, updated_by) VALUES (%s, %s)",
+                    "INSERT INTO global_rule_thresholds (config_data, updated_by) VALUES (%s::jsonb, %s)",
                     [json.dumps(merged), str(updated_by)]
                 )
             conn.commit()
@@ -977,13 +977,14 @@ def update_score_lineage():
             return jsonify({"error": f"Missing required key: {key}"}), 400
 
     actor = current_actor_from_request()
+    updated_by_str = actor.get("username") or actor.get("id") or "unknown" if isinstance(actor, dict) else str(actor) if actor else "unknown"
     
     try:
         with get_postgres_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "INSERT INTO global_score_lineage (config_data, updated_by) VALUES (%s, %s) RETURNING version_id",
-                    (json.dumps(payload), actor)
+                    "INSERT INTO global_score_lineage (config_data, updated_by) VALUES (%s::jsonb, %s) RETURNING version_id",
+                    (json.dumps(payload), updated_by_str)
                 )
                 version_id = cur.fetchone()[0]
             conn.commit()
