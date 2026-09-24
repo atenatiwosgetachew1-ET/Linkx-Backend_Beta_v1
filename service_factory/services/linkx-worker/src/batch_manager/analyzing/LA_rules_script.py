@@ -17,15 +17,15 @@ def fetch_rule_thresholds():
         "rapid_withdrawal_amount_tolerance": 0.1
     }
     try:
-        from batch_manager.utils.postgres_utils import get_postgres_connection
-        with get_postgres_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT config_data FROM global_rule_thresholds ORDER BY created_at DESC LIMIT 1")
-                row = cur.fetchone()
-                if row and row[0]:
-                    defaults.update(row[0])
-    except Exception as e:
-        print(f"fetch_rule_thresholds error: {e}", flush=True)
+        if os.getenv('LINKX_POSTGRES_DSN'):
+            with psycopg.connect(os.getenv('LINKX_POSTGRES_DSN')) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT config_data FROM global_rule_thresholds ORDER BY created_at DESC LIMIT 1")
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        defaults.update(row[0])
+    except Exception:
+        pass
     return defaults
 
 from datetime import timedelta
