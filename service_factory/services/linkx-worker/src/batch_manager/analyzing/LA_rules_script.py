@@ -127,39 +127,40 @@ def get_smurfing_query(label, scope_clause_t, trusted_pair_clause, is_provisiona
 def get_circular_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, trusted_pair_clause, is_provisional=False, boundary_clause=None):
     prov_str = "true" if is_provisional else "false"
     boundary_str = f"AND ({boundary_clause})" if boundary_clause else ""
-    return f'''
+    return f"""
     MATCH (t:{label})
     WHERE ({scope_clause_t})
       AND coalesce(t.IGNORE_LOGICAL, false) = false
       AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> ''
     WITH t.LOGICAL_ACCOUNTNO AS acc, count(t) AS out_count
-    WHERE out_count < 1000
+    WHERE out_count < 1000 AND NOT acc IN $pt
+    WITH collect(acc) AS eligible_accounts
+
+    CALL {{
+        MATCH (x:{label})
+        WHERE ({scope_clause_t})
+          AND coalesce(x.IGNORE_LOGICAL, false) = false
+          AND x.ACCOUNTNO IS NOT NULL AND x.ACCOUNTNO <> ''
+        WITH x.ACCOUNTNO AS account, count(x) AS outgoing_count
+        WHERE outgoing_count < 1000 AND NOT account IN $pt
+        RETURN collect(account) AS eligible_beneficiaries
+    }}
+
+    UNWIND eligible_accounts AS acc
 
     MATCH (a:{label})
     WHERE ({scope_clause_a}) AND a.ACCOUNTNO = acc
+      AND coalesce(a.IGNORE_LOGICAL, false) = false
       AND a.LOGICAL_BENACCOUNTNO IS NOT NULL AND a.LOGICAL_BENACCOUNTNO <> ''
-      AND NOT a.LOGICAL_BENACCOUNTNO IN $pt
+      AND a.LOGICAL_BENACCOUNTNO IN eligible_beneficiaries
       
-    // PERFORMANCE FIX: Prevent joining on hot beneficiary accounts (like account 6387)
-    CALL {{
-       WITH a
-       MATCH (check:{label}) 
-       WHERE check.ACCOUNTNO = a.LOGICAL_BENACCOUNTNO
-       RETURN count(check) AS ben_out_count
-    }}
-    WITH acc, a, ben_out_count
-    WHERE ben_out_count < 1000
-      
-    // Force planner to resolve 'a' before scanning 'b'
-    WITH acc, a
-
     MATCH (b:{label})
     WHERE ({scope_clause_b}) 
       AND b.ACCOUNTNO = a.LOGICAL_BENACCOUNTNO 
       AND b.BENACCOUNTNO = acc
+      AND coalesce(b.IGNORE_LOGICAL, false) = false
       AND elementId(a) < elementId(b)
       AND coalesce(a.TRANSACTIONDATE, '') = coalesce(b.TRANSACTIONDATE, '')
-      AND {trusted_pair_clause}
       {boundary_str}
 
     WITH a, b, 
@@ -167,6 +168,7 @@ def get_circular_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_
          coalesce(toFloat(b.AMOUNTINBIRR), toFloat(b.AMOUNT), toFloat(b.amount), toFloat(b.LOCAL_AMOUNT), 0.0) AS amt_b
     WHERE amt_a > 0 AND amt_b > 0
       AND abs(amt_a - amt_b) <= (amt_a * 0.05)
+      AND {trusted_pair_clause}
 
     CALL {{
       WITH a, b
@@ -177,37 +179,40 @@ def get_circular_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_
       SET r2.is_evidence = true, r2.anomaly_score = 0.6, r2.bgcolor = '#e6e6e6', r2.provisional = {prov_str}, r2.reason = 'same-day reverse transfer pair',
           r2.edge_semantic = 'OBSERVED_FLOW', r2.financial_flow = true, r2.directed_display = true
     }} IN TRANSACTIONS OF 5000 ROWS
-    '''
+    """
 
-def get_fund_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, trusted_pair_clause, is_provisional=False, boundary_clause=None):
+def get_fund_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, trusted_pair_clause, is_provisional=False):
     prov_str = "true" if is_provisional else "false"
-    boundary_str = f"AND ({boundary_clause})" if boundary_clause else ""
-    return f'''
+    return f"""
     MATCH (t:{label})
     WHERE ({scope_clause_t})
       AND coalesce(t.IGNORE_LOGICAL, false) = false
       AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> ''
     WITH t.LOGICAL_ACCOUNTNO AS acc, count(t) AS out_count
     WHERE out_count < 1000 AND NOT acc IN $pt
+    WITH collect(acc) AS eligible_middlemen
+
+    CALL {{
+        MATCH (x:{label})
+        WHERE ({scope_clause_t})
+          AND coalesce(x.IGNORE_LOGICAL, false) = false
+          AND x.ACCOUNTNO IS NOT NULL AND x.ACCOUNTNO <> ''
+        WITH x.ACCOUNTNO AS account, count(x) AS outgoing_count
+        WHERE outgoing_count < 1000 AND NOT account IN $pt
+        RETURN collect(account) AS eligible_senders
+    }}
+
+    UNWIND eligible_middlemen AS acc
 
     MATCH (a:{label})
     WHERE ({scope_clause_a}) AND a.LOGICAL_BENACCOUNTNO = acc
+      AND coalesce(a.IGNORE_LOGICAL, false) = false
+      AND a.ACCOUNTNO IS NOT NULL AND a.ACCOUNTNO <> ''
+      AND a.ACCOUNTNO IN eligible_senders
     
-    // PERFORMANCE FIX: Prevent joining on hot sender accounts
-    CALL {{
-       WITH a
-       MATCH (check:{label}) 
-       WHERE check.LOGICAL_BENACCOUNTNO = a.ACCOUNTNO
-       RETURN count(check) AS a_sender_count
-    }}
-    WITH acc, a, a_sender_count
-    WHERE a_sender_count < 1000
-    
-    // Force planner to resolve 'a' before scanning 'b'
-    WITH acc, a
-
     MATCH (b:{label})
     WHERE ({scope_clause_b}) AND b.LOGICAL_ACCOUNTNO = acc
+      AND coalesce(b.IGNORE_LOGICAL, false) = false
       AND elementId(a) <> elementId(b)
       AND (
         coalesce(a.TRANSACTIONDATE, '') < coalesce(b.TRANSACTIONDATE, '')
@@ -217,7 +222,6 @@ def get_fund_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, t
         )
       )
       AND {trusted_pair_clause}
-      {boundary_str}
 
     WITH a, b
     ORDER BY b.TRANSACTIONDATE ASC, b.TRANSACTIONTIME ASC
@@ -232,17 +236,6 @@ def get_fund_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, t
           r.reason = 'beneficiary later acts as sender',
           r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
     }} IN TRANSACTIONS OF 5000 ROWS
-    '''
-
-def get_dormant_to_active_query(label, scope_clause_t, is_provisional=False, incremental_batch_id=None):
-    prov_str = "true" if is_provisional else "false"
-    seed_block = f"MATCH (t:{label}) WHERE t.batch_id = {incremental_batch_id} AND coalesce(t.IGNORE_LOGICAL, false) = false AND toLower(coalesce(t.ACCOUNTSTATE, '')) = 'dormant' AND toLower(coalesce(t.BENACCOUNTSTATE, '')) = 'active' " if incremental_batch_id else f"MATCH (t:{label}) WHERE ({scope_clause_t}) AND coalesce(t.IGNORE_LOGICAL, false) = false AND toLower(coalesce(t.ACCOUNTSTATE, '')) = 'dormant' AND toLower(coalesce(t.BENACCOUNTSTATE, '')) = 'active' "
-    return f"""
-    {seed_block}
-    MERGE (t)-[r:DORMANT_TO_ACTIVE {{session_id:$session_id}}]->(t)
-    SET r.is_evidence = true, r.anomaly_score = 0.4, r.bgcolor = '#c20f0f', r.textcolor = '#eeeeee', r.provisional = {prov_str},
-        r.reason = 'dormant source account transacts with active beneficiary',
-        r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
     """
 
 def get_abnormal_balance_query(label, scope_clause_t, is_provisional=False, incremental_batch_id=None):
