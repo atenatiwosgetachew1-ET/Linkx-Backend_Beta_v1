@@ -976,7 +976,7 @@ def update_score_lineage():
     
     # Relax structural validation to accept frontend aliases
     if "base_scores" not in payload:
-        return jsonify({"error": "Missing required key: base_scores"}), 400
+        payload["base_scores"] = {}
     
     # Map frontend aliases if they used different names
     if "node_thresholds" not in payload and "node_count_multipliers" in payload:
