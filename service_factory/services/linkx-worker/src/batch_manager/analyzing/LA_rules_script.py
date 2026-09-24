@@ -933,280 +933,69 @@ def batch_graph_analysis_transactions(
         # ----------------------------
         # 4. DORMANT_TO_ACTIVE
         # ----------------------------
-        session.run(f"""
-        MATCH (t:{label})
-        WHERE ($session_id IS NULL OR {_session_scope_clause("t")})
-          AND toLower(coalesce(t.ACCOUNTSTATE, '')) = 'dormant'
-          AND toLower(coalesce(t.BENACCOUNTSTATE, '')) = 'active'
-          AND {_trusted_node_clause('t')}
-        MERGE (t)-[r:DORMANT_TO_ACTIVE {{session_id:$session_id}}]->(t)
-        SET r.is_evidence = true, r.anomaly_score = 0.4, r.bgcolor = '#ff8c8c',
-            r.provisional = false,
-            r.reason = 'dormant source account transacts with active beneficiary',
-            r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-        """, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
-
-        # ---------------------------- 
-        # 5. HIGH_RISK_LINK: configured risky account directly appears in transaction
-        # ----------------------------
-        session.run(f"""
-        UNWIND $accounts AS acc
-        MATCH (t:{label})
-        WHERE ($session_id IS NULL OR {_session_scope_clause("t")})
-          AND (t.ACCOUNTNO = acc OR t.BENACCOUNTNO = acc)
-          AND {_trusted_node_clause('t')}
-        MERGE (t)-[r:HIGH_RISK_LINK {{session_id:$session_id}}]->(t)
-        SET r.is_evidence = true, r.anomaly_score = 0.7, r.bgcolor = '#de7d07',
-            r.provisional = false,
-            r.reason = 'configured high-risk account appears in transaction',
-            r.account = acc,
-            r.risk_source = 'built_in_account_list',
-            r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-        """, accounts=high_risk_accounts, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
-
-        session.run(f"""
-        UNWIND $risk_entries AS entry
-        MATCH (t:{label})
-        WHERE ($session_id IS NULL OR {_session_scope_clause("t")})
-          AND {_trusted_node_clause('t')}
-          AND {_trusted_entry_match('t')}
-        WITH t, entry, toUpper(coalesce(entry.category, entry.CATEGORY, entry.type, entry.TYPE, 'RISK')) AS cat
-        
-        FOREACH (ignore IN CASE WHEN cat = 'PEP' THEN [1] ELSE [] END |
-            MERGE (t)-[r:PEP_INVOLVED {{session_id:$session_id}}]->(t)
-            SET r.is_evidence = true, r.anomaly_score = 0.8, r.bgcolor = '#0099ff', r.provisional = false, r.reason = 'PEP matched', r.risk_source = 'risk_entities', r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-        )
-        FOREACH (ignore IN CASE WHEN cat IN ['SANCTION', 'SANCTIONS', 'SANCTIONED'] THEN [1] ELSE [] END |
-            MERGE (t)-[r:SANCTIONED_ENTITY_MATCH {{session_id:$session_id}}]->(t)
-            SET r.is_evidence = true, r.anomaly_score = 1.0, r.bgcolor = '#ff3b3b', r.provisional = false, r.reason = 'Sanctioned entity matched', r.risk_source = 'risk_entities', r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-        )
-        FOREACH (ignore IN CASE WHEN NOT cat IN ['PEP', 'SANCTION', 'SANCTIONS', 'SANCTIONED'] THEN [1] ELSE [] END |
-            MERGE (t)-[r:HIGH_RISK_LINK {{session_id:$session_id}}]->(t)
-            SET r.is_evidence = true, r.anomaly_score = 0.7, r.bgcolor = '#de7d07', r.provisional = false, r.reason = 'Configured risk entity matched', r.risk_source = 'risk_entities', r.category = cat, r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-        )
-        """, session_id=session_param, trusted_entries=trusted_entries, risk_entries=risk_entries)
+        scope_full = "$session_id IS NULL OR t.session_id = $session_id OR t.batch_id STARTS WITH $session_id"
+        query = get_dormant_to_active_query(label=label, scope_clause_t=scope_full, is_provisional=False)
+        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         # ----------------------------
-        # 6. ABNORMAL_BALANCE_CHANGE: current balance move is an outlier for the account
+        # 5. ABNORMAL_BALANCE_CHANGE
         # ----------------------------
-        session.run(f"""
-        MATCH (t:{label})
-        WHERE ($session_id IS NULL OR {_session_scope_clause("t")})
-        WITH t.ACCOUNTNO AS acc, t,
-             coalesce(toFloat(t.BALANCEHELD), toFloat(t.BALANCE), toFloat(t.balance)) AS balance
-        WHERE acc IS NOT NULL AND acc <> '' AND balance IS NOT NULL
-        WITH t.ACCOUNTNO AS acc, t
-        ORDER BY t.TRANSACTIONDATE, t.TRANSACTIONTIME
-        WITH acc, collect(t) AS txns
-        UNWIND range(1, size(txns)-1) AS i
-        WITH txns[i] AS current,
-             txns[i-1] AS previous,
-             txns[CASE WHEN i-11 < 0 THEN 0 ELSE i-11 END .. i] AS history
-        WITH current, previous,
-             abs(
-               coalesce(toFloat(current.BALANCEHELD), toFloat(current.BALANCE), toFloat(current.balance)) -
-               coalesce(toFloat(previous.BALANCEHELD), toFloat(previous.BALANCE), toFloat(previous.balance))
-             ) AS current_change,
-             [j IN range(1, size(history)-1) |
-               abs(
-                 coalesce(toFloat(history[j].BALANCEHELD), toFloat(history[j].BALANCE), toFloat(history[j].balance)) -
-                 coalesce(toFloat(history[j-1].BALANCEHELD), toFloat(history[j-1].BALANCE), toFloat(history[j-1].balance))
-               )
-             ] AS changes
-        WITH current, previous, current_change, [c IN changes WHERE c IS NOT NULL AND c > 0] AS valid_changes
-        WHERE size(valid_changes) >= 3
-        WITH current, previous, current_change,
-             reduce(s = 0.0, c IN valid_changes | s + c) / size(valid_changes) AS avg_change
-        WHERE avg_change > 0 AND current_change >= avg_change * $threshold
-          AND {_trusted_pair_clause('previous', 'current')}
-        MERGE (previous)-[r:ABNORMAL_BALANCE_CHANGE {{session_id:$session_id}}]->(current)
-        SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#8fde86',
-            r.provisional = false,
-            r.reason = 'balance change exceeds recent account baseline',
-            r.change = current_change,
-            r.average_recent_change = avg_change,
-            r.threshold_multiplier = $threshold,
-            r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
-        """, threshold=threshold_multiplier, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
+        query = get_abnormal_balance_query(label=label, scope_clause_t=scope_full, is_provisional=False)
+        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, historical_baseline_days=30)
 
         # ----------------------------
-        # 7. HUB_AND_SPOKE: one account fans out to, or receives from, many counterparties
+        # 6. HUB_AND_SPOKE (outgoing)
         # ----------------------------
-        session.run(f"""
-        MATCH (t:{label})
-        WHERE ($session_id IS NULL OR {_session_scope_clause("t")})
-          AND t.TRANSACTIONDATE IS NOT NULL
-          AND t.TRANSACTIONDATE <> ''
-          AND t.BENACCOUNTNO IS NOT NULL
-          AND t.BENACCOUNTNO <> ''
-        WITH t.ACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day, collect(t) AS txns, count(DISTINCT t.BENACCOUNTNO) AS spoke_count
-        WHERE hub IS NOT NULL
-          AND hub <> ''
-          AND NOT hub IN $pt
-          AND spoke_count >= $min_tx_count
-        UNWIND range(0, size(txns)-2) AS i
-        WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
-        WHERE {_trusted_pair_clause('a', 'b')}
-        MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
-        SET r.is_evidence = true, r.anomaly_score = 0.5, r.bgcolor = '#d0b3ff',
-            r.provisional = false,
-            r.reason = 'account connects with multiple counterparties on same day',
-            r.hub_account = hub,
-            r.direction = 'outgoing',
-            r.tx_day = tx_day,
-            r.spoke_count = spoke_count,
-            r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
-        """, session_id=session_param, min_tx_count=min_tx_count, trusted_entries=trusted_entries, pt=pass_through_accounts)
-
-        session.run(f"""
-        MATCH (t:{label})
-        WHERE ($session_id IS NULL OR {_session_scope_clause("t")})
-          AND t.TRANSACTIONDATE IS NOT NULL
-          AND t.TRANSACTIONDATE <> ''
-          AND t.ACCOUNTNO IS NOT NULL
-          AND t.ACCOUNTNO <> ''
-        WITH t.BENACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day, collect(t) AS txns, count(DISTINCT t.ACCOUNTNO) AS spoke_count
-        WHERE hub IS NOT NULL
-          AND hub <> ''
-          AND NOT hub IN $pt
-          AND spoke_count >= $min_tx_count
-        UNWIND range(0, size(txns)-2) AS i
-        WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
-        WHERE {_trusted_pair_clause('a', 'b')}
-        MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
-        SET r.is_evidence = true, r.anomaly_score = 0.5, r.bgcolor = '#d0b3ff',
-            r.provisional = false,
-            r.reason = 'account connects with multiple counterparties on same day',
-            r.hub_account = hub,
-            r.direction = 'incoming',
-            r.tx_day = tx_day,
-            r.spoke_count = spoke_count,
-            r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
-        """, session_id=session_param, min_tx_count=min_tx_count, trusted_entries=trusted_entries, pt=pass_through_accounts)
+        query = get_hub_and_spoke_out_query(label=label, scope_clause_t=scope_full, trusted_pair_clause=_trusted_pair_clause('a', 'b'), is_provisional=False)
+        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, hub_spoke_min_counterparties=min_tx_count)
 
         # ----------------------------
-        # 8. SHARED_IDENTIFIER: same phone identifier appears on multiple accounts
+        # 7. HUB_AND_SPOKE (incoming)
         # ----------------------------
-        session.run(f"""
-        MATCH (t:{label})
-        WHERE ($session_id IS NULL OR {_session_scope_clause("t")})
-        WITH t,
-             [
-               {{kind:'BUSINESSMOBILENO', value:t.BUSINESSMOBILENO, account:t.ACCOUNTNO}},
-               {{kind:'BENTELNO', value:t.BENTELNO, account:t.BENACCOUNTNO}}
-             ] AS identifiers
-        UNWIND identifiers AS identifier
-        WITH identifier.kind AS identifier_type,
-             trim(toString(identifier.value)) AS identifier_value,
-             identifier.account AS account,
-             t
-        WHERE identifier_value <> ''
-          AND account IS NOT NULL
-          AND account <> ''
-        WITH identifier_type, identifier_value, collect(DISTINCT account) AS accounts, collect(DISTINCT t) AS txns
-        WHERE size(accounts) >= 2
-        UNWIND range(0, size(txns)-2) AS i
-        WITH txns[i] AS a, txns[i+1] AS b, identifier_type, identifier_value, accounts
-        WHERE {_trusted_pair_clause('a', 'b')}
-        MERGE (a)-[r:SHARED_IDENTIFIER {{session_id:$session_id}}]->(b)
-        SET r.is_evidence = true, r.anomaly_score = 0.8, r.bgcolor = '#8be0f0',
-            r.provisional = false,
-            r.reason = 'same identifier appears on multiple accounts',
-            r.identifier_type = identifier_type,
-            r.identifier_value = identifier_value,
-            r.account_count = size(accounts),
-            r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
-        """, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
+        query = get_hub_and_spoke_in_query(label=label, scope_clause_t=scope_full, trusted_pair_clause=_trusted_pair_clause('a', 'b'), is_provisional=False)
+        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, hub_spoke_min_counterparties=min_tx_count)
+
+        # ----------------------------
+        # 8. SHARED_IDENTIFIER
+        # ----------------------------
+        query = get_shared_identifier_query(label=label, scope_clause_t=scope_full, is_provisional=False)
+        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
         # ----------------------------
         # 9. LATE_NIGHT_TX
         # ----------------------------
-        session.run(f"""
-        MATCH (t:{label})
-        WHERE ($session_id IS NULL OR {_session_scope_clause("t")})
-          AND t.TRANSACTIONTIME IS NOT NULL
-          AND toString(t.TRANSACTIONTIME) <> ''
-          AND {_trusted_node_clause('t')}
-        WITH t, toInteger(substring(replace(toString(t.TRANSACTIONTIME), ':', ''), 0, 4)) AS t_time
-        WHERE t_time >= 2300 OR t_time <= 400
-        MERGE (t)-[r:LATE_NIGHT_TX {{session_id:$session_id}}]->(t)
-        SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#00c1a2',
-            r.provisional = false,
-            r.reason = 'transaction occurred outside typical business hours',
-            r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-        """, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
+        query = get_late_night_tx_query(label=label, scope_clause_t=scope_full, is_provisional=False)
+        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, late_night_start=2300, late_night_end=400)
 
         # ----------------------------
         # 10. JUST_BELOW_THRESHOLD
         # ----------------------------
-        session.run(f"""
-        MATCH (t:{label})
-        WHERE ($session_id IS NULL OR {_session_scope_clause("t")})
-          AND coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) > 0
-          AND {_trusted_node_clause('t')}
-        WITH t, coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) AS amt
-        WHERE amt >= ($single_tx_threshold * 0.9) AND amt < $single_tx_threshold
-        MERGE (t)-[r:JUST_BELOW_THRESHOLD {{session_id:$session_id}}]->(t)
-        SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#dba124',
-            r.provisional = false,
-            r.reason = 'transaction amount is suspiciously close to reporting threshold',
-            r.amount = amt,
-            r.threshold = $single_tx_threshold,
-            r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-        """, session_id=session_param, trusted_entries=trusted_entries, single_tx_threshold=single_tx_threshold)
+        query = get_just_below_threshold_query(label=label, scope_clause_t=scope_full, is_provisional=False)
+        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, single_tx_threshold=single_tx_threshold)
 
         # ----------------------------
         # 11. RAPID_WITHDRAWAL
         # ----------------------------
-        session.run(f"""
-        MATCH (a:{label}), (b:{label})
-        WHERE ($session_id IS NULL OR ({_session_scope_clause("a")} AND {_session_scope_clause("b")}))
-          AND a.BENACCOUNTNO = b.ACCOUNTNO
-          AND a.BENACCOUNTNO IS NOT NULL
-          AND a.BENACCOUNTNO <> ''
-          AND coalesce(toString(a.TRANSACTIONDATE), '') = coalesce(toString(b.TRANSACTIONDATE), '')
-          AND elementId(a) <> elementId(b)
-          AND coalesce(toString(a.TRANSACTIONTIME), '') < coalesce(toString(b.TRANSACTIONTIME), '')
-          AND {_trusted_pair_clause('a', 'b')}
-        WITH a, b, 
-             coalesce(toFloat(a.AMOUNTINBIRR), toFloat(a.AMOUNT), toFloat(a.amount), toFloat(a.LOCAL_AMOUNT), 0.0) AS in_amt,
-             coalesce(toFloat(b.AMOUNTINBIRR), toFloat(b.AMOUNT), toFloat(b.amount), toFloat(b.LOCAL_AMOUNT), 0.0) AS out_amt
-        WHERE in_amt > 0 AND out_amt >= (in_amt * 0.9) AND out_amt <= (in_amt * 1.1)
-        MERGE (a)-[r:RAPID_WITHDRAWAL {{session_id:$session_id}}]->(b)
-        SET r.is_evidence = true, r.anomaly_score = 0.4, r.bgcolor = '#d5d276',
-            r.provisional = false,
-            r.reason = 'funds rapidly withdrawn or passed through on same day',
-            r.in_amount = in_amt,
-            r.out_amount = out_amt,
-            r.edge_semantic = 'OBSERVED_FLOW', r.financial_flow = true, r.directed_display = true
-        """, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
+        query = get_rapid_withdrawal_query(label=label, scope_clause_t=scope_full, is_provisional=False)
+        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, rapid_withdrawal_amount_tolerance=0.1)
 
         # ----------------------------
         # 12. ACCOUNT_ACTIVITY_SPIKE
         # ----------------------------
-        session.run(f"""
-        MATCH (t:{label})
-        WHERE ($session_id IS NULL OR {_session_scope_clause("t")})
-          AND coalesce(toString(t.ACCOUNTNO), '') <> ''
-          AND coalesce(toString(t.TRANSACTIONDATE), '') <> ''
-        WITH t.ACCOUNTNO AS acc, t.TRANSACTIONDATE AS tx_day, count(t) AS daily_count, collect(t) AS day_txns
-        WHERE daily_count >= 10
-        MATCH (all_t:{label})
-        WHERE all_t.ACCOUNTNO = acc AND coalesce(toString(all_t.TRANSACTIONDATE), '') <> ''
-        WITH acc, tx_day, daily_count, day_txns, count(all_t) AS total_count, count(DISTINCT all_t.TRANSACTIONDATE) AS total_days
-        WITH acc, tx_day, daily_count, day_txns, (toFloat(total_count) / toFloat(CASE WHEN total_days = 0 THEN 1 ELSE total_days END)) AS avg_daily
-        WHERE daily_count >= (avg_daily * 3)
-        UNWIND day_txns AS t
-        WITH t, acc, tx_day, daily_count, avg_daily
-        WHERE {_trusted_node_clause('t')}
-        MERGE (t)-[r:ACCOUNT_ACTIVITY_SPIKE {{session_id:$session_id}}]->(t)
-        SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#e6e6e6',
-            r.provisional = false,
-            r.reason = 'unusually high transaction volume for this account on this day',
-            r.daily_count = daily_count,
-            r.avg_daily = avg_daily,
-            r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-        """, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
+        query = get_account_activity_spike_query(label=label, scope_clause_t=scope_full, is_provisional=False)
+        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, activity_spike_min_daily_count=10, activity_spike_multiplier=3, historical_baseline_days=30)
+
+        # ----------------------------
+        # 13. HIGH_RISK_LINK
+        # ----------------------------
+        query = get_high_risk_link_query(label=label, scope_clause_t=scope_full, is_provisional=False)
+        session.run(query, session_id=session_param, risk_entries=risk_entries)
+
+        # ----------------------------
+        # 14. FRAUD_AGGREGATOR
+        # ----------------------------
+        query = get_fraud_aggregator_query(label=label, scope_clause_t=scope_full, session_id=session_param)
+        session.run(query, session_id=session_param)
 
         counts = _count_transaction_relationships(session, session_param) if session_param else {}
         _write_gds_metrics(session, f"{session_param}_transactions", nodes_label, session_param, TRANSACTION_RELATIONSHIPS, log_file)
@@ -1301,282 +1090,48 @@ def incremental_graph_analysis_transactions(
         )
         session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
-        # Cheap row-local flags: only new batch rows.
-        session.run(f"""
-        MATCH (t:{label})
-        WHERE t.batch_id = $batch_id
-          AND toLower(coalesce(t.ACCOUNTSTATE, '')) = 'dormant'
-          AND toLower(coalesce(t.BENACCOUNTSTATE, '')) = 'active'
-          AND {_trusted_node_clause('t')}
-        MERGE (t)-[r:DORMANT_TO_ACTIVE {{session_id:$session_id}}]->(t)
-        SET r.is_evidence = true, r.anomaly_score = 0.4, r.bgcolor = '#ff8c8c',
-            r.provisional = true,
-            r.reason = 'dormant source account transacts with active beneficiary',
-            r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
+        # Cheap row-local flags: use central generators with incremental batch_id.
+        scope_inc = _session_scope_clause("t")
 
-        session.run(f"""
-        UNWIND $accounts AS acc
-        MATCH (t:{label})
-        WHERE t.batch_id = $batch_id
-          AND (t.ACCOUNTNO = acc OR t.BENACCOUNTNO = acc)
-          AND {_trusted_node_clause('t')}
-        MERGE (t)-[r:HIGH_RISK_LINK {{session_id:$session_id}}]->(t)
-        SET r.is_evidence = true, r.anomaly_score = 0.7, r.bgcolor = '#de7d07',
-            r.provisional = true,
-            r.reason = 'configured high-risk account appears in transaction',
-            r.account = acc,
-            r.risk_source = 'built_in_account_list',
-            r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-        """, accounts=high_risk_accounts, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
+        # 4. DORMANT_TO_ACTIVE
+        query = get_dormant_to_active_query(label=label, scope_clause_t=scope_inc, is_provisional=True, incremental_batch_id="$batch_id")
+        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
-        session.run(f"""
-        UNWIND $risk_entries AS entry
-        MATCH (t:{label})
-        WHERE t.batch_id = $batch_id
-          AND {_trusted_node_clause('t')}
-          AND {_trusted_entry_match('t')}
-        WITH t, entry, toUpper(coalesce(entry.category, entry.CATEGORY, entry.type, entry.TYPE, 'RISK')) AS cat
-        
-        FOREACH (ignore IN CASE WHEN cat = 'PEP' THEN [1] ELSE [] END |
-            MERGE (t)-[r:PEP_INVOLVED {{session_id:$session_id}}]->(t)
-            SET r.is_evidence = true, r.anomaly_score = 0.8, r.bgcolor = '#0099ff', r.provisional = true, r.reason = 'PEP matched', r.risk_source = 'risk_entities', r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-        )
-        FOREACH (ignore IN CASE WHEN cat IN ['SANCTION', 'SANCTIONS', 'SANCTIONED'] THEN [1] ELSE [] END |
-            MERGE (t)-[r:SANCTIONED_ENTITY_MATCH {{session_id:$session_id}}]->(t)
-            SET r.is_evidence = true, r.anomaly_score = 1.0, r.bgcolor = '#ff3b3b', r.provisional = true, r.reason = 'Sanctioned entity matched', r.risk_source = 'risk_entities', r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-        )
-        FOREACH (ignore IN CASE WHEN NOT cat IN ['PEP', 'SANCTION', 'SANCTIONS', 'SANCTIONED'] THEN [1] ELSE [] END |
-            MERGE (t)-[r:HIGH_RISK_LINK {{session_id:$session_id}}]->(t)
-            SET r.is_evidence = true, r.anomaly_score = 0.7, r.bgcolor = '#de7d07', r.provisional = true, r.reason = 'Configured risk entity matched', r.risk_source = 'risk_entities', r.category = cat, r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-        )
-        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, risk_entries=risk_entries)
+        # 5. ABNORMAL_BALANCE_CHANGE
+        query = get_abnormal_balance_query(label=label, scope_clause_t=scope_inc, is_provisional=True, incremental_batch_id="$batch_id")
+        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, historical_baseline_days=30, threshold=threshold_multiplier)
 
-        # Balance outlier: recalculate only accounts touched by this batch.
-        session.run(f"""
-        MATCH (seed:{label})
-        WHERE seed.batch_id = $batch_id
-        WITH collect(DISTINCT seed.ACCOUNTNO) AS affected_accounts
-        MATCH (t:{label})
-        WHERE {_session_scope_clause("t")}
-          AND t.ACCOUNTNO IN affected_accounts
-        WITH t.ACCOUNTNO AS acc, t,
-             coalesce(toFloat(t.BALANCEHELD), toFloat(t.BALANCE), toFloat(t.balance)) AS balance
-        WHERE acc IS NOT NULL AND acc <> '' AND balance IS NOT NULL
-        WITH acc, t
-        ORDER BY t.TRANSACTIONDATE, t.TRANSACTIONTIME
-        WITH acc, collect(t) AS txns
-        UNWIND range(1, size(txns)-1) AS i
-        WITH txns[i] AS current,
-             txns[i-1] AS previous,
-             txns[CASE WHEN i-11 < 0 THEN 0 ELSE i-11 END .. i] AS history
-        WHERE current.batch_id = $batch_id OR previous.batch_id = $batch_id
-        WITH current, previous,
-             abs(
-               coalesce(toFloat(current.BALANCEHELD), toFloat(current.BALANCE), toFloat(current.balance)) -
-               coalesce(toFloat(previous.BALANCEHELD), toFloat(previous.BALANCE), toFloat(previous.balance))
-             ) AS current_change,
-             [j IN range(1, size(history)-1) |
-               abs(
-                 coalesce(toFloat(history[j].BALANCEHELD), toFloat(history[j].BALANCE), toFloat(history[j].balance)) -
-                 coalesce(toFloat(history[j-1].BALANCEHELD), toFloat(history[j-1].BALANCE), toFloat(history[j-1].balance))
-               )
-             ] AS changes
-        WITH current, previous, current_change, [c IN changes WHERE c IS NOT NULL AND c > 0] AS valid_changes
-        WHERE size(valid_changes) >= 3
-        WITH current, previous, current_change,
-             reduce(s = 0.0, c IN valid_changes | s + c) / size(valid_changes) AS avg_change
-        WHERE avg_change > 0 AND current_change >= avg_change * $threshold
-          AND {_trusted_pair_clause('previous', 'current')}
-        MERGE (previous)-[r:ABNORMAL_BALANCE_CHANGE {{session_id:$session_id}}]->(current)
-        SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#8fde86',
-            r.provisional = true,
-            r.reason = 'balance change exceeds recent account baseline',
-            r.change = current_change,
-            r.average_recent_change = avg_change,
-            r.threshold_multiplier = $threshold,
-            r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
-        """, batch_id=batch_id, session_id=session_param, threshold=threshold_multiplier, trusted_entries=trusted_entries, pt=pass_through_accounts)
+        # 6. HUB_AND_SPOKE (outgoing)
+        query = get_hub_and_spoke_out_query(label=label, scope_clause_t=scope_inc, trusted_pair_clause=_trusted_pair_clause('a', 'b'), is_provisional=True, incremental_batch_id="$batch_id")
+        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, hub_spoke_min_counterparties=min_tx_count)
 
-        # Hub-and-spoke: recalculate account fans touched by this batch.
-        session.run(f"""
-        MATCH (seed:{label})
-        WHERE seed.batch_id = $batch_id
-        WITH DISTINCT seed.ACCOUNTNO AS hub, seed.TRANSACTIONDATE AS tx_day
-        WHERE hub IS NOT NULL AND hub <> ''
-          AND tx_day IS NOT NULL AND tx_day <> ''
-          AND NOT hub IN $pt
-        MATCH (t:{label})
-        WHERE {_session_scope_clause("t")}
-          AND t.ACCOUNTNO = hub
-          AND t.TRANSACTIONDATE = tx_day
-          AND t.BENACCOUNTNO IS NOT NULL
-          AND t.BENACCOUNTNO <> ''
-        WITH hub, tx_day, collect(t) AS txns, count(DISTINCT t.BENACCOUNTNO) AS spoke_count
-        WHERE spoke_count >= $min_tx_count
-        UNWIND range(0, size(txns)-2) AS i
-        WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
-        MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
-        SET r.is_evidence = true, r.anomaly_score = 0.5, r.bgcolor = '#d0b3ff',
-            r.provisional = true,
-            r.reason = 'account connects with multiple counterparties on same day',
-            r.hub_account = hub,
-            r.direction = 'outgoing',
-            r.tx_day = tx_day,
-            r.spoke_count = spoke_count,
-            r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
-        """, batch_id=batch_id, session_id=session_param, min_tx_count=min_tx_count, trusted_entries=trusted_entries, pt=pass_through_accounts)
+        # 7. HUB_AND_SPOKE (incoming)
+        query = get_hub_and_spoke_in_query(label=label, scope_clause_t=scope_inc, trusted_pair_clause=_trusted_pair_clause('a', 'b'), is_provisional=True, incremental_batch_id="$batch_id")
+        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, hub_spoke_min_counterparties=min_tx_count)
 
-        session.run(f"""
-        MATCH (seed:{label})
-        WHERE seed.batch_id = $batch_id
-        WITH DISTINCT seed.BENACCOUNTNO AS hub, seed.TRANSACTIONDATE AS tx_day
-        WHERE hub IS NOT NULL AND hub <> ''
-          AND tx_day IS NOT NULL AND tx_day <> ''
-          AND NOT hub IN $pt
-        MATCH (t:{label})
-        WHERE {_session_scope_clause("t")}
-          AND t.BENACCOUNTNO = hub
-          AND t.TRANSACTIONDATE = tx_day
-          AND t.ACCOUNTNO IS NOT NULL
-          AND t.ACCOUNTNO <> ''
-        WITH hub, tx_day, collect(t) AS txns, count(DISTINCT t.ACCOUNTNO) AS spoke_count
-        WHERE spoke_count >= $min_tx_count
-        UNWIND range(0, size(txns)-2) AS i
-        WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
-        MERGE (a)-[r:HUB_AND_SPOKE {{session_id:$session_id}}]->(b)
-        SET r.is_evidence = true, r.anomaly_score = 0.5, r.bgcolor = '#d0b3ff',
-            r.provisional = true,
-            r.reason = 'account connects with multiple counterparties on same day',
-            r.hub_account = hub,
-            r.direction = 'incoming',
-            r.tx_day = tx_day,
-            r.spoke_count = spoke_count,
-            r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
-        """, batch_id=batch_id, session_id=session_param, min_tx_count=min_tx_count, trusted_entries=trusted_entries, pt=pass_through_accounts)
+        # 8. SHARED_IDENTIFIER
+        query = get_shared_identifier_query(label=label, scope_clause_t=scope_inc, is_provisional=True, incremental_batch_id="$batch_id")
+        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
 
-        # Shared identifier: recalculate phone identifiers touched by this batch.
-        session.run(f"""
-        MATCH (seed:{label})
-        WHERE seed.batch_id = $batch_id
-        WITH [
-               {{kind:'BUSINESSMOBILENO', value:seed.BUSINESSMOBILENO}},
-               {{kind:'BENTELNO', value:seed.BENTELNO}}
-             ] AS identifiers
-        UNWIND identifiers AS seed_identifier
-        WITH DISTINCT seed_identifier.kind AS identifier_type, trim(toString(seed_identifier.value)) AS identifier_value
-        WHERE identifier_value <> ''
-        MATCH (t:{label})
-        WHERE {_session_scope_clause("t")}
-        WITH identifier_type, identifier_value, t,
-             [
-               {{kind:'BUSINESSMOBILENO', value:t.BUSINESSMOBILENO, account:t.ACCOUNTNO}},
-               {{kind:'BENTELNO', value:t.BENTELNO, account:t.BENACCOUNTNO}}
-             ] AS identifiers
-        UNWIND identifiers AS identifier
-        WITH identifier_type,
-             identifier_value,
-             identifier.account AS account,
-             t,
-             identifier.kind AS matched_type,
-             trim(toString(identifier.value)) AS matched_value
-        WHERE matched_type = identifier_type
-          AND matched_value = identifier_value
-          AND account IS NOT NULL
-          AND account <> ''
-        WITH identifier_type, identifier_value, collect(DISTINCT account) AS accounts, collect(DISTINCT t) AS txns
-        WHERE size(accounts) >= 2
-        UNWIND range(0, size(txns)-2) AS i
-        WITH txns[i] AS a, txns[i+1] AS b, identifier_type, identifier_value, accounts
-        WHERE {_trusted_pair_clause('a', 'b')}
-        MERGE (a)-[r:SHARED_IDENTIFIER {{session_id:$session_id}}]->(b)
-        SET r.is_evidence = true, r.anomaly_score = 0.8, r.bgcolor = '#8be0f0',
-            r.provisional = true,
-            r.reason = 'same identifier appears on multiple accounts',
-            r.identifier_type = identifier_type,
-            r.identifier_value = identifier_value,
-            r.account_count = size(accounts),
-            r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
-        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
+        # 9. LATE_NIGHT_TX
+        query = get_late_night_tx_query(label=label, scope_clause_t=scope_inc, is_provisional=True, incremental_batch_id="$batch_id")
+        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, late_night_start=2300, late_night_end=400)
 
-        session.run(f"""
-        MATCH (t:{label})
-        WHERE t.batch_id = $batch_id
-          AND t.TRANSACTIONTIME IS NOT NULL
-          AND toString(t.TRANSACTIONTIME) <> ''
-          AND {_trusted_node_clause('t')}
-        WITH t, toInteger(substring(replace(toString(t.TRANSACTIONTIME), ':', ''), 0, 4)) AS t_time
-        WHERE t_time >= 2300 OR t_time <= 400
-        MERGE (t)-[r:LATE_NIGHT_TX {{session_id:$session_id}}]->(t)
-        SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#00c1a2',
-            r.provisional = true,
-            r.reason = 'transaction occurred outside typical business hours',
-            r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
+        # 10. JUST_BELOW_THRESHOLD
+        query = get_just_below_threshold_query(label=label, scope_clause_t=scope_inc, is_provisional=True, incremental_batch_id="$batch_id")
+        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, single_tx_threshold=single_tx_threshold)
 
-        session.run(f"""
-        MATCH (t:{label})
-        WHERE t.batch_id = $batch_id
-          AND coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) > 0
-          AND {_trusted_node_clause('t')}
-        WITH t, coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) AS amt
-        WHERE amt >= ($single_tx_threshold * 0.9) AND amt < $single_tx_threshold
-        MERGE (t)-[r:JUST_BELOW_THRESHOLD {{session_id:$session_id}}]->(t)
-        SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#dba124',
-            r.provisional = true,
-            r.reason = 'transaction amount is suspiciously close to reporting threshold',
-            r.amount = amt,
-            r.threshold = $single_tx_threshold,
-            r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, single_tx_threshold=single_tx_threshold)
+        # 11. RAPID_WITHDRAWAL
+        query = get_rapid_withdrawal_query(label=label, scope_clause_t=scope_inc, is_provisional=True, incremental_batch_id="$batch_id")
+        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, rapid_withdrawal_amount_tolerance=0.1)
 
-        session.run(f"""
-        MATCH (a:{label}), (b:{label})
-        WHERE (a.batch_id = $batch_id OR b.batch_id = $batch_id)
-          AND ($session_id IS NULL OR ({_session_scope_clause("a")} AND {_session_scope_clause("b")}))
-          AND a.BENACCOUNTNO = b.ACCOUNTNO
-          AND a.BENACCOUNTNO IS NOT NULL
-          AND a.BENACCOUNTNO <> ''
-          AND coalesce(toString(a.TRANSACTIONDATE), '') = coalesce(toString(b.TRANSACTIONDATE), '')
-          AND elementId(a) <> elementId(b)
-          AND coalesce(toString(a.TRANSACTIONTIME), '') < coalesce(toString(b.TRANSACTIONTIME), '')
-          AND {_trusted_pair_clause('a', 'b')}
-        WITH a, b, 
-             coalesce(toFloat(a.AMOUNTINBIRR), toFloat(a.AMOUNT), toFloat(a.amount), toFloat(a.LOCAL_AMOUNT), 0.0) AS in_amt,
-             coalesce(toFloat(b.AMOUNTINBIRR), toFloat(b.AMOUNT), toFloat(b.amount), toFloat(b.LOCAL_AMOUNT), 0.0) AS out_amt
-        WHERE in_amt > 0 AND out_amt >= (in_amt * 0.9) AND out_amt <= (in_amt * 1.1)
-        MERGE (a)-[r:RAPID_WITHDRAWAL {{session_id:$session_id}}]->(b)
-        SET r.is_evidence = true, r.anomaly_score = 0.4, r.bgcolor = '#d5d276',
-            r.provisional = true,
-            r.reason = 'funds rapidly withdrawn or passed through on same day',
-            r.in_amount = in_amt,
-            r.out_amount = out_amt,
-            r.edge_semantic = 'OBSERVED_FLOW', r.financial_flow = true, r.directed_display = true
-        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
+        # 12. ACCOUNT_ACTIVITY_SPIKE
+        query = get_account_activity_spike_query(label=label, scope_clause_t=scope_inc, is_provisional=True, incremental_batch_id="$batch_id")
+        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, activity_spike_min_daily_count=10, activity_spike_multiplier=3, historical_baseline_days=30)
 
-        session.run(f"""
-        MATCH (t:{label})
-        WHERE t.batch_id = $batch_id
-          AND coalesce(toString(t.ACCOUNTNO), '') <> ''
-          AND coalesce(toString(t.TRANSACTIONDATE), '') <> ''
-        WITH t.ACCOUNTNO AS acc, t.TRANSACTIONDATE AS tx_day, count(t) AS daily_count, collect(t) AS day_txns
-        WHERE daily_count >= 10
-        MATCH (all_t:{label})
-        WHERE all_t.ACCOUNTNO = acc AND coalesce(toString(all_t.TRANSACTIONDATE), '') <> ''
-        WITH acc, tx_day, daily_count, day_txns, count(all_t) AS total_count, count(DISTINCT all_t.TRANSACTIONDATE) AS total_days
-        WITH acc, tx_day, daily_count, day_txns, (toFloat(total_count) / toFloat(CASE WHEN total_days = 0 THEN 1 ELSE total_days END)) AS avg_daily
-        WHERE daily_count >= (avg_daily * 3)
-        UNWIND day_txns AS t
-        WITH t, acc, tx_day, daily_count, avg_daily
-        WHERE {_trusted_node_clause('t')}
-        MERGE (t)-[r:ACCOUNT_ACTIVITY_SPIKE {{session_id:$session_id}}]->(t)
-        SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#e6e6e6',
-            r.provisional = true,
-            r.reason = 'unusually high transaction volume for this account on this day',
-            r.daily_count = daily_count,
-            r.avg_daily = avg_daily,
-            r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
-        """, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
+        # 13. HIGH_RISK_LINK
+        query = get_high_risk_link_query(label=label, scope_clause_t=scope_inc, is_provisional=True, incremental_batch_id="$batch_id")
+        session.run(query, batch_id=batch_id, session_id=session_param, risk_entries=risk_entries)
 
         counts = _count_transaction_relationships(session, session_param)
 
