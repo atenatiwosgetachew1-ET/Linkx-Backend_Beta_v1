@@ -51,7 +51,12 @@ def calculate_fraud_score(anomaly_type, nodes, edges, config=None, version_id="h
         "base_scores": {
             "HIGH_RISK_LINK": 50, "CIRCULAR_FLOW": 30, "EFFECTIVE_FLOW": 25,
             "SMURFING": 20, "SHARED_IDENTIFIER": 20, "HUB_AND_SPOKE": 10,
-            "RAPID_FAN_OUT": 10, "ABNORMAL_BALANCE_CHANGE": 10
+            "RAPID_FAN_OUT": 10, "ABNORMAL_BALANCE_CHANGE": 10,
+            "LATE_NIGHT_TX": 15, "JUST_BELOW_THRESHOLD": 20,
+            "RAPID_WITHDRAWAL": 25, "ACCOUNT_ACTIVITY_SPIKE": 15,
+            "FUND_FLOW": 10, "DORMANT_TO_ACTIVE": 25,
+            "PEP_INVOLVED": 50, "SANCTIONED_ENTITY_MATCH": 100,
+            "FRAUD_AGGREGATOR": 50
         },
         "node_thresholds": [
             {"min_nodes": 10000, "add_points": 30},
@@ -211,7 +216,7 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
                 scoring_config = None
                 config_version = "hardcoded_fallback"
                 try:
-                    cur.execute("SELECT config_data, version_id FROM risk_scoring_config ORDER BY created_at DESC LIMIT 1;")
+                    cur.execute("SELECT config_data, version_id FROM global_score_lineage ORDER BY created_at DESC LIMIT 1;")
                     row = cur.fetchone()
                     if row:
                         scoring_config = row[0]
