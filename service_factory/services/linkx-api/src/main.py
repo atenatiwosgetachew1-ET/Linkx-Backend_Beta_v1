@@ -820,7 +820,7 @@ _RULE_THRESHOLD_GUARDRAILS = {
     "smurfing_cumulative_threshold":   {"type": (int, float), "min": 5000,  "max": 50000000},
     "reporting_threshold":             {"type": (int, float), "min": 1000,  "max": 10000000},
     "circular_flow_check_amounts":     {"type": (bool,),      "min": None,  "max": None},
-    "late_night_start":                {"type": (int,),       "min": 1800,  "max": 2359},
+    "late_night_start":                {"type": (int,),       "min": 0,     "max": 2359},
     "late_night_end":                  {"type": (int,),       "min": 0,     "max": 800},
     "hub_spoke_min_counterparties":    {"type": (int,),       "min": 2,     "max": 50},
     "activity_spike_multiplier":       {"type": (int, float), "min": 1.5,   "max": 20},
