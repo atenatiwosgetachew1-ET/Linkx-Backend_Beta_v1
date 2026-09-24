@@ -384,8 +384,9 @@ def get_circular_flow_query(
     """
 
 
-def get_fund_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, trusted_pair_clause, is_provisional=False):
+def get_fund_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, trusted_pair_clause, is_provisional=False, boundary_clause=None, **kwargs):
     prov_str = "true" if is_provisional else "false"
+    boundary_str = f"AND ({boundary_clause})" if boundary_clause else ""
     return f"""
     MATCH (t:{label})
     WHERE ({scope_clause_t})
@@ -411,6 +412,7 @@ def get_fund_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, t
         )
       )
       AND {trusted_pair_clause}
+      {boundary_str}
 
     WITH a, b
     ORDER BY b.TRANSACTIONDATE ASC, b.TRANSACTIONTIME ASC
