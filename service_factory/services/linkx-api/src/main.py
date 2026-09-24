@@ -954,15 +954,22 @@ def get_score_lineage():
         with get_postgres_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT config_data FROM global_score_lineage ORDER BY created_at DESC LIMIT 1"
+                    "SELECT config_data, updated_by, created_at FROM global_score_lineage ORDER BY created_at DESC LIMIT 1"
                 )
                 row = cur.fetchone()
-                if not row:
-                    return jsonify({"error": "not_found"}), 404
-        return jsonify(row[0]), 200
+                if row:
+                    return jsonify({
+                        "message": "success",
+                        "results": {
+                            "config": row[0],
+                            "updated_by": row[1],
+                            "updated_at": row[2].isoformat() if row[2] else None,
+                        }
+                    }), 200
+                return jsonify({"message": "success", "results": {"config": {}, "updated_by": None, "updated_at": None}}), 200
     except Exception as e:
         current_app.logger.error(f"Failed to fetch score lineage: {e}")
-        return jsonify({"error": "fetch_failed"}), 500
+        return jsonify({"message": "failed", "error": "fetch_failed"}), 500
 
 @app.route('/config/score-lineage', methods=['POST'])
 @permission_required("users:manage")
