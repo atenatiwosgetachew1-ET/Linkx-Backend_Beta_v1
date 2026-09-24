@@ -582,7 +582,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             start_time = datetime.now()
             queries = get_logical_layer_query(
                 label=label,
-                scope_clause_t="$session_id IS NULL OR t.session_id = $session_id",
+                scope_clause_t="($session_id IS NULL OR $session_id = '' OR t.session_id = $session_id)",
                 apply_pass_through=bool(pass_through_accounts)
             )
             with driver.session() as s:
@@ -601,7 +601,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             with driver.session() as s:
                 query = get_smurfing_query(
                     label=label,
-                    scope_clause_t="$session_id IS NULL OR t.session_id = $session_id",
+                    scope_clause_t="($session_id IS NULL OR $session_id = '' OR t.session_id = $session_id)",
                     trusted_pair_clause=_trusted_pair_clause('a', 'b'),
                     is_provisional=False
                 )
@@ -622,9 +622,9 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             with driver.session() as s:
                 query = get_circular_flow_query(
                     label=label,
-                    scope_clause_t="$session_id IS NULL OR t.session_id = $session_id",
-                    scope_clause_a="$session_id IS NULL OR a.session_id = $session_id",
-                    scope_clause_b="$session_id IS NULL OR b.session_id = $session_id",
+                    scope_clause_t="($session_id IS NULL OR $session_id = '' OR t.session_id = $session_id)",
+                    scope_clause_a="($session_id IS NULL OR $session_id = '' OR a.session_id = $session_id)",
+                    scope_clause_b="($session_id IS NULL OR $session_id = '' OR b.session_id = $session_id)",
                     trusted_pair_clause=_trusted_pair_clause('a', 'b'),
                     is_provisional=False
                 )
@@ -642,9 +642,9 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             with driver.session() as s:
                 query = get_fund_flow_query(
                     label=label,
-                    scope_clause_t="$session_id IS NULL OR t.session_id = $session_id",
-                    scope_clause_a="$session_id IS NULL OR a.session_id = $session_id",
-                    scope_clause_b="$session_id IS NULL OR b.session_id = $session_id",
+                    scope_clause_t="($session_id IS NULL OR $session_id = '' OR t.session_id = $session_id)",
+                    scope_clause_a="($session_id IS NULL OR $session_id = '' OR a.session_id = $session_id)",
+                    scope_clause_b="($session_id IS NULL OR $session_id = '' OR b.session_id = $session_id)",
                     trusted_pair_clause=_trusted_pair_clause('a', 'b'),
                     is_provisional=False
                 )
@@ -662,7 +662,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             with driver.session() as s:
                 query = get_dormant_to_active_query(
                     label=label,
-                    scope_clause_t="$session_id IS NULL OR t.session_id = $session_id",
+                    scope_clause_t="($session_id IS NULL OR $session_id = '' OR t.session_id = $session_id)",
                     is_provisional=False
                 )
                 s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts)
@@ -679,7 +679,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             with driver.session() as s:
                 query = get_abnormal_balance_query(
                     label=label,
-                    scope_clause_t="$session_id IS NULL OR t.session_id = $session_id",
+                    scope_clause_t="($session_id IS NULL OR $session_id = '' OR t.session_id = $session_id)",
                     is_provisional=False
                 )
                 s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts, historical_baseline_days=thresholds.get("historical_baseline_days", 30))
@@ -696,7 +696,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             with driver.session() as s:
                 query = get_hub_and_spoke_out_query(
                     label=label,
-                    scope_clause_t="$session_id IS NULL OR t.session_id = $session_id",
+                    scope_clause_t="($session_id IS NULL OR $session_id = '' OR t.session_id = $session_id)",
                     trusted_pair_clause=_trusted_pair_clause('a', 'b'),
                     is_provisional=False
                 )
@@ -714,7 +714,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             with driver.session() as s:
                 query = get_hub_and_spoke_in_query(
                     label=label,
-                    scope_clause_t="$session_id IS NULL OR t.session_id = $session_id",
+                    scope_clause_t="($session_id IS NULL OR $session_id = '' OR t.session_id = $session_id)",
                     trusted_pair_clause=_trusted_pair_clause('a', 'b'),
                     is_provisional=False
                 )
@@ -732,7 +732,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             with driver.session() as s:
                 query = get_shared_identifier_query(
                     label=label,
-                    scope_clause_t="$session_id IS NULL OR t.session_id = $session_id",
+                    scope_clause_t="($session_id IS NULL OR $session_id = '' OR t.session_id = $session_id)",
                     is_provisional=False
                 )
                 s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts)
@@ -749,7 +749,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             with driver.session() as s:
                 query = get_late_night_tx_query(
                     label=label,
-                    scope_clause_t="$session_id IS NULL OR t.session_id = $session_id",
+                    scope_clause_t="($session_id IS NULL OR $session_id = '' OR t.session_id = $session_id)",
                     is_provisional=False
                 )
                 s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts,
@@ -766,7 +766,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             with driver.session() as s:
                 query = get_just_below_threshold_query(
                     label=label,
-                    scope_clause_t="$session_id IS NULL OR t.session_id = $session_id",
+                    scope_clause_t="($session_id IS NULL OR $session_id = '' OR t.session_id = $session_id)",
                     is_provisional=False
                 )
                 s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts,
@@ -784,7 +784,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             with driver.session() as s:
                 query = get_rapid_withdrawal_query(
                     label=label,
-                    scope_clause_t="$session_id IS NULL OR t.session_id = $session_id",
+                    scope_clause_t="($session_id IS NULL OR $session_id = '' OR t.session_id = $session_id)",
                     is_provisional=False
                 )
                 s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts, rapid_withdrawal_amount_tolerance=thresholds.get("rapid_withdrawal_amount_tolerance"))
@@ -801,7 +801,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             with driver.session() as s:
                 query = get_account_activity_spike_query(
                     label=label,
-                    scope_clause_t="$session_id IS NULL OR t.session_id = $session_id"
+                    scope_clause_t="($session_id IS NULL OR $session_id = '' OR t.session_id = $session_id)"
                 )
                 s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries,
                       activity_spike_min_daily_count=thresholds.get("activity_spike_min_daily_count"),
@@ -819,7 +819,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             with driver.session() as s:
                 query = get_high_risk_link_query(
                     label=label,
-                    scope_clause_t="$session_id IS NULL OR t.session_id = $session_id"
+                    scope_clause_t="($session_id IS NULL OR $session_id = '' OR t.session_id = $session_id)"
                 )
                 s.run(query, session_id=sp, risk_entries=risk_entries)
             rules_completed.append("HIGH_RISK_LINK")
@@ -836,7 +836,7 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             with driver.session() as s:
                 query = get_fraud_aggregator_query(
                     label=label,
-                    scope_clause_t="$session_id IS NULL OR t.session_id = $session_id",
+                    scope_clause_t="($session_id IS NULL OR $session_id = '' OR t.session_id = $session_id)",
                     session_id=sp
                 )
                 s.run(query, session_id=sp)

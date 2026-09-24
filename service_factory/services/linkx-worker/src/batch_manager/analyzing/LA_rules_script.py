@@ -9,7 +9,7 @@ def _safe_label(label):
 
 
 def _session_scope_clause(alias="t"):
-    return f"($session_id = '' OR {alias}.batch_id STARTS WITH $session_id OR {alias}.session_id = $session_id)"
+    return f"($session_id IS NULL OR $session_id = '' OR {alias}.batch_id STARTS WITH $session_id OR {alias}.session_id = $session_id)"
 
 
 def _safe_index_name(*parts):
@@ -140,6 +140,15 @@ def get_circular_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_
       AND a.LOGICAL_BENACCOUNTNO IS NOT NULL AND a.LOGICAL_BENACCOUNTNO <> ''
       AND NOT a.LOGICAL_BENACCOUNTNO IN $pt
       
+    // PERFORMANCE FIX: Prevent joining on hot beneficiary accounts (like account 6387)
+    CALL {{
+       WITH a
+       MATCH (check:{label}) 
+       WHERE check.ACCOUNTNO = a.LOGICAL_BENACCOUNTNO
+       RETURN count(check) AS ben_out_count
+    }}
+    WHERE ben_out_count < 1000
+      
     // Force planner to resolve 'a' before scanning 'b'
     WITH acc, a
 
@@ -182,6 +191,15 @@ def get_fund_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, t
 
     MATCH (a:{label})
     WHERE ({scope_clause_a}) AND a.LOGICAL_BENACCOUNTNO = acc
+    
+    // PERFORMANCE FIX: Prevent joining on hot sender accounts
+    CALL {{
+       WITH a
+       MATCH (check:{label}) 
+       WHERE check.LOGICAL_BENACCOUNTNO = a.ACCOUNTNO
+       RETURN count(check) AS a_sender_count
+    }}
+    WHERE a_sender_count < 1000
     
     // Force planner to resolve 'a' before scanning 'b'
     WITH acc, a
@@ -249,8 +267,11 @@ def get_abnormal_balance_query(label, scope_clause_t, is_provisional=False, incr
          abs(coalesce(toFloat(current.SENDERPREVIOUSBALANCE), 0.0) - coalesce(toFloat(previous.SENDERPREVIOUSBALANCE), 0.0)) AS current_change,
          history
     WHERE current_change > 0
+    WITH current, previous, current_change, history
     WITH current, previous, current_change,
-         reduce(s = 0.0, x IN history | s + abs(coalesce(toFloat(x.SENDERPREVIOUSBALANCE), 0.0))) / size(history) AS avg_change
+         [idx IN range(1, size(history)-1) | abs(coalesce(toFloat(history[idx].SENDERPREVIOUSBALANCE), 0.0) - coalesce(toFloat(history[idx-1].SENDERPREVIOUSBALANCE), 0.0))] AS history_changes
+    WITH current, previous, current_change,
+         CASE WHEN size(history_changes) > 0 THEN reduce(s = 0.0, x IN history_changes | s + x) / size(history_changes) ELSE 0.0 END AS avg_change
     WHERE current_change > (avg_change * 3)
     MERGE (previous)-[r:ABNORMAL_BALANCE_CHANGE {{session_id:$session_id}}]->(current)
     SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#196e08', r.textcolor = '#eeeeee', r.provisional = {prov_str},
