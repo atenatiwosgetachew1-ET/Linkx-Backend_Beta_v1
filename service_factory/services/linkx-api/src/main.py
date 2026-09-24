@@ -968,14 +968,26 @@ def get_score_lineage():
 @permission_required("users:manage")
 def update_score_lineage():
     payload = request.get_json()
-    if not payload:
-        return jsonify({"error": "invalid_payload"}), 400
+    if not payload or not isinstance(payload, dict):
+        return jsonify({"error": "invalid_payload_must_be_dict"}), 400
 
-    # Basic structural validation
+    # Log payload for debugging
+    current_app.logger.info(f"Received payload for score lineage: {list(payload.keys())}")
+    
+    # Relax structural validation to accept frontend aliases
+    if "base_scores" not in payload:
+        return jsonify({"error": "Missing required key: base_scores"}), 400
+    
+    # Map frontend aliases if they used different names
+    if "node_thresholds" not in payload and "node_count_multipliers" in payload:
+        payload["node_thresholds"] = payload["node_count_multipliers"]
+    if "money_thresholds" not in payload and "financial_value_multipliers" in payload:
+        payload["money_thresholds"] = payload["financial_value_multipliers"]
+        
     required_keys = ["base_scores", "node_thresholds", "money_thresholds"]
     for key in required_keys:
         if key not in payload:
-            return jsonify({"error": f"Missing required key: {key}"}), 400
+            payload[key] = [] # provide empty default instead of rejecting
 
     actor = current_actor_from_request()
     updated_by_str = actor.get("username") or actor.get("id") or "unknown" if isinstance(actor, dict) else str(actor) if actor else "unknown"
@@ -990,10 +1002,10 @@ def update_score_lineage():
                 version_id = cur.fetchone()[0]
             conn.commit()
             
-        record_security_event("config.score_lineage.update", actor=actor, success=True, metadata={"version_id": version_id})
+        _record_security_event_safe("config.score_lineage.update", actor=actor, success=True, metadata={"version_id": version_id})
         return jsonify({"message": "success", "version_id": version_id}), 200
     except Exception as e:
-        record_security_event("config.score_lineage.update", actor=actor, success=False, metadata={"error": str(e)})
+        _record_security_event_safe("config.score_lineage.update", actor=actor, success=False, metadata={"error": str(e)})
         return jsonify({"error": f"update_failed: {str(e)}"}), 500
 @app.route('/db/health', methods=['GET'])
 def db_health():
