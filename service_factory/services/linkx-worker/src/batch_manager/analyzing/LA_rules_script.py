@@ -374,7 +374,14 @@ def get_rapid_withdrawal_query(label, scope_clause_t, is_provisional=False, incr
     WHERE ({scope_clause_t})
       AND coalesce(t.IGNORE_LOGICAL, false) = false
       {where_filter}
-    WITH {with_acc} collect(t) AS txns
+    WITH {with_acc} count(t) AS cnt
+    WHERE cnt >= 1
+    MATCH (t2:{label})
+    WHERE ({scope_clause_t})
+      AND coalesce(t2.IGNORE_LOGICAL, false) = false
+      AND (t2.LOGICAL_ACCOUNTNO = acc OR t2.LOGICAL_BENACCOUNTNO = acc)
+      AND t2.TRANSACTIONDATE = tx_day
+    WITH acc, tx_day, collect(t2) AS txns
     WITH acc, tx_day, [x IN txns WHERE x.LOGICAL_BENACCOUNTNO = acc] AS in_txns, [x IN txns WHERE x.LOGICAL_ACCOUNTNO = acc] AS out_txns
     WHERE size(in_txns) > 0 AND size(out_txns) > 0 AND (size(in_txns) + size(out_txns)) < 1000
     CALL (in_txns, out_txns, acc, tx_day) {{
@@ -459,6 +466,48 @@ def get_high_risk_link_query(label, scope_clause_t, is_provisional=False, increm
     """
 
 
+
+
+def get_late_night_tx_query(label, scope_clause_t, is_provisional=False, incremental_batch_id=None):
+    prov_str = "true" if is_provisional else "false"
+    seed_filter = f"AND t.batch_id = {incremental_batch_id}" if incremental_batch_id else ""
+    return f"""
+    MATCH (t:{label})
+    WHERE ({scope_clause_t})
+      AND coalesce(t.IGNORE_LOGICAL, false) = false
+      {seed_filter}
+      AND t.TRANSACTIONTIME IS NOT NULL
+      AND toString(t.TRANSACTIONTIME) <> ''
+      AND {_trusted_node_clause('t')}
+    WITH t, toInteger(substring(replace(toString(t.TRANSACTIONTIME), ':', ''), 0, 4)) AS t_time
+    WHERE t_time >= $late_night_start OR t_time <= $late_night_end
+    MERGE (t)-[r:LATE_NIGHT_TX {{session_id:$session_id}}]->(t)
+    SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#00c1a2',
+        r.provisional = {prov_str},
+        r.reason = 'transaction occurred outside typical business hours',
+        r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
+    """
+
+def get_just_below_threshold_query(label, scope_clause_t, is_provisional=False, incremental_batch_id=None):
+    prov_str = "true" if is_provisional else "false"
+    seed_filter = f"AND t.batch_id = {incremental_batch_id}" if incremental_batch_id else ""
+    return f"""
+    MATCH (t:{label})
+    WHERE ({scope_clause_t})
+      AND coalesce(t.IGNORE_LOGICAL, false) = false
+      {seed_filter}
+      AND coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) > 0
+      AND {_trusted_node_clause('t')}
+    WITH t, coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) AS amt
+    WHERE amt >= ($single_tx_threshold * 0.9) AND amt < $single_tx_threshold
+    MERGE (t)-[r:JUST_BELOW_THRESHOLD {{session_id:$session_id}}]->(t)
+    SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#dba124',
+        r.provisional = {prov_str},
+        r.reason = 'transaction amount is suspiciously close to reporting threshold',
+        r.amount = amt,
+        r.threshold = $single_tx_threshold,
+        r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
+    """
 
 def _create_transaction_indexes(session, label):
     index_prefix = _safe_index_name(label)
@@ -1858,7 +1907,7 @@ def incremental_graph_analysis_cdr(driver, session_id, nodes_label, batch_id, lo
 
 def get_fraud_aggregator_query(label, scope_clause_t, session_id=None):
     return f'''
-    MATCH (t:{label})-[r:SMURFING|CIRCULAR_FLOW|FUND_FLOW|DORMANT_TO_ACTIVE|ABNORMAL_BALANCE_CHANGE|HUB_AND_SPOKE|SHARED_IDENTIFIER|LATE_NIGHT_TX|JUST_BELOW_THRESHOLD|RAPID_WITHDRAWAL|ACCOUNT_ACTIVITY_SPIKE|HIGH_RISK_LINK]->()
+    MATCH (t:{label})-[r:SMURFING|CIRCULAR_FLOW|FUND_FLOW|DORMANT_TO_ACTIVE|ABNORMAL_BALANCE_CHANGE|HUB_AND_SPOKE|SHARED_IDENTIFIER|LATE_NIGHT_TX|JUST_BELOW_THRESHOLD|RAPID_WITHDRAWAL|ACCOUNT_ACTIVITY_SPIKE|HIGH_RISK_LINK|PEP_INVOLVED|SANCTIONED_ENTITY_MATCH]->()
     WHERE ({scope_clause_t}) 
       AND r.is_evidence = true
     WITH coalesce(t.LOGICAL_ACCOUNTNO, t.ACCOUNTNO) AS account_no,

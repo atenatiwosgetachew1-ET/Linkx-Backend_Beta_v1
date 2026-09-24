@@ -12,6 +12,8 @@ from batch_manager.analyzing.LA_rules_script import (
     get_logical_layer_query,
     get_account_activity_spike_query,
     get_high_risk_link_query,
+    get_late_night_tx_query,
+    get_just_below_threshold_query,
     get_smurfing_query,
     get_circular_flow_query,
     get_fund_flow_query,
@@ -740,7 +742,42 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             rules_failed.append(("SHARED_IDENTIFIER", str(e)[:100]))
             print(f"  [Rule] SHARED_IDENTIFIER ✗ {str(e)[:100]}", flush=True)
 
-        # ---- 9. LATE_NIGHT_TX ----
+
+        # ---- 9a. LATE_NIGHT_TX ----
+        try:
+            start_time = datetime.now()
+            with driver.session() as s:
+                query = get_late_night_tx_query(
+                    label=label,
+                    scope_clause_t="$session_id IS NULL OR t.session_id = $session_id",
+                    is_provisional=False
+                )
+                s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts,
+                      late_night_start=thresholds.get("late_night_start", 2300), late_night_end=thresholds.get("late_night_end", 400))
+            rules_completed.append("LATE_NIGHT_TX")
+            print(f"  [Rule] LATE_NIGHT_TX ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
+        except Exception as e:
+            rules_failed.append(("LATE_NIGHT_TX", str(e)[:100]))
+            print(f"  [Rule] LATE_NIGHT_TX ✗ {str(e)[:100]}", flush=True)
+
+        # ---- 9b. JUST_BELOW_THRESHOLD ----
+        try:
+            start_time = datetime.now()
+            with driver.session() as s:
+                query = get_just_below_threshold_query(
+                    label=label,
+                    scope_clause_t="$session_id IS NULL OR t.session_id = $session_id",
+                    is_provisional=False
+                )
+                s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts,
+                      single_tx_threshold=thresholds.get("reporting_threshold", 300000))
+            rules_completed.append("JUST_BELOW_THRESHOLD")
+            print(f"  [Rule] JUST_BELOW_THRESHOLD ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
+        except Exception as e:
+            rules_failed.append(("JUST_BELOW_THRESHOLD", str(e)[:100]))
+            print(f"  [Rule] JUST_BELOW_THRESHOLD ✗ {str(e)[:100]}", flush=True)
+
+        # ---- 10. RAPID_WITHDRAWAL ----
         try:
             start_time = datetime.now()
             start_time = datetime.now()
@@ -956,6 +993,27 @@ def consume_firehose():
     credentials = _neo4j_credentials(session_id)
     node_label = rule_to_node_label("bank transactions", session_id)
     
+
+    # --- STARTUP PURGE: Clean leftover nodes from previous SIGKILL'd runs ---
+    try:
+        purge_driver = create_neo4j_driver(credentials)
+        safe_purge_label = f"`{str(node_label).replace('`', '')}`"
+        purge_total = 0
+        with purge_driver.session() as purge_session:
+            while True:
+                result = purge_session.run(f"MATCH (n:{safe_purge_label}) WITH n LIMIT 10000 DETACH DELETE n RETURN count(n) AS deleted")
+                deleted_batch = result.single()["deleted"]
+                purge_total += deleted_batch
+                if deleted_batch == 0:
+                    break
+        purge_driver.close()
+        if purge_total > 0:
+            print(f"[xVigilance-Consumer] Startup purge: {purge_total} stale nodes removed.", flush=True)
+        else:
+            print("[xVigilance-Consumer] Startup purge: graph is clean.", flush=True)
+    except Exception as purge_e:
+        print(f"[xVigilance-Consumer] Warning: Startup purge failed: {purge_e}", flush=True)
+
     # --- ENSURE NEO4J INDEXES EXIST ON STARTUP ---
     try:
         driver = create_neo4j_driver(credentials)
