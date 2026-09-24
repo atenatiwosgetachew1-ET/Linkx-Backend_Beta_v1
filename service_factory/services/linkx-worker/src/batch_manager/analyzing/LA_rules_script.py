@@ -137,127 +137,107 @@ def get_circular_flow_query(
 ):
     prov_str = "true" if is_provisional else "false"
 
-    # In incremental mode, only accounts touched by the new batch
-    # are used as seeds. This prevents scanning every possible pair.
-    seed_block = ""
-    seed_filter_a = ""
-    seed_filter_b = ""
-
-    if incremental_batch_id:
+    if incremental_batch_id is not None:
         seed_block = f"""
         MATCH (seed:{label})
-        WHERE seed.batch_id = {incremental_batch_id}
+        WHERE seed.batch_id = $incremental_batch_id
           AND coalesce(seed.IGNORE_LOGICAL, false) = false
           AND seed.LOGICAL_ACCOUNTNO IS NOT NULL
-          AND seed.LOGICAL_ACCOUNTNO <> ''
+          AND trim(toString(seed.LOGICAL_ACCOUNTNO)) <> ''
           AND seed.LOGICAL_BENACCOUNTNO IS NOT NULL
-          AND seed.LOGICAL_BENACCOUNTNO <> ''
-        WITH DISTINCT
-            seed.LOGICAL_ACCOUNTNO AS seed_sender,
-            seed.LOGICAL_BENACCOUNTNO AS seed_receiver,
-            seed.TRANSACTIONDATE AS seed_day
+          AND trim(toString(seed.LOGICAL_BENACCOUNTNO)) <> ''
+          AND seed.TRANSACTIONDATE IS NOT NULL
+          AND trim(toString(seed.TRANSACTIONDATE)) <> ''
 
-        WHERE seed_day IS NOT NULL
-          AND seed_day <> ''
-          AND seed_sender <> seed_receiver
+        WITH DISTINCT
+            trim(toString(seed.LOGICAL_ACCOUNTNO)) AS seed_sender,
+            trim(toString(seed.LOGICAL_BENACCOUNTNO)) AS seed_receiver,
+            trim(toString(seed.TRANSACTIONDATE)) AS seed_day
+
+        WHERE seed_sender <> seed_receiver
           AND NOT seed_sender IN $pt
           AND NOT seed_receiver IN $pt
         """
-
-        seed_filter_a = """
-          AND a.LOGICAL_ACCOUNTNO = seed_sender
-          AND a.LOGICAL_BENACCOUNTNO = seed_receiver
-          AND a.TRANSACTIONDATE = seed_day
-        """
-
-        seed_filter_b = """
-          AND b.LOGICAL_ACCOUNTNO = seed_receiver
-          AND b.LOGICAL_BENACCOUNTNO = seed_sender
-          AND b.TRANSACTIONDATE = seed_day
-        """
-
     else:
         scope_clause_seed = scope_clause_t.replace("t.", "seed.")
-        seed_block = """
+
+        seed_block = f"""
         MATCH (seed:{label})
         WHERE ({scope_clause_seed})
           AND coalesce(seed.IGNORE_LOGICAL, false) = false
           AND seed.LOGICAL_ACCOUNTNO IS NOT NULL
-          AND seed.LOGICAL_ACCOUNTNO <> ''
+          AND trim(toString(seed.LOGICAL_ACCOUNTNO)) <> ''
           AND seed.LOGICAL_BENACCOUNTNO IS NOT NULL
-          AND seed.LOGICAL_BENACCOUNTNO <> ''
-        WITH DISTINCT
-            seed.LOGICAL_ACCOUNTNO AS seed_sender,
-            seed.LOGICAL_BENACCOUNTNO AS seed_receiver,
-            seed.TRANSACTIONDATE AS seed_day
+          AND trim(toString(seed.LOGICAL_BENACCOUNTNO)) <> ''
+          AND seed.TRANSACTIONDATE IS NOT NULL
+          AND trim(toString(seed.TRANSACTIONDATE)) <> ''
 
-        WHERE seed_day IS NOT NULL
-          AND seed_day <> ''
-          AND seed_sender <> seed_receiver
+        WITH DISTINCT
+            trim(toString(seed.LOGICAL_ACCOUNTNO)) AS seed_sender,
+            trim(toString(seed.LOGICAL_BENACCOUNTNO)) AS seed_receiver,
+            trim(toString(seed.TRANSACTIONDATE)) AS seed_day
+
+        WHERE seed_sender <> seed_receiver
           AND NOT seed_sender IN $pt
           AND NOT seed_receiver IN $pt
-        """.format(label=label, scope_clause_seed=scope_clause_seed)
-
-        seed_filter_a = """
-          AND a.LOGICAL_ACCOUNTNO = seed_sender
-          AND a.LOGICAL_BENACCOUNTNO = seed_receiver
-          AND a.TRANSACTIONDATE = seed_day
         """
 
-        seed_filter_b = """
-          AND b.LOGICAL_ACCOUNTNO = seed_receiver
-          AND b.LOGICAL_BENACCOUNTNO = seed_sender
-          AND b.TRANSACTIONDATE = seed_day
-        """
+    match_a = f"""
+    MATCH (a:{label})
+    WHERE ({scope_clause_t.replace("t.", "a.")})
+      AND coalesce(a.IGNORE_LOGICAL, false) = false
+
+      AND a.LOGICAL_ACCOUNTNO IS NOT NULL
+      AND trim(toString(a.LOGICAL_ACCOUNTNO)) <> ''
+
+      AND a.LOGICAL_BENACCOUNTNO IS NOT NULL
+      AND trim(toString(a.LOGICAL_BENACCOUNTNO)) <> ''
+
+      AND trim(toString(a.LOGICAL_ACCOUNTNO)) = seed_sender
+      AND trim(toString(a.LOGICAL_BENACCOUNTNO)) = seed_receiver
+      AND trim(toString(a.TRANSACTIONDATE)) = seed_day
+
+      AND NOT trim(toString(a.LOGICAL_ACCOUNTNO)) IN $pt
+      AND NOT trim(toString(a.LOGICAL_BENACCOUNTNO)) IN $pt
+    """
+
+    match_b = f"""
+    MATCH (b:{label})
+    WHERE ({scope_clause_t.replace("t.", "b.")})
+      AND coalesce(b.IGNORE_LOGICAL, false) = false
+
+      AND b.LOGICAL_ACCOUNTNO IS NOT NULL
+      AND trim(toString(b.LOGICAL_ACCOUNTNO)) <> ''
+
+      AND b.LOGICAL_BENACCOUNTNO IS NOT NULL
+      AND trim(toString(b.LOGICAL_BENACCOUNTNO)) <> ''
+
+      AND trim(toString(b.LOGICAL_ACCOUNTNO)) = seed_receiver
+      AND trim(toString(b.LOGICAL_BENACCOUNTNO)) = seed_sender
+      AND trim(toString(b.TRANSACTIONDATE)) = seed_day
+
+      AND NOT trim(toString(b.LOGICAL_ACCOUNTNO)) IN $pt
+      AND NOT trim(toString(b.LOGICAL_BENACCOUNTNO)) IN $pt
+
+      AND elementId(a) < elementId(b)
+    """
 
     return f"""
     {seed_block}
 
-    MATCH (a:{label})
-    WHERE ({scope_clause_t.replace("t.", "a.")})
-      AND coalesce(a.IGNORE_LOGICAL, false) = false
-      AND a.LOGICAL_ACCOUNTNO IS NOT NULL
-      AND a.LOGICAL_ACCOUNTNO <> ''
-      AND a.LOGICAL_BENACCOUNTNO IS NOT NULL
-      AND a.LOGICAL_BENACCOUNTNO <> ''
-      {seed_filter_a}
+    {match_a}
 
-    MATCH (b:{label})
-    WHERE ({scope_clause_t.replace("t.", "b.")})
-      AND coalesce(b.IGNORE_LOGICAL, false) = false
-      AND b.LOGICAL_ACCOUNTNO IS NOT NULL
-      AND b.LOGICAL_ACCOUNTNO <> ''
-      AND b.LOGICAL_BENACCOUNTNO IS NOT NULL
-      AND b.LOGICAL_BENACCOUNTNO <> ''
-      {seed_filter_b}
-
-      AND elementId(a) < elementId(b)
-
-      AND a.LOGICAL_ACCOUNTNO <> a.LOGICAL_BENACCOUNTNO
-
-      AND coalesce(
-          toFloat(a.AMOUNTINBIRR),
-          toFloat(a.AMOUNT),
-          toFloat(a.amount),
-          toFloat(a.LOCAL_AMOUNT),
-          0.0
-      ) > 0
-
-      AND coalesce(
-          toFloat(b.AMOUNTINBIRR),
-          toFloat(b.AMOUNT),
-          toFloat(b.amount),
-          toFloat(b.LOCAL_AMOUNT),
-          0.0
-      ) > 0
+    {match_b}
 
     WITH
         a,
         b,
-        a.LOGICAL_ACCOUNTNO AS sender_a,
-        a.LOGICAL_BENACCOUNTNO AS receiver_a,
-        b.LOGICAL_ACCOUNTNO AS sender_b,
-        b.LOGICAL_BENACCOUNTNO AS receiver_b,
+
+        trim(toString(a.LOGICAL_ACCOUNTNO)) AS sender_a,
+        trim(toString(a.LOGICAL_BENACCOUNTNO)) AS receiver_a,
+
+        trim(toString(b.LOGICAL_ACCOUNTNO)) AS sender_b,
+        trim(toString(b.LOGICAL_BENACCOUNTNO)) AS receiver_b,
 
         coalesce(
             toFloat(a.AMOUNTINBIRR),
@@ -279,19 +259,31 @@ def get_circular_flow_query(
         sender_a = receiver_b
         AND receiver_a = sender_b
 
+        AND sender_a <> receiver_a
+
         AND amt_a > 0
         AND amt_b > 0
 
         AND abs(amt_a - amt_b)
-            <= (CASE
+            <= (
+                CASE
                     WHEN amt_a < amt_b THEN amt_a
                     ELSE amt_b
-                END * 0.05)
+                END * 0.05
+            )
 
         AND {trusted_pair_clause}
 
     CALL {{
-        WITH a, b, sender_a, receiver_a, amt_a, amt_b
+        WITH
+            a,
+            b,
+            sender_a,
+            receiver_a,
+            sender_b,
+            receiver_b,
+            amt_a,
+            amt_b
 
         MERGE (a)-[r1:CIRCULAR_FLOW {{session_id:$session_id}}]->(b)
 
@@ -312,27 +304,25 @@ def get_circular_flow_query(
             r1.logical_sender = sender_a,
             r1.logical_receiver = receiver_a,
 
-            r1.reverse_sender = receiver_a,
-            r1.reverse_receiver = sender_a,
+            r1.reverse_sender = sender_b,
+            r1.reverse_receiver = receiver_b,
 
             r1.amount_a = amt_a,
             r1.amount_b = amt_b,
 
-            r1.passthrough_a =
-                coalesce(a.PASSTHROUGH_HOPS, 0),
+            r1.passthrough_a = coalesce(a.PASSTHROUGH_HOPS, 0),
+            r1.passthrough_b = coalesce(b.PASSTHROUGH_HOPS, 0),
 
-            r1.passthrough_b =
-                coalesce(b.PASSTHROUGH_HOPS, 0),
+            r1.logical_path_a = coalesce(a.LOGICAL_PATH, ''),
+            r1.logical_path_b = coalesce(b.LOGICAL_PATH, ''),
 
-            r1.logical_path_a =
-                coalesce(a.LOGICAL_PATH, ''),
-
-            r1.logical_path_b =
-                coalesce(b.LOGICAL_PATH, ''),
+            r1.logical_transformation_a = coalesce(a.LOGICAL_TRANSFORMATION_REASON, 'NONE'),
+            r1.logical_transformation_b = coalesce(b.LOGICAL_TRANSFORMATION_REASON, 'NONE'),
 
             r1.edge_semantic = 'DERIVED_LOGICAL_FLOW',
             r1.financial_flow = true,
             r1.directed_display = true
+
 
         MERGE (b)-[r2:CIRCULAR_FLOW {{session_id:$session_id}}]->(a)
 
@@ -359,23 +349,20 @@ def get_circular_flow_query(
             r2.amount_a = amt_a,
             r2.amount_b = amt_b,
 
-            r2.passthrough_a =
-                coalesce(a.PASSTHROUGH_HOPS, 0),
+            r2.passthrough_a = coalesce(a.PASSTHROUGH_HOPS, 0),
+            r2.passthrough_b = coalesce(b.PASSTHROUGH_HOPS, 0),
 
-            r2.passthrough_b =
-                coalesce(b.PASSTHROUGH_HOPS, 0),
+            r2.logical_path_a = coalesce(a.LOGICAL_PATH, ''),
+            r2.logical_path_b = coalesce(b.LOGICAL_PATH, ''),
 
-            r2.logical_path_a =
-                coalesce(a.LOGICAL_PATH, ''),
-
-            r2.logical_path_b =
-                coalesce(b.LOGICAL_PATH, ''),
+            r2.logical_transformation_a = coalesce(a.LOGICAL_TRANSFORMATION_REASON, 'NONE'),
+            r2.logical_transformation_b = coalesce(b.LOGICAL_TRANSFORMATION_REASON, 'NONE'),
 
             r2.edge_semantic = 'DERIVED_LOGICAL_FLOW',
             r2.financial_flow = true,
             r2.directed_display = true
-    }}
-    IN TRANSACTIONS OF 5000 ROWS
+
+    }} IN TRANSACTIONS OF 5000 ROWS
     """
 
 
