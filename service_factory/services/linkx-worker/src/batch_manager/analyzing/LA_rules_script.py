@@ -147,7 +147,7 @@ def get_circular_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_
        WHERE check.ACCOUNTNO = a.LOGICAL_BENACCOUNTNO
        RETURN count(check) AS ben_out_count
     }}
-    YIELD ben_out_count
+    WITH acc, a, ben_out_count
     WHERE ben_out_count < 1000
       
     // Force planner to resolve 'a' before scanning 'b'
@@ -200,7 +200,7 @@ def get_fund_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, t
        WHERE check.LOGICAL_BENACCOUNTNO = a.ACCOUNTNO
        RETURN count(check) AS a_sender_count
     }}
-    YIELD a_sender_count
+    WITH acc, a, a_sender_count
     WHERE a_sender_count < 1000
     
     // Force planner to resolve 'a' before scanning 'b'

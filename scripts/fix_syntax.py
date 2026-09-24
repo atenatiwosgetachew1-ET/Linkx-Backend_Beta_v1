@@ -8,17 +8,19 @@ with open(RULES_FILE, "r") as f:
 # Fix CIRCULAR FLOW
 content = content.replace(
 """    }}
+    YIELD ben_out_count
     WHERE ben_out_count < 1000""",
 """    }}
-    YIELD ben_out_count
+    WITH acc, a, ben_out_count
     WHERE ben_out_count < 1000""")
 
 # Fix FUND FLOW
 content = content.replace(
 """    }}
+    YIELD a_sender_count
     WHERE a_sender_count < 1000""",
 """    }}
-    YIELD a_sender_count
+    WITH acc, a, a_sender_count
     WHERE a_sender_count < 1000""")
 
 with open(RULES_FILE, "w") as f:
