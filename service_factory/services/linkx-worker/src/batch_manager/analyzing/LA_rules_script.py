@@ -184,7 +184,7 @@ def get_circular_flow_query(
 
     match_a = f"""
     MATCH (a:{label})
-    WHERE ({scope_clause_t.replace("t.", "a.")})
+    WHERE ({scope_clause_a})
       AND coalesce(a.IGNORE_LOGICAL, false) = false
 
       AND a.LOGICAL_ACCOUNTNO IS NOT NULL
@@ -203,7 +203,7 @@ def get_circular_flow_query(
 
     match_b = f"""
     MATCH (b:{label})
-    WHERE ({scope_clause_t.replace("t.", "b.")})
+    WHERE ({scope_clause_b})
       AND coalesce(b.IGNORE_LOGICAL, false) = false
 
       AND b.LOGICAL_ACCOUNTNO IS NOT NULL
