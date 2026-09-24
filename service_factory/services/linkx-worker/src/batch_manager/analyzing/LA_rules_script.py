@@ -27,7 +27,8 @@ def fetch_rule_thresholds():
     except Exception:
         pass
     return defaults
-, timedelta
+
+from datetime import timedelta
 from logger import log_writer
 import re
 from batch_manager.utils.Classified_entities import risk_entities_cypher_entries, trusted_entities_cypher_entries
