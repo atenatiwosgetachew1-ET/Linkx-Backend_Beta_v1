@@ -914,7 +914,7 @@ def save_rule_thresholds():
         return jsonify({"message": "success", "results": {"config": merged, "updated_by": updated_by}}), 200
     except Exception as e:
         current_app.logger.warning("Failed to save rule thresholds: %s", e)
-        return jsonify({"message": "failed", "error": "rule_thresholds_save_failed"}), 500
+        return jsonify({"message": "failed", "error": f"rule_thresholds_save_failed: {str(e)}"}), 500
 
 
 @app.route('/rule-thresholds/history', methods=['GET'])
@@ -993,7 +993,7 @@ def update_score_lineage():
         return jsonify({"message": "success", "version_id": version_id}), 200
     except Exception as e:
         record_security_event("config.score_lineage.update", actor=actor, success=False, metadata={"error": str(e)})
-        return jsonify({"error": "update_failed"}), 500
+        return jsonify({"error": f"update_failed: {str(e)}"}), 500
 @app.route('/db/health', methods=['GET'])
 def db_health():
     try:
