@@ -1,4 +1,33 @@
-from datetime import datetime, timedelta
+import psycopg
+import os
+from datetime import datetime
+
+def fetch_rule_thresholds():
+    defaults = {
+        "smurfing_single_tx_threshold": 300000,
+        "smurfing_min_tx_count": 3,
+        "smurfing_cumulative_threshold": 900000,
+        "reporting_threshold": 300000,
+        "circular_flow_check_amounts": False,
+        "late_night_start": 2300,
+        "late_night_end": 400,
+        "hub_spoke_min_counterparties": 3,
+        "activity_spike_multiplier": 3,
+        "activity_spike_min_daily_count": 10,
+        "rapid_withdrawal_amount_tolerance": 0.1
+    }
+    try:
+        if os.getenv('LINKX_POSTGRES_DSN'):
+            with psycopg.connect(os.getenv('LINKX_POSTGRES_DSN')) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT config_data FROM global_rule_thresholds ORDER BY created_at DESC LIMIT 1")
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        defaults.update(row[0])
+    except Exception:
+        pass
+    return defaults
+, timedelta
 from logger import log_writer
 import re
 from batch_manager.utils.Classified_entities import risk_entities_cypher_entries, trusted_entities_cypher_entries
@@ -878,6 +907,7 @@ def batch_graph_analysis_transactions(
 
     log_writer(log_file, f"[{datetime.now()}] [Info] Starting transactions analysis")
     label = _safe_label(nodes_label)
+    thresholds = fetch_rule_thresholds()
     session_param = str(session_id) if session_id else ""
     trusted_entries = trusted_entities_cypher_entries(trusted_entities)
     risk_entries = risk_entities_cypher_entries(risk_entities)
@@ -920,9 +950,9 @@ def batch_graph_analysis_transactions(
             is_provisional=False
         )
         session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts,
-             smurfing_single_tx_threshold=single_tx_threshold,
-             smurfing_cumulative_threshold=total_threshold,
-             smurfing_min_tx_count=min_tx_count)
+             smurfing_single_tx_threshold=thresholds.get("smurfing_single_tx_threshold", 300000),
+             smurfing_cumulative_threshold=thresholds.get("smurfing_cumulative_threshold", 900000),
+             smurfing_min_tx_count=thresholds.get("smurfing_min_tx_count", 3))
 
         # ----------------------------
         # 2. CIRCULAR_FLOW: direct account-to-beneficiary reversal
@@ -967,13 +997,13 @@ def batch_graph_analysis_transactions(
         # 6. HUB_AND_SPOKE (outgoing)
         # ----------------------------
         query = get_hub_and_spoke_out_query(label=label, scope_clause_t=scope_full, trusted_pair_clause=_trusted_pair_clause('a', 'b'), is_provisional=False)
-        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, hub_spoke_min_counterparties=min_tx_count)
+        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties", 3))
 
         # ----------------------------
         # 7. HUB_AND_SPOKE (incoming)
         # ----------------------------
         query = get_hub_and_spoke_in_query(label=label, scope_clause_t=scope_full, trusted_pair_clause=_trusted_pair_clause('a', 'b'), is_provisional=False)
-        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, hub_spoke_min_counterparties=min_tx_count)
+        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties", 3))
 
         # ----------------------------
         # 8. SHARED_IDENTIFIER
@@ -985,25 +1015,25 @@ def batch_graph_analysis_transactions(
         # 9. LATE_NIGHT_TX
         # ----------------------------
         query = get_late_night_tx_query(label=label, scope_clause_t=scope_full, is_provisional=False)
-        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, late_night_start=2300, late_night_end=400)
+        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, late_night_start=thresholds.get("late_night_start", 2300), late_night_end=thresholds.get("late_night_end", 400))
 
         # ----------------------------
         # 10. JUST_BELOW_THRESHOLD
         # ----------------------------
         query = get_just_below_threshold_query(label=label, scope_clause_t=scope_full, is_provisional=False)
-        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, single_tx_threshold=single_tx_threshold)
+        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, single_tx_threshold=thresholds.get("reporting_threshold", 300000))
 
         # ----------------------------
         # 11. RAPID_WITHDRAWAL
         # ----------------------------
         query = get_rapid_withdrawal_query(label=label, scope_clause_t=scope_full, is_provisional=False)
-        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, rapid_withdrawal_amount_tolerance=0.1)
+        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, rapid_withdrawal_amount_tolerance=thresholds.get("rapid_withdrawal_amount_tolerance", 0.1))
 
         # ----------------------------
         # 12. ACCOUNT_ACTIVITY_SPIKE
         # ----------------------------
         query = get_account_activity_spike_query(label=label, scope_clause_t=scope_full, is_provisional=False)
-        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, activity_spike_min_daily_count=10, activity_spike_multiplier=3, historical_baseline_days=30)
+        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, activity_spike_min_daily_count=thresholds.get("activity_spike_min_daily_count", 10), activity_spike_multiplier=thresholds.get("activity_spike_multiplier", 3), historical_baseline_days=30)
 
         # ----------------------------
         # 13. HIGH_RISK_LINK
@@ -1043,6 +1073,7 @@ def incremental_graph_analysis_transactions(
 
     session_param = str(session_id)
     label = _safe_label(nodes_label)
+    thresholds = fetch_rule_thresholds()
     trusted_entries = trusted_entities_cypher_entries(trusted_entities)
     risk_entries = risk_entities_cypher_entries(risk_entities)
     pass_through_accounts = _extract_pass_through_accounts(trusted_entities)
@@ -1082,9 +1113,9 @@ def incremental_graph_analysis_transactions(
             incremental_batch_id="$batch_id"
         )
         session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts,
-             smurfing_single_tx_threshold=single_tx_threshold,
-             smurfing_cumulative_threshold=total_threshold,
-             smurfing_min_tx_count=min_tx_count)
+             smurfing_single_tx_threshold=thresholds.get("smurfing_single_tx_threshold", 300000),
+             smurfing_cumulative_threshold=thresholds.get("smurfing_cumulative_threshold", 900000),
+             smurfing_min_tx_count=thresholds.get("smurfing_min_tx_count", 3))
 
         # Circular flow: only pairs where the current batch is one side of the reversal.
         query = get_circular_flow_query(
@@ -1123,11 +1154,11 @@ def incremental_graph_analysis_transactions(
 
         # 6. HUB_AND_SPOKE (outgoing)
         query = get_hub_and_spoke_out_query(label=label, scope_clause_t=scope_inc, trusted_pair_clause=_trusted_pair_clause('a', 'b'), is_provisional=True, incremental_batch_id="$batch_id")
-        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, hub_spoke_min_counterparties=min_tx_count)
+        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties", 3))
 
         # 7. HUB_AND_SPOKE (incoming)
         query = get_hub_and_spoke_in_query(label=label, scope_clause_t=scope_inc, trusted_pair_clause=_trusted_pair_clause('a', 'b'), is_provisional=True, incremental_batch_id="$batch_id")
-        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, hub_spoke_min_counterparties=min_tx_count)
+        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties", 3))
 
         # 8. SHARED_IDENTIFIER
         query = get_shared_identifier_query(label=label, scope_clause_t=scope_inc, is_provisional=True, incremental_batch_id="$batch_id")
@@ -1135,19 +1166,19 @@ def incremental_graph_analysis_transactions(
 
         # 9. LATE_NIGHT_TX
         query = get_late_night_tx_query(label=label, scope_clause_t=scope_inc, is_provisional=True, incremental_batch_id="$batch_id")
-        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, late_night_start=2300, late_night_end=400)
+        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, late_night_start=thresholds.get("late_night_start", 2300), late_night_end=thresholds.get("late_night_end", 400))
 
         # 10. JUST_BELOW_THRESHOLD
         query = get_just_below_threshold_query(label=label, scope_clause_t=scope_inc, is_provisional=True, incremental_batch_id="$batch_id")
-        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, single_tx_threshold=single_tx_threshold)
+        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, single_tx_threshold=thresholds.get("reporting_threshold", 300000))
 
         # 11. RAPID_WITHDRAWAL
         query = get_rapid_withdrawal_query(label=label, scope_clause_t=scope_inc, is_provisional=True, incremental_batch_id="$batch_id")
-        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, rapid_withdrawal_amount_tolerance=0.1)
+        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, rapid_withdrawal_amount_tolerance=thresholds.get("rapid_withdrawal_amount_tolerance", 0.1))
 
         # 12. ACCOUNT_ACTIVITY_SPIKE
         query = get_account_activity_spike_query(label=label, scope_clause_t=scope_inc, is_provisional=True, incremental_batch_id="$batch_id")
-        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, activity_spike_min_daily_count=10, activity_spike_multiplier=3, historical_baseline_days=30)
+        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, activity_spike_min_daily_count=thresholds.get("activity_spike_min_daily_count", 10), activity_spike_multiplier=thresholds.get("activity_spike_multiplier", 3), historical_baseline_days=30)
 
         # 13. HIGH_RISK_LINK
         query = get_high_risk_link_query(label=label, scope_clause_t=scope_inc, is_provisional=True, incremental_batch_id="$batch_id")
@@ -1349,6 +1380,7 @@ def batch_graph_analysis_posts(driver, log_file, session_id=None, nodes_label="T
     log_writer(log_file, f"[{datetime.now()}] [Info] Starting social media analysis")
     session_param = str(session_id) if session_id else ""
     label = _safe_label(nodes_label)
+    thresholds = fetch_rule_thresholds()
 
     with driver.session() as session:
         _create_post_indexes(session, nodes_label)
@@ -1365,6 +1397,7 @@ def batch_graph_analysis_posts(driver, log_file, session_id=None, nodes_label="T
 def incremental_graph_analysis_posts(driver, session_id, nodes_label, batch_id, log_file):
     session_param = str(session_id)
     label = _safe_label(nodes_label)
+    thresholds = fetch_rule_thresholds()
     log_writer(log_file, f"[{datetime.now()}] [Info] Running incremental social media analysis for batch {batch_id}")
 
     with driver.session() as session:
@@ -1648,6 +1681,7 @@ def batch_graph_analysis_cdr(driver, log_file, session_id=None, nodes_label="Cal
 
     session_param = str(session_id) if session_id else ""
     label = _safe_label(nodes_label)
+    thresholds = fetch_rule_thresholds()
     log_writer(log_file, f"[{datetime.now()}] [Info] Starting CDR analysis")
 
     with driver.session() as session:
@@ -1668,6 +1702,7 @@ def incremental_graph_analysis_cdr(driver, session_id, nodes_label, batch_id, lo
 
     session_param = str(session_id)
     label = _safe_label(nodes_label)
+    thresholds = fetch_rule_thresholds()
     log_writer(log_file, f"[{datetime.now()}] [Info] Running incremental CDR analysis for batch {batch_id}")
 
     with driver.session() as session:
