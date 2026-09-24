@@ -376,12 +376,12 @@ def get_rapid_withdrawal_query(label, scope_clause_t, is_provisional=False, incr
       {where_filter}
     WITH {with_acc} count(t) AS cnt
     WHERE cnt >= 1
-    MATCH (t2:{label})
+    MATCH (t:{label})
     WHERE ({scope_clause_t})
-      AND coalesce(t2.IGNORE_LOGICAL, false) = false
-      AND (t2.LOGICAL_ACCOUNTNO = acc OR t2.LOGICAL_BENACCOUNTNO = acc)
-      AND t2.TRANSACTIONDATE = tx_day
-    WITH acc, tx_day, collect(t2) AS txns
+      AND coalesce(t.IGNORE_LOGICAL, false) = false
+      AND (t.LOGICAL_ACCOUNTNO = acc OR t.LOGICAL_BENACCOUNTNO = acc)
+      AND t.TRANSACTIONDATE = tx_day
+    WITH acc, tx_day, collect(t) AS txns
     WITH acc, tx_day, [x IN txns WHERE x.LOGICAL_BENACCOUNTNO = acc] AS in_txns, [x IN txns WHERE x.LOGICAL_ACCOUNTNO = acc] AS out_txns
     WHERE size(in_txns) > 0 AND size(out_txns) > 0 AND (size(in_txns) + size(out_txns)) < 1000
     CALL (in_txns, out_txns, acc, tx_day) {{
