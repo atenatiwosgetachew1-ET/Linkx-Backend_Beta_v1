@@ -1017,6 +1017,20 @@ def batch_graph_analysis_transactions(
         query = get_fraud_aggregator_query(label=label, scope_clause_t=scope_full, session_id=session_param)
         session.run(query, session_id=session_param)
 
+        
+    # DEBUG INJECTION
+    try:
+        debug_q = f"MATCH (n:{label}) WHERE n.NodeId STARTS WITH '1fef459a-b21a-45b1-869b-bc8529ab21b9' RETURN n.NodeId, n.TRANSACTIONTIME, toInteger(substring(replace(toString(n.TRANSACTIONTIME), ':', ''), 0, 4)) AS t_time"
+        res = session.run(debug_q).data()
+        log_writer(log_file, f"[{datetime.now()}] [DEBUG] Node properties for LATE_NIGHT_TX test: {res}")
+        
+        # Check trusted entities match
+        trusted_q = f"MATCH (n:{label}) WHERE n.NodeId STARTS WITH '1fef459a-b21a-45b1-869b-bc8529ab21b9' RETURN n.NodeId, {_trusted_node_clause('n')} AS is_trusted"
+        res2 = session.run(trusted_q, trusted_entries=trusted_entries).data()
+        log_writer(log_file, f"[{datetime.now()}] [DEBUG] Trusted clause evaluation: {res2}")
+    except Exception as e:
+        log_writer(log_file, f"[{datetime.now()}] [DEBUG ERROR] {e}")
+
         counts = _count_transaction_relationships(session, session_param) if session_param else {}
         _write_gds_metrics(session, f"{session_param}_transactions", nodes_label, session_param, TRANSACTION_RELATIONSHIPS, log_file)
 
@@ -1152,6 +1166,20 @@ def incremental_graph_analysis_transactions(
         # 13. HIGH_RISK_LINK
         query = get_high_risk_link_query(label=label, scope_clause_t=scope_inc, is_provisional=True, incremental_batch_id="$batch_id")
         session.run(query, batch_id=batch_id, session_id=session_param, risk_entries=risk_entries)
+
+        
+    # DEBUG INJECTION
+    try:
+        debug_q = f"MATCH (n:{label}) WHERE n.NodeId STARTS WITH '1fef459a-b21a-45b1-869b-bc8529ab21b9' RETURN n.NodeId, n.TRANSACTIONTIME, toInteger(substring(replace(toString(n.TRANSACTIONTIME), ':', ''), 0, 4)) AS t_time"
+        res = session.run(debug_q).data()
+        log_writer(log_file, f"[{datetime.now()}] [DEBUG] Node properties for LATE_NIGHT_TX test: {res}")
+        
+        # Check trusted entities match
+        trusted_q = f"MATCH (n:{label}) WHERE n.NodeId STARTS WITH '1fef459a-b21a-45b1-869b-bc8529ab21b9' RETURN n.NodeId, {_trusted_node_clause('n')} AS is_trusted"
+        res2 = session.run(trusted_q, trusted_entries=trusted_entries).data()
+        log_writer(log_file, f"[{datetime.now()}] [DEBUG] Trusted clause evaluation: {res2}")
+    except Exception as e:
+        log_writer(log_file, f"[{datetime.now()}] [DEBUG ERROR] {e}")
 
         counts = _count_transaction_relationships(session, session_param)
 
