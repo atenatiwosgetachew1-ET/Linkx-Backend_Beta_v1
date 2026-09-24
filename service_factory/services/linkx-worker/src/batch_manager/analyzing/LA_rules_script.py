@@ -17,15 +17,25 @@ def fetch_rule_thresholds():
         "rapid_withdrawal_amount_tolerance": 0.1
     }
     try:
-        if os.getenv('LINKX_POSTGRES_DSN'):
-            with psycopg.connect(os.getenv('LINKX_POSTGRES_DSN')) as conn:
+        dsn = os.getenv('LINKX_POSTGRES_DSN')
+        if not dsn:
+            try:
+                with open('/opt/linkx-worker/.env', 'r') as envf:
+                    for line in envf:
+                        if line.startswith('LINKX_POSTGRES_DSN='):
+                            dsn = line.strip().split('=', 1)[1].strip('"\'')
+            except Exception:
+                pass
+        
+        if dsn:
+            with psycopg.connect(dsn) as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT config_data FROM global_rule_thresholds ORDER BY created_at DESC LIMIT 1")
                     row = cur.fetchone()
                     if row and row[0]:
                         defaults.update(row[0])
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"fetch_rule_thresholds error: {e}", flush=True)
     return defaults
 
 from datetime import timedelta
