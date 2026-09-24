@@ -210,7 +210,7 @@ def get_circular_flow_query(
         """
 
     return f"""
-    {{seed_block}}
+    {seed_block}
 
     MATCH (a:{label})
     WHERE ({scope_clause_t.replace("t.", "a.")})
@@ -219,7 +219,7 @@ def get_circular_flow_query(
       AND a.LOGICAL_ACCOUNTNO <> ''
       AND a.LOGICAL_BENACCOUNTNO IS NOT NULL
       AND a.LOGICAL_BENACCOUNTNO <> ''
-      {{seed_filter_a}}
+      {seed_filter_a}
 
     MATCH (b:{label})
     WHERE ({scope_clause_t.replace("t.", "b.")})
@@ -228,7 +228,7 @@ def get_circular_flow_query(
       AND b.LOGICAL_ACCOUNTNO <> ''
       AND b.LOGICAL_BENACCOUNTNO IS NOT NULL
       AND b.LOGICAL_BENACCOUNTNO <> ''
-      {{seed_filter_b}}
+      {seed_filter_b}
 
       AND elementId(a) < elementId(b)
 
