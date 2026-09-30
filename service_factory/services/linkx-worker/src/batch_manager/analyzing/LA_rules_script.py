@@ -17,15 +17,7 @@ def fetch_rule_thresholds():
         "rapid_withdrawal_amount_tolerance": 0.1
     }
     try:
-        dsn = os.getenv('LINKX_POSTGRES_DSN')
-        if not dsn:
-            try:
-                with open('/opt/linkx-worker/.env', 'r') as envf:
-                    for line in envf:
-                        if line.startswith('LINKX_POSTGRES_DSN='):
-                            dsn = line.strip().split('=', 1)[1].strip('"\'')
-            except Exception:
-                pass
+        dsn = os.getenv('DATABASE_URL') or os.getenv('LINKX_POSTGRES_DSN')
         
         if dsn:
             with psycopg.connect(dsn) as conn:
