@@ -723,6 +723,24 @@ def neo4j_row_data_injector(payload, batch_size=500):
                 _session_store[session_id]["node_label"] = node_label
             # Insert nodes in batches; run cheap incremental rules after every batch.
 
+            # --- Centralized DataFrame normalization (timestamp from CREATEDDATE) ---
+            try:
+                import pandas as pd
+                if hasattr(df, 'columns') and 'CREATEDDATE' in df.columns:
+                    numeric_dates = pd.to_numeric(df['CREATEDDATE'], errors='coerce')
+                    valid_mask = numeric_dates.notna() & (numeric_dates > 1000000000000)
+                    if valid_mask.any():
+                        dt_series = pd.to_datetime(numeric_dates[valid_mask], unit='ms', utc=True)
+                        df.loc[valid_mask, 'TRANSACTIONDATE'] = dt_series.dt.strftime('%Y-%m-%d')
+                        df.loc[valid_mask, 'TRANSACTIONTIME'] = dt_series.dt.strftime('%H:%M:%S')
+                        log_writer(log_file, f"[{datetime.now()}] [Info] - Timestamp normalization: {valid_mask.sum()}/{len(df)} rows got TRANSACTIONTIME from CREATEDDATE")
+                    else:
+                        log_writer(log_file, f"[{datetime.now()}] [Warning] - CREATEDDATE column exists but no valid epoch values found")
+                else:
+                    log_writer(log_file, f"[{datetime.now()}] [Warning] - No CREATEDDATE column in DataFrame, skipping timestamp normalization")
+            except Exception as norm_err:
+                log_writer(log_file, f"[{datetime.now()}] [Warning] - Timestamp normalization failed: {norm_err}")
+
             column_mapping = load_temp_config("column_mapping", session_id) or {}
             def prepare_link_row(row):
                 clean = _clean_neo4j_props(row, column_mapping)
