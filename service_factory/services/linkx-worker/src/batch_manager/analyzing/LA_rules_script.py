@@ -911,6 +911,7 @@ def batch_graph_analysis_transactions(
     log_writer(log_file, f"[{datetime.now()}] [Info] Starting transactions analysis")
     label = _safe_label(nodes_label)
     thresholds = fetch_rule_thresholds()
+    log_writer(log_file, f"[{datetime.now()}] [Info] Rule thresholds loaded: late_night_start={thresholds.get('late_night_start')}, late_night_end={thresholds.get('late_night_end')}, hub_spoke_min={thresholds.get('hub_spoke_min_counterparties')}")
     session_param = str(session_id) if session_id else ""
     trusted_entries = trusted_entities_cypher_entries(trusted_entities)
     risk_entries = risk_entities_cypher_entries(risk_entities)
@@ -1017,6 +1018,11 @@ def batch_graph_analysis_transactions(
         # ----------------------------
         # 9. LATE_NIGHT_TX
         # ----------------------------
+        try:
+            diag = session.run(f"MATCH (t:{label}) WHERE ({scope_full}) RETURN count(t) AS total, count(CASE WHEN t.TRANSACTIONTIME IS NOT NULL AND toString(t.TRANSACTIONTIME) <> '' THEN 1 END) AS has_time", session_id=session_param).single()
+            log_writer(log_file, f"[{datetime.now()}] [Info] LATE_NIGHT_TX diagnostic: total_nodes={diag['total']}, nodes_with_time={diag['has_time']}, late_night_start={thresholds.get('late_night_start')}, late_night_end={thresholds.get('late_night_end')}")
+        except Exception as diag_err:
+            log_writer(log_file, f"[{datetime.now()}] [Warning] LATE_NIGHT_TX diagnostic failed: {diag_err}")
         query = get_late_night_tx_query(label=label, scope_clause_t=scope_full, is_provisional=False)
         session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, late_night_start=thresholds.get("late_night_start", 2300), late_night_end=thresholds.get("late_night_end", 400))
 
