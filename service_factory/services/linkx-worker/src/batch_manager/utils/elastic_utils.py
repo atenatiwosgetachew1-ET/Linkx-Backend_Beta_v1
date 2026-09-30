@@ -199,19 +199,27 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
             df = pd.DataFrame(records)
             df.columns = [c.lower() for c in df.columns]
 
-            if column_mapping:
-                rename_dict = {k.lower(): v.lower() for k, v in column_mapping.items()}
-                df = df.rename(columns=rename_dict)
-
             if fetch_columns:
-                normalized_fetch = [c.lower() for c in fetch_columns]
-                existing = [c for c in normalized_fetch if c in df.columns]
+                normalized_fetch = set(c.lower() for c in fetch_columns)
+                if column_mapping:
+                    for src_col, tgt_col in column_mapping.items():
+                        if src_col.lower() in normalized_fetch:
+                            normalized_fetch.add(tgt_col.lower())
+                existing = [c for c in df.columns if c in normalized_fetch]
 
                 if not existing:
-                    _log_es_info("No matching columns found", {"df_columns": df.columns.tolist(), "fetch_columns": normalized_fetch})
+                    _log_es_info("No matching columns found", {"df_columns": df.columns.tolist(), "fetch_columns": list(normalized_fetch)})
                     return None
 
                 df = df[existing]
+
+            if column_mapping:
+                for src_col, tgt_col in column_mapping.items():
+                    s_k = src_col.lower()
+                    t_k = tgt_col.lower()
+                    if s_k in df.columns and t_k not in df.columns:
+                        df[t_k] = df[s_k]
+
             return df
 
         return None
