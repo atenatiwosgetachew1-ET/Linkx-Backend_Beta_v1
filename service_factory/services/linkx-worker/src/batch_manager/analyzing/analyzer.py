@@ -16,7 +16,7 @@ except Exception:
             pass
 import re
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 import time
 import uuid
 import os
@@ -121,48 +121,83 @@ def _neo4j_inject_with_retry(params, max_attempts=4):
 
 def neo4j_row_data_adjuster(row_dict):
     try:
-        t_time = str(row_dict.get('TRANSACTIONTIME', '')).strip()
-        if t_time in ('', 'None', 'NaT', 'NaN', 'null'):
-            t_time = ''
-            
-        c_date = str(row_dict.get('CREATEDDATE', '')).strip()
-        
-        # 1. Fallback to CREATEDDATE
-        if not t_time and c_date and c_date not in ('None', 'NaT', 'NaN', 'null'):
+        keys_lower = {k.lower(): k for k in row_dict.keys()}
+
+        def get_any(*names):
+            for name in names:
+                actual = keys_lower.get(name.lower())
+                if actual is not None:
+                    val = row_dict[actual]
+                    if val is not None and str(val).strip() not in ('', 'None', 'NaN', 'null', 'NaT'):
+                        return val
+            return None
+
+        # 1. Canonical Account properties
+        acc = get_any('ACCOUNTNO', 'SENDERACCOUNTID')
+        if acc is not None:
+            row_dict['ACCOUNTNO'] = str(acc).strip()
+        ben = get_any('BENACCOUNTNO', 'RECEIVERACCOUNTID')
+        if ben is not None:
+            row_dict['BENACCOUNTNO'] = str(ben).strip()
+
+        # 2. Canonical Amount
+        amt = get_any('AMOUNTINBIRR', 'AMOUNT', 'TRANSFERAMOUNT')
+        if amt is not None:
             try:
-                ts = float(c_date) / 1000.0
-                dt_obj = datetime.utcfromtimestamp(ts)
-                row_dict['TRANSACTIONDATE'] = dt_obj.date().isoformat()
-                row_dict['TRANSACTIONTIME'] = dt_obj.strftime("%H:%M:%S")
+                row_dict['AMOUNTINBIRR'] = float(amt)
+            except Exception:
+                row_dict['AMOUNTINBIRR'] = amt
+
+        # 3. Canonical Date & Time
+        raw_date = get_any('TRANSACTIONDATE', 'CREATEDDATE', 'transaction_date', 'created_date')
+        raw_time = get_any('TRANSACTIONTIME')
+
+        parsed_date = None
+        parsed_time = None
+
+        if raw_date is not None:
+            s = str(raw_date).strip()
+            # Epoch milliseconds or seconds
+            try:
+                if s.replace('.', '', 1).isdigit():
+                    val = float(s)
+                    ts = val / 1000.0 if val > 1e11 else val
+                    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+                    parsed_date = dt.strftime('%Y-%m-%d')
+                    parsed_time = dt.strftime('%H:%M:%S')
             except Exception:
                 pass
-        
-        # 2. Date parsing
-        t_date = str(row_dict.get('TRANSACTIONDATE', '')).strip()
-        if t_date and t_date not in ('None', 'NaT', 'NaN'):
-            try:
-                date_obj = datetime.strptime(t_date, "%m/%d/%Y")
-                row_dict['TRANSACTIONDATE'] = date_obj.date().isoformat()
-            except Exception:
-                pass 
-                
-        # 3. Time parsing
-        t_time = str(row_dict.get('TRANSACTIONTIME', '')).strip()
-        if t_time and t_time not in ('None', 'NaT', 'NaN'):
-            if 'T' in t_time:
-                # E.g. '2026-08-26T23:27:53.000000Z' or '+00:00'
-                time_part = t_time.split('T')[1]
-                # Strip timezone and microseconds
-                clean_time = time_part.split('+')[0].split('-')[0].split('Z')[0].split('.')[0]
-                row_dict['TRANSACTIONTIME'] = clean_time
-            else:
-                for fmt in ["%I:%M:%S %p", "%H:%M:%S"]:
+
+            # String format with datetime or date
+            if not parsed_date:
+                clean_s = re.sub(r'\+00:?00$', 'Z', s)
+                for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%d', '%m/%d/%Y %H:%M:%S', '%m/%d/%Y', '%d-%m-%Y %H:%M:%S', '%d/%m/%Y %H:%M:%S']:
                     try:
-                        time_obj = datetime.strptime(t_time, fmt)
-                        row_dict['TRANSACTIONTIME'] = time_obj.strftime("%H:%M:%S")
+                        dt = datetime.strptime(clean_s, fmt)
+                        parsed_date = dt.strftime('%Y-%m-%d')
+                        if '%H' in fmt:
+                            parsed_time = dt.strftime('%H:%M:%S')
                         break
-                    except Exception:
+                    except ValueError:
                         continue
+
+        # Separate time string parsing/override
+        if raw_time is not None:
+            s_time = str(raw_time).strip()
+            if 'T' in s_time:
+                s_time = s_time.split('T')[1].split('+')[0].split('-')[0].split('Z')[0].split('.')[0]
+            for fmt in ['%H:%M:%S', '%I:%M:%S %p', '%H:%M', '%I:%M %p']:
+                try:
+                    parsed_time = datetime.strptime(s_time, fmt).strftime('%H:%M:%S')
+                    break
+                except ValueError:
+                    continue
+
+        if parsed_date:
+            row_dict['TRANSACTIONDATE'] = parsed_date
+        if parsed_time:
+            row_dict['TRANSACTIONTIME'] = parsed_time
+
     except Exception:
         pass
     return row_dict
@@ -723,21 +758,32 @@ def neo4j_row_data_injector(payload, batch_size=500):
                 _session_store[session_id]["node_label"] = node_label
             # Insert nodes in batches; run cheap incremental rules after every batch.
 
-            # --- Centralized DataFrame normalization (timestamp from CREATEDDATE) ---
+            # --- Centralized DataFrame normalization (timestamp from CREATEDDATE/TRANSACTIONDATE) ---
             try:
                 import pandas as pd
-                if hasattr(df, 'columns') and 'CREATEDDATE' in df.columns:
-                    numeric_dates = pd.to_numeric(df['CREATEDDATE'], errors='coerce')
-                    valid_mask = numeric_dates.notna() & (numeric_dates > 1000000000000)
-                    if valid_mask.any():
-                        dt_series = pd.to_datetime(numeric_dates[valid_mask], unit='ms', utc=True)
-                        df.loc[valid_mask, 'TRANSACTIONDATE'] = dt_series.dt.strftime('%Y-%m-%d')
-                        df.loc[valid_mask, 'TRANSACTIONTIME'] = dt_series.dt.strftime('%H:%M:%S')
-                        log_writer(log_file, f"[{datetime.now()}] [Info] - Timestamp normalization: {valid_mask.sum()}/{len(df)} rows got TRANSACTIONTIME from CREATEDDATE")
+                if hasattr(df, 'columns'):
+                    col_map_lower = {c.lower(): c for c in df.columns}
+                    date_col = None
+                    for candidate in ['createddate', 'transactiondate', 'transaction_date', 'created_date']:
+                        if candidate in col_map_lower:
+                            date_col = col_map_lower[candidate]
+                            break
+                    if date_col:
+                        date_series = df[date_col]
+                        num_dates = pd.to_numeric(date_series, errors='coerce')
+                        is_epoch = num_dates.notna() & (num_dates > 1e11)
+                        dt_epoch = pd.to_datetime(num_dates[is_epoch], unit='ms', utc=True)
+                        dt_str = pd.to_datetime(date_series[~is_epoch], errors='coerce', utc=True)
+                        combined_dt = pd.concat([dt_epoch, dt_str]).sort_index()
+                        valid_mask = combined_dt.notna()
+                        if valid_mask.any():
+                            df.loc[valid_mask, 'TRANSACTIONDATE'] = combined_dt[valid_mask].dt.strftime('%Y-%m-%d')
+                            df.loc[valid_mask, 'TRANSACTIONTIME'] = combined_dt[valid_mask].dt.strftime('%H:%M:%S')
+                            log_writer(log_file, f"[{datetime.now()}] [Info] - Timestamp normalization: {valid_mask.sum()}/{len(df)} rows got TRANSACTIONTIME from column '{date_col}'")
+                        else:
+                            log_writer(log_file, f"[{datetime.now()}] [Warning] - Column '{date_col}' found but no valid dates parsed")
                     else:
-                        log_writer(log_file, f"[{datetime.now()}] [Warning] - CREATEDDATE column exists but no valid epoch values found")
-                else:
-                    log_writer(log_file, f"[{datetime.now()}] [Warning] - No CREATEDDATE column in DataFrame, skipping timestamp normalization")
+                        log_writer(log_file, f"[{datetime.now()}] [Warning] - No date column found in DataFrame, skipping timestamp normalization")
             except Exception as norm_err:
                 log_writer(log_file, f"[{datetime.now()}] [Warning] - Timestamp normalization failed: {norm_err}")
 
