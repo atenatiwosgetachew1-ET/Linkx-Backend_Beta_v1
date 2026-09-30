@@ -9,6 +9,7 @@ def fetch_rule_thresholds():
         "smurfing_cumulative_threshold": 900000,
         "reporting_threshold": 300000,
         "circular_flow_check_amounts": False,
+        "circular_flow_amount_tolerance": 0.05,
         "late_night_start": 2300,
         "late_night_end": 400,
         "hub_spoke_min_counterparties": 3,
@@ -856,6 +857,236 @@ def execute_effective_flow_rule(session, label, scope_clause_t, session_id, pass
     return len(edges_to_create)
 
 
+def execute_circular_flow_rule(
+    session, label, scope_clause, session_id,
+    pass_through_accounts=None, trusted_entries=None,
+    thresholds=None, is_provisional=False,
+    incremental_batch_id=None, boundary_batch_id=None,
+):
+    """
+    Python-accelerated central implementation of CIRCULAR_FLOW.
+
+    Detects same-day A→B / B→A round-trip transfers with amount matching
+    within a configurable tolerance.  Instead of running an expensive Cypher
+    self-join across hundreds of thousands of nodes, we:
+
+      1. Fetch the relevant LOGICAL transaction data into Python memory.
+      2. Build an O(1) hash-set keyed by (sender, receiver, date).
+      3. For each transaction, check if a reverse-direction counterpart
+         exists on the same day.
+      4. Validate amounts within the configured tolerance.
+      5. Write *only* the verified anomaly edges back to Neo4j.
+
+    All thresholds are driven from the database-backed ``global_rule_thresholds``
+    configuration (``circular_flow_amount_tolerance``).  Trusted-entity
+    filtering is performed in Python *before* edge creation.
+
+    Parameters
+    ----------
+    session : neo4j.Session
+        Active Neo4j driver session.
+    label : str
+        Safe-escaped node label (e.g. 'bank_transactions_xvigilance-daemon').
+    scope_clause : str
+        Cypher WHERE fragment that scopes nodes (session_id / batch_id).
+    session_id : str
+        The session_id value to bind as ``$session_id`` in the scope clause.
+    pass_through_accounts : list[str] | None
+        Account numbers to exclude (pass-through intermediaries).
+    trusted_entries : list[dict] | None
+        Trusted entity entries from global_entity_classification.
+    thresholds : dict | None
+        Rule thresholds from ``fetch_rule_thresholds()``.
+    is_provisional : bool
+        Whether edges should be marked provisional (incremental batches).
+    incremental_batch_id : str | None
+        When set, only seed from nodes in this batch (incremental mode).
+    boundary_batch_id : str | None
+        When set, at least one side of the pair must belong to this batch.
+    """
+    if thresholds is None:
+        thresholds = {}
+    if pass_through_accounts is None:
+        pass_through_accounts = []
+    if trusted_entries is None:
+        trusted_entries = []
+
+    prov_str = "true" if is_provisional else "false"
+    pt_set = set(str(a).strip() for a in pass_through_accounts if a)
+
+    # --- Configuration-driven tolerance from database ---
+    amount_tolerance = float(thresholds.get("circular_flow_amount_tolerance", 0.05))
+
+    # ---- 1. Fetch transaction data into Python memory ----
+    fetch_query = (
+        f"MATCH (n:{label}) WHERE ({scope_clause}) "
+        f"AND coalesce(n.IGNORE_LOGICAL, false) = false "
+        f"AND n.LOGICAL_ACCOUNTNO IS NOT NULL AND n.LOGICAL_ACCOUNTNO <> '' "
+        f"AND n.LOGICAL_BENACCOUNTNO IS NOT NULL AND n.LOGICAL_BENACCOUNTNO <> '' "
+        f"AND n.TRANSACTIONDATE IS NOT NULL AND n.TRANSACTIONDATE <> '' "
+        f"AND n.LOGICAL_ACCOUNTNO <> n.LOGICAL_BENACCOUNTNO "
+        f"RETURN elementId(n) AS id, "
+        f"n.LOGICAL_ACCOUNTNO AS acc, n.LOGICAL_BENACCOUNTNO AS ben, "
+        f"n.TRANSACTIONDATE AS date, "
+        f"coalesce(n.TRANSACTIONTIME, '') AS time, "
+        f"coalesce(toFloat(n.AMOUNTINBIRR), toFloat(n.AMOUNT), toFloat(n.amount), toFloat(n.LOCAL_AMOUNT), 0.0) AS amt, "
+        f"coalesce(n.PASSTHROUGH_HOPS, 0) AS pt_hops, "
+        f"coalesce(n.LOGICAL_PATH, '') AS logical_path, "
+        f"coalesce(n.LOGICAL_TRANSFORMATION_REASON, 'NONE') AS logical_transform, "
+        f"coalesce(n.batch_id, '') AS batch_id"
+    )
+    params = {"session_id": session_id}
+    if incremental_batch_id:
+        params["incremental_batch_id"] = incremental_batch_id
+    if boundary_batch_id:
+        params["boundary_batch_id"] = boundary_batch_id
+
+    result = session.run(fetch_query, **params)
+    rows = [dict(r) for r in result]
+
+    if not rows:
+        return 0
+
+    # ---- 2. Build trusted-entity lookup for Python-side filtering ----
+    # Pre-compute which fields the trusted entries care about for fast checking
+    def _is_trusted(node_dict):
+        """Check if a node matches any trusted entity entry (Python equivalent
+        of the Cypher _trusted_entry_match)."""
+        if not trusted_entries:
+            return False
+        for entry in trusted_entries:
+            match = True
+            for k, v in entry.items():
+                if k.lower() in ('category', 'type', 'reason', 'pass_through',
+                                 'passthrough', 'classification', 'notes'):
+                    continue
+                node_val = str(node_dict.get(k, ""))
+                if node_val != str(v):
+                    match = False
+                    break
+            if match:
+                return True
+        return False
+
+    # ---- 3. Index rows by (sender, receiver, date) for O(1) lookup ----
+    from collections import defaultdict
+
+    # key = (LOGICAL_ACCOUNTNO, LOGICAL_BENACCOUNTNO, TRANSACTIONDATE)
+    forward_map = defaultdict(list)
+    for row in rows:
+        acc = str(row["acc"]).strip()
+        ben = str(row["ben"]).strip()
+        date = str(row["date"]).strip()
+        # Skip pass-through accounts
+        if acc in pt_set or ben in pt_set:
+            continue
+        forward_map[(acc, ben, date)].append(row)
+
+    # ---- 4. Detect circular pairs via reverse-key hash lookup ----
+    seen_pairs = set()  # Canonical pair dedup: frozenset({id_a, id_b})
+    edges_to_create = []
+
+    for (sender, receiver, date), a_rows in forward_map.items():
+        # Look up the reverse direction: receiver→sender on the same date
+        reverse_key = (receiver, sender, date)
+        b_rows = forward_map.get(reverse_key)
+        if not b_rows:
+            continue
+
+        for a in a_rows:
+            amt_a = a["amt"]
+            if amt_a is None or amt_a <= 0:
+                continue
+
+            for b in b_rows:
+                # Deduplication: each pair only once
+                pair_key = frozenset({a["id"], b["id"]})
+                if pair_key in seen_pairs:
+                    continue
+                if a["id"] == b["id"]:
+                    continue
+
+                amt_b = b["amt"]
+                if amt_b is None or amt_b <= 0:
+                    continue
+
+                # Amount tolerance check (configuration-driven)
+                min_amt = min(amt_a, amt_b)
+                if abs(amt_a - amt_b) > (min_amt * amount_tolerance):
+                    continue
+
+                # Trusted entity filter (Python-side)
+                a_node = {"LOGICAL_ACCOUNTNO": sender, "LOGICAL_BENACCOUNTNO": receiver,
+                          "ACCOUNTNO": sender, "BENACCOUNTNO": receiver}
+                b_node = {"LOGICAL_ACCOUNTNO": receiver, "LOGICAL_BENACCOUNTNO": sender,
+                          "ACCOUNTNO": receiver, "BENACCOUNTNO": sender}
+                if _is_trusted(a_node) or _is_trusted(b_node):
+                    continue
+
+                # Boundary filter for incremental mode
+                if boundary_batch_id:
+                    if a["batch_id"] != boundary_batch_id and b["batch_id"] != boundary_batch_id:
+                        continue
+
+                seen_pairs.add(pair_key)
+
+                # Determine pass-through context for the reason field
+                has_passthrough = (a["pt_hops"] > 0) or (b["pt_hops"] > 0)
+                reason = ('logical same-day reverse flow with pass-through intermediary'
+                          if has_passthrough else 'same-day direct reverse transfer')
+
+                edges_to_create.append({
+                    "id_a": a["id"],
+                    "id_b": b["id"],
+                    "sender_a": sender,
+                    "receiver_a": receiver,
+                    "amt_a": amt_a,
+                    "amt_b": amt_b,
+                    "reason": reason,
+                    "pt_hops_a": a["pt_hops"],
+                    "pt_hops_b": b["pt_hops"],
+                    "logical_path_a": a["logical_path"],
+                    "logical_path_b": b["logical_path"],
+                    "logical_transform_a": a["logical_transform"],
+                    "logical_transform_b": b["logical_transform"],
+                })
+
+    # ---- 5. Write only the verified anomaly edges back to Neo4j ----
+    if edges_to_create:
+        session.run(
+            f"UNWIND $edges AS e "
+            f"MATCH (a) WHERE elementId(a) = e.id_a "
+            f"MATCH (b) WHERE elementId(b) = e.id_b "
+            # Forward edge: a → b
+            f"MERGE (a)-[r1:CIRCULAR_FLOW {_SID}]->(b) "
+            f"SET r1.is_evidence = true, r1.anomaly_score = 0.6, "
+            f"r1.bgcolor = '#e6e6e6', r1.provisional = {prov_str}, "
+            f"r1.reason = e.reason, "
+            f"r1.logical_sender = e.sender_a, r1.logical_receiver = e.receiver_a, "
+            f"r1.reverse_sender = e.receiver_a, r1.reverse_receiver = e.sender_a, "
+            f"r1.amount_a = e.amt_a, r1.amount_b = e.amt_b, "
+            f"r1.passthrough_a = e.pt_hops_a, r1.passthrough_b = e.pt_hops_b, "
+            f"r1.logical_path_a = e.logical_path_a, r1.logical_path_b = e.logical_path_b, "
+            f"r1.logical_transformation_a = e.logical_transform_a, r1.logical_transformation_b = e.logical_transform_b, "
+            f"r1.edge_semantic = 'DERIVED_LOGICAL_FLOW', r1.financial_flow = true, r1.directed_display = true "
+            # Reverse edge: b → a
+            f"MERGE (b)-[r2:CIRCULAR_FLOW {_SID}]->(a) "
+            f"SET r2.is_evidence = true, r2.anomaly_score = 0.6, "
+            f"r2.bgcolor = '#e6e6e6', r2.provisional = {prov_str}, "
+            f"r2.reason = e.reason, "
+            f"r2.logical_sender = e.receiver_a, r2.logical_receiver = e.sender_a, "
+            f"r2.reverse_sender = e.sender_a, r2.reverse_receiver = e.receiver_a, "
+            f"r2.amount_a = e.amt_b, r2.amount_b = e.amt_a, "
+            f"r2.passthrough_a = e.pt_hops_b, r2.passthrough_b = e.pt_hops_a, "
+            f"r2.logical_path_a = e.logical_path_b, r2.logical_path_b = e.logical_path_a, "
+            f"r2.logical_transformation_a = e.logical_transform_b, r2.logical_transformation_b = e.logical_transform_a, "
+            f"r2.edge_semantic = 'DERIVED_LOGICAL_FLOW', r2.financial_flow = true, r2.directed_display = true",
+            session_id=session_id, edges=edges_to_create,
+        )
+
+    return len(edges_to_create)
+
+
 def get_logical_layer_query(label, scope_clause_t, apply_pass_through=False):
     q1 = f"""
     MATCH (t:{label})
@@ -959,17 +1190,22 @@ def batch_graph_analysis_transactions(
              smurfing_min_tx_count=thresholds.get("smurfing_min_tx_count", 3))
 
         # ----------------------------
-        # 2. CIRCULAR_FLOW: direct account-to-beneficiary reversal
+        # 2. CIRCULAR_FLOW (Python accelerated: in-memory hash matching)
         # ----------------------------
-        query = get_circular_flow_query(
-            label=label,
-            scope_clause_t="$session_id IS NULL OR t.session_id = $session_id OR t.batch_id STARTS WITH $session_id",
-            scope_clause_a="$session_id IS NULL OR a.session_id = $session_id OR a.batch_id STARTS WITH $session_id",
-            scope_clause_b="$session_id IS NULL OR b.session_id = $session_id OR b.batch_id STARTS WITH $session_id",
-            trusted_pair_clause=_trusted_pair_clause('a', 'b'),
-            is_provisional=False
-        )
-        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
+        try:
+            edge_count = execute_circular_flow_rule(
+                session=session,
+                label=label,
+                scope_clause="$session_id IS NULL OR n.session_id = $session_id OR n.batch_id STARTS WITH $session_id",
+                session_id=session_param,
+                pass_through_accounts=pass_through_accounts,
+                trusted_entries=trusted_entries,
+                thresholds=thresholds,
+                is_provisional=False,
+            )
+            log_writer(log_file, f"[{datetime.now()}] [Info] CIRCULAR_FLOW rule completed (Python accelerated: {edge_count} pairs).")
+        except Exception as e:
+            log_writer(log_file, f"[{datetime.now()}] [Error] CIRCULAR_FLOW rule failed: {e}")
 
         # ----------------------------
         # 3. FUND_FLOW: beneficiary becomes sender in a later transaction
@@ -1122,16 +1358,21 @@ def incremental_graph_analysis_transactions(
              smurfing_min_tx_count=thresholds.get("smurfing_min_tx_count", 3))
 
         # Circular flow: only pairs where the current batch is one side of the reversal.
-        query = get_circular_flow_query(
-            label=label,
-            scope_clause_t=_session_scope_clause("t"),
-            scope_clause_a=_session_scope_clause("a"),
-            scope_clause_b=_session_scope_clause("b"),
-            trusted_pair_clause=_trusted_pair_clause('a', 'b'),
-            is_provisional=True,
-            boundary_clause="(a.batch_id = $batch_id OR b.batch_id = $batch_id)"
-        )
-        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
+        try:
+            edge_count = execute_circular_flow_rule(
+                session=session,
+                label=label,
+                scope_clause=_session_scope_clause("n"),
+                session_id=session_param,
+                pass_through_accounts=pass_through_accounts,
+                trusted_entries=trusted_entries,
+                thresholds=thresholds,
+                is_provisional=True,
+                boundary_batch_id=batch_id,
+            )
+            log_writer(log_file, f"[{datetime.now()}] [Info] CIRCULAR_FLOW incremental completed (Python accelerated: {edge_count} pairs).")
+        except Exception as e:
+            log_writer(log_file, f"[{datetime.now()}] [Error] CIRCULAR_FLOW incremental failed: {e}")
 
         # Fund flow: new nodes can either precede or complete a downstream flow.
         query = get_fund_flow_query(
