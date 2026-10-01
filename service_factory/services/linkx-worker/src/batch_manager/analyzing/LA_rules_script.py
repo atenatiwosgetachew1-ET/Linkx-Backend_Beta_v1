@@ -10,6 +10,8 @@ def fetch_rule_thresholds():
         "reporting_threshold": 300000,
         "circular_flow_check_amounts": False,
         "circular_flow_amount_tolerance": 0.05,
+        "fund_flow_max_downstream": 5,
+        "fund_flow_hub_threshold": 1000,
         "late_night_start": 2300,
         "late_night_end": 400,
         "hub_spoke_min_counterparties": 3,
@@ -1087,6 +1089,234 @@ def execute_circular_flow_rule(
     return len(edges_to_create)
 
 
+def execute_fund_flow_rule(
+    session, label, scope_clause, session_id,
+    pass_through_accounts=None, trusted_entries=None,
+    thresholds=None, is_provisional=False,
+    boundary_batch_id=None,
+):
+    """
+    Python-accelerated central implementation of FUND_FLOW.
+
+    Detects when a beneficiary of one transaction later acts as the sender
+    of another transaction through the same intermediary account — i.e.
+    money flows through an account: someone sends TO account X, then
+    account X later sends FROM account X to someone else.
+
+    Instead of running an expensive Cypher self-join (MATCH (a), (b)) that
+    caused 115+ second stalls on 151k records, we:
+
+      1. Fetch relevant transaction data into Python memory.
+      2. Group transactions by intermediary account (LOGICAL_ACCOUNTNO
+         for outbound, LOGICAL_BENACCOUNTNO for inbound).
+      3. Apply anti-hub guard (< 1000 outgoing per account).
+      4. For each inbound transaction, find temporally subsequent outbound
+         transactions through the same account.
+      5. Limit to max N downstream per inbound (configurable, default 5).
+      6. Write only verified edges back to Neo4j.
+
+    All configuration is driven from the database-backed
+    ``global_rule_thresholds`` table.  Trusted-entity and pass-through
+    filtering is performed in Python before edge creation.
+
+    Parameters
+    ----------
+    session : neo4j.Session
+        Active Neo4j driver session.
+    label : str
+        Safe-escaped node label.
+    scope_clause : str
+        Cypher WHERE fragment that scopes nodes.
+    session_id : str
+        The session_id value to bind as ``$session_id``.
+    pass_through_accounts : list[str] | None
+        Account numbers to exclude (pass-through intermediaries).
+    trusted_entries : list[dict] | None
+        Trusted entity entries from global_entity_classification.
+    thresholds : dict | None
+        Rule thresholds from ``fetch_rule_thresholds()``.
+    is_provisional : bool
+        Whether edges should be marked provisional (incremental batches).
+    boundary_batch_id : str | None
+        When set, at least one side of the pair must belong to this batch.
+    """
+    if thresholds is None:
+        thresholds = {}
+    if pass_through_accounts is None:
+        pass_through_accounts = []
+    if trusted_entries is None:
+        trusted_entries = []
+
+    prov_str = "true" if is_provisional else "false"
+    pt_set = set(str(a).strip() for a in pass_through_accounts if a)
+
+    # --- Configuration-driven limits from database ---
+    max_downstream = int(thresholds.get("fund_flow_max_downstream", 5))
+    hub_threshold = int(thresholds.get("fund_flow_hub_threshold", 1000))
+
+    # ---- 1. Fetch transaction data into Python memory ----
+    fetch_query = (
+        f"MATCH (n:{label}) WHERE ({scope_clause}) "
+        f"AND coalesce(n.IGNORE_LOGICAL, false) = false "
+        f"AND n.LOGICAL_ACCOUNTNO IS NOT NULL AND n.LOGICAL_ACCOUNTNO <> '' "
+        f"RETURN elementId(n) AS id, "
+        f"n.LOGICAL_ACCOUNTNO AS acc, "
+        f"coalesce(n.LOGICAL_BENACCOUNTNO, '') AS ben, "
+        f"coalesce(n.TRANSACTIONDATE, '') AS date, "
+        f"coalesce(n.TRANSACTIONTIME, '') AS time, "
+        f"coalesce(n.batch_id, '') AS batch_id"
+    )
+    params = {"session_id": session_id}
+    if boundary_batch_id:
+        params["boundary_batch_id"] = boundary_batch_id
+
+    result = session.run(fetch_query, **params)
+    rows = [dict(r) for r in result]
+
+    if not rows:
+        return 0
+
+    # ---- 2. Build trusted-entity lookup for Python-side filtering ----
+    def _is_trusted(node_dict):
+        """Check if a node matches any trusted entity entry."""
+        if not trusted_entries:
+            return False
+        for entry in trusted_entries:
+            match = True
+            for k, v in entry.items():
+                if k.lower() in ('category', 'type', 'reason', 'pass_through',
+                                 'passthrough', 'classification', 'notes'):
+                    continue
+                node_val = str(node_dict.get(k, ""))
+                if node_val != str(v):
+                    match = False
+                    break
+            if match:
+                return True
+        return False
+
+    # ---- 3. Group by intermediary account ----
+    from collections import defaultdict
+
+    # outbound_map: account → list of rows where this account is the SENDER
+    outbound_map = defaultdict(list)
+    # inbound list: rows where someone sends TO an account (ben = intermediary)
+    inbound_list = []
+
+    outbound_count = defaultdict(int)  # Anti-hub guard counter
+
+    for row in rows:
+        acc = str(row["acc"]).strip()
+        ben = str(row["ben"]).strip()
+
+        # Skip pass-through accounts
+        if acc in pt_set:
+            continue
+
+        outbound_count[acc] += 1
+        outbound_map[acc].append(row)
+
+        # This row is also an inbound to ben (if ben exists and isn't pass-through)
+        if ben and ben not in pt_set:
+            inbound_list.append(row)
+
+    # Sort outbound per account by (date, time) for temporal ordering
+    for acc in outbound_map:
+        outbound_map[acc].sort(key=lambda x: (str(x["date"]), str(x["time"])))
+
+    # ---- 4. Detect fund flow: inbound → temporally later outbound ----
+    edges_to_create = []
+    seen_pairs = set()
+
+    for a in inbound_list:
+        intermediary = str(a["ben"]).strip()
+
+        # Anti-hub guard: skip if this intermediary has >= hub_threshold outgoing
+        if outbound_count.get(intermediary, 0) >= hub_threshold:
+            continue
+        # Skip if intermediary is a pass-through
+        if intermediary in pt_set:
+            continue
+
+        candidates = outbound_map.get(intermediary)
+        if not candidates:
+            continue
+
+        a_date = str(a["date"])
+        a_time = str(a["time"])
+        a_acc = str(a["acc"]).strip()
+
+        # Trusted entity filter on the inbound side
+        a_node = {"LOGICAL_ACCOUNTNO": a_acc, "LOGICAL_BENACCOUNTNO": intermediary,
+                  "ACCOUNTNO": a_acc, "BENACCOUNTNO": intermediary}
+        if _is_trusted(a_node):
+            continue
+
+        # Find temporally subsequent outbound transactions
+        downstream_count = 0
+        for b in candidates:
+            if downstream_count >= max_downstream:
+                break
+
+            if a["id"] == b["id"]:
+                continue
+
+            b_date = str(b["date"])
+            b_time = str(b["time"])
+
+            # Temporal ordering: b must happen AFTER a
+            if b_date < a_date:
+                continue
+            if b_date == a_date and b_time <= a_time:
+                continue
+
+            # Deduplication
+            pair_key = (a["id"], b["id"])
+            if pair_key in seen_pairs:
+                continue
+
+            # Trusted entity filter on the outbound side
+            b_ben = str(b["ben"]).strip()
+            b_node = {"LOGICAL_ACCOUNTNO": intermediary, "LOGICAL_BENACCOUNTNO": b_ben,
+                      "ACCOUNTNO": intermediary, "BENACCOUNTNO": b_ben}
+            if _is_trusted(b_node):
+                continue
+
+            # Boundary filter for incremental mode
+            if boundary_batch_id:
+                if a["batch_id"] != boundary_batch_id and b["batch_id"] != boundary_batch_id:
+                    continue
+
+            seen_pairs.add(pair_key)
+            downstream_count += 1
+
+            edges_to_create.append({
+                "id_a": a["id"],
+                "id_b": b["id"],
+            })
+
+    # ---- 5. Write only the verified anomaly edges back to Neo4j ----
+    if edges_to_create:
+        # Batch in chunks to avoid excessively large UNWIND payloads
+        BATCH_SIZE = 5000
+        for i in range(0, len(edges_to_create), BATCH_SIZE):
+            chunk = edges_to_create[i:i + BATCH_SIZE]
+            session.run(
+                f"UNWIND $edges AS e "
+                f"MATCH (a) WHERE elementId(a) = e.id_a "
+                f"MATCH (b) WHERE elementId(b) = e.id_b "
+                f"MERGE (a)-[r:FUND_FLOW {_SID}]->(b) "
+                f"SET r.is_evidence = true, r.anomaly_score = 0.5, "
+                f"r.bgcolor = '#d8a822', r.provisional = {prov_str}, "
+                f"r.reason = 'beneficiary later acts as sender', "
+                f"r.edge_semantic = 'TEMPORAL_SEQUENCE', "
+                f"r.financial_flow = false, r.directed_display = true",
+                session_id=session_id, edges=chunk,
+            )
+
+    return len(edges_to_create)
+
+
 def get_logical_layer_query(label, scope_clause_t, apply_pass_through=False):
     q1 = f"""
     MATCH (t:{label})
@@ -1208,17 +1438,22 @@ def batch_graph_analysis_transactions(
             log_writer(log_file, f"[{datetime.now()}] [Error] CIRCULAR_FLOW rule failed: {e}")
 
         # ----------------------------
-        # 3. FUND_FLOW: beneficiary becomes sender in a later transaction
+        # 3. FUND_FLOW (Python accelerated: in-memory temporal matching)
         # ----------------------------
-        query = get_fund_flow_query(
-            label=label,
-            scope_clause_t="$session_id IS NULL OR t.session_id = $session_id OR t.batch_id STARTS WITH $session_id",
-            scope_clause_a="$session_id IS NULL OR a.session_id = $session_id OR a.batch_id STARTS WITH $session_id",
-            scope_clause_b="$session_id IS NULL OR b.session_id = $session_id OR b.batch_id STARTS WITH $session_id",
-            trusted_pair_clause=_trusted_pair_clause('a', 'b'),
-            is_provisional=False
-        )
-        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
+        try:
+            edge_count = execute_fund_flow_rule(
+                session=session,
+                label=label,
+                scope_clause="$session_id IS NULL OR n.session_id = $session_id OR n.batch_id STARTS WITH $session_id",
+                session_id=session_param,
+                pass_through_accounts=pass_through_accounts,
+                trusted_entries=trusted_entries,
+                thresholds=thresholds,
+                is_provisional=False,
+            )
+            log_writer(log_file, f"[{datetime.now()}] [Info] FUND_FLOW rule completed (Python accelerated: {edge_count} edges).")
+        except Exception as e:
+            log_writer(log_file, f"[{datetime.now()}] [Error] FUND_FLOW rule failed: {e}")
 
         # ----------------------------
         # 4. DORMANT_TO_ACTIVE
@@ -1375,16 +1610,21 @@ def incremental_graph_analysis_transactions(
             log_writer(log_file, f"[{datetime.now()}] [Error] CIRCULAR_FLOW incremental failed: {e}")
 
         # Fund flow: new nodes can either precede or complete a downstream flow.
-        query = get_fund_flow_query(
-            label=label,
-            scope_clause_t=_session_scope_clause("t"),
-            scope_clause_a=_session_scope_clause("a"),
-            scope_clause_b=_session_scope_clause("b"),
-            trusted_pair_clause=_trusted_pair_clause('a', 'b'),
-            is_provisional=True,
-            boundary_clause="(a.batch_id = $batch_id OR b.batch_id = $batch_id)"
-        )
-        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts)
+        try:
+            edge_count = execute_fund_flow_rule(
+                session=session,
+                label=label,
+                scope_clause=_session_scope_clause("n"),
+                session_id=session_param,
+                pass_through_accounts=pass_through_accounts,
+                trusted_entries=trusted_entries,
+                thresholds=thresholds,
+                is_provisional=True,
+                boundary_batch_id=batch_id,
+            )
+            log_writer(log_file, f"[{datetime.now()}] [Info] FUND_FLOW incremental completed (Python accelerated: {edge_count} edges).")
+        except Exception as e:
+            log_writer(log_file, f"[{datetime.now()}] [Error] FUND_FLOW incremental failed: {e}")
 
         # Cheap row-local flags: use central generators with incremental batch_id.
         scope_inc = _session_scope_clause("t")

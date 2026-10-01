@@ -10,6 +10,7 @@ from batch_manager.analyzing.LA_rules_script import (
     get_fraud_aggregator_query,
     execute_effective_flow_rule,
     execute_circular_flow_rule,
+    execute_fund_flow_rule,
     get_logical_layer_query,
     get_account_activity_spike_query,
     get_high_risk_link_query,
@@ -641,22 +642,22 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             rules_failed.append(("CIRCULAR_FLOW", str(e)[:100]))
             print(f"  [Rule] CIRCULAR_FLOW ✗ {str(e)[:100]}", flush=True)
 
-        # ---- 3. FUND_FLOW (OPTIMIZED: index-assisted, no cartesian product) ----
+        # ---- 3. FUND_FLOW (Python accelerated: in-memory temporal matching) ----
         try:
             start_time = datetime.now()
-            start_time = datetime.now()
             with driver.session() as s:
-                query = get_fund_flow_query(
+                edge_count = execute_fund_flow_rule(
+                    session=s,
                     label=label,
-                    scope_clause_t="($session_id IS NULL OR $session_id = '' OR t.session_id = $session_id)",
-                    scope_clause_a="($session_id IS NULL OR $session_id = '' OR a.session_id = $session_id)",
-                    scope_clause_b="($session_id IS NULL OR $session_id = '' OR b.session_id = $session_id)",
-                    trusted_pair_clause=_trusted_pair_clause('a', 'b'),
-                    is_provisional=False
+                    scope_clause="$session_id IS NULL OR $session_id = '' OR n.session_id = $session_id",
+                    session_id=sp,
+                    pass_through_accounts=pass_through_accounts,
+                    trusted_entries=trusted_entries,
+                    thresholds=thresholds,
+                    is_provisional=False,
                 )
-                s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts)
             rules_completed.append("FUND_FLOW")
-            print(f"  [Rule] FUND_FLOW ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
+            print(f"  [Rule] FUND_FLOW ✓ (Python accelerated: {edge_count} edges, {(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
         except Exception as e:
             rules_failed.append(("FUND_FLOW", str(e)[:100]))
             print(f"  [Rule] FUND_FLOW ✗ {str(e)[:100]}", flush=True)
