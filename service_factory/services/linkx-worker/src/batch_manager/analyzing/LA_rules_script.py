@@ -159,7 +159,7 @@ def get_smurfing_query(label, scope_clause_t, trusted_pair_clause, is_provisiona
         {"t.LOGICAL_ACCOUNTNO AS acc," if not incremental_batch_id else "acc,"}
         {"t.LOGICAL_BENACCOUNTNO AS beneficiary," if not incremental_batch_id else "beneficiary,"}
         {"t.TRANSACTIONDATE AS tx_day," if not incremental_batch_id else "tx_day,"}
-        t, coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) AS amount
+        t, coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), 0.0) AS amount
     WHERE {"acc IS NOT NULL AND acc <> '' AND beneficiary IS NOT NULL AND beneficiary <> '' AND tx_day IS NOT NULL AND tx_day <> '' AND " if not incremental_batch_id else ""} amount IS NOT NULL AND amount > 0 AND amount < $smurfing_single_tx_threshold
     WITH acc, beneficiary, tx_day, t, amount
     ORDER BY t.TRANSACTIONDATE, t.TRANSACTIONTIME
@@ -296,7 +296,6 @@ def get_circular_flow_query(
             toFloat(a.AMOUNTINBIRR),
             toFloat(a.AMOUNT),
             toFloat(a.amount),
-            toFloat(a.LOCAL_AMOUNT),
             0.0
         ) AS amt_a,
 
@@ -304,7 +303,6 @@ def get_circular_flow_query(
             toFloat(b.AMOUNTINBIRR),
             toFloat(b.AMOUNT),
             toFloat(b.amount),
-            toFloat(b.LOCAL_AMOUNT),
             0.0
         ) AS amt_b
 
@@ -643,8 +641,8 @@ def get_rapid_withdrawal_query(label, scope_clause_t, is_provisional=False, incr
       WITH t1, t2, acc, tx_day
       WHERE coalesce(t1.TRANSACTIONTIME, '') <= coalesce(t2.TRANSACTIONTIME, '')
       WITH t1, t2, acc, tx_day,
-           coalesce(toFloat(t1.AMOUNTINBIRR), toFloat(t1.AMOUNT), toFloat(t1.LOCAL_AMOUNT), 0.0) AS in_amt,
-           coalesce(toFloat(t2.AMOUNTINBIRR), toFloat(t2.AMOUNT), toFloat(t2.LOCAL_AMOUNT), 0.0) AS out_amt
+           coalesce(toFloat(t1.AMOUNTINBIRR), toFloat(t1.AMOUNT), 0.0) AS in_amt,
+           coalesce(toFloat(t2.AMOUNTINBIRR), toFloat(t2.AMOUNT), 0.0) AS out_amt
       WHERE in_amt > 0 AND out_amt > 0
         AND abs(in_amt - out_amt) <= (in_amt * $rapid_withdrawal_amount_tolerance)
       MERGE (t1)-[r:RAPID_WITHDRAWAL {_SID}]->(t2)
@@ -749,9 +747,9 @@ def get_just_below_threshold_query(label, scope_clause_t, is_provisional=False, 
     WHERE ({scope_clause_t})
       AND coalesce(t.IGNORE_LOGICAL, false) = false
       {seed_filter}
-      AND coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) > 0
+      AND coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), 0.0) > 0
       AND {_trusted_node_clause('t')}
-    WITH t, coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), toFloat(t.LOCAL_AMOUNT), 0.0) AS amt
+    WITH t, coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), 0.0) AS amt
     WHERE amt >= ($single_tx_threshold * 0.9) AND amt < $single_tx_threshold
     MERGE (t)-[r:JUST_BELOW_THRESHOLD {_SID}]->(t)
     SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#dba124',
@@ -803,7 +801,7 @@ def execute_effective_flow_rule(session, label, scope_clause_t, session_id, pass
     inbound_res = session.run(
         f"MATCH (n:{label}) WHERE ({scope_clause_t}) AND n.BENACCOUNTNO IN $pt AND n.ACCOUNTNO IS NOT NULL AND n.ACCOUNTNO <> '' "
         f"RETURN elementId(n) AS id, n.ACCOUNTNO AS acc, n.BENACCOUNTNO AS ben, n.TRANSACTIONDATE AS date, n.TRANSACTIONTIME AS time, "
-        f"coalesce(toFloat(n.AMOUNTINBIRR), toFloat(n.AMOUNT), toFloat(n.amount), toFloat(n.LOCAL_AMOUNT), 0.0) AS amt",
+        f"coalesce(toFloat(n.AMOUNTINBIRR), toFloat(n.AMOUNT), toFloat(n.amount), 0.0) AS amt",
         session_id=session_id, pt=pass_through_accounts
     )
     inbounds = [dict(r) for r in inbound_res]
@@ -812,7 +810,7 @@ def execute_effective_flow_rule(session, label, scope_clause_t, session_id, pass
     outbound_res = session.run(
         f"MATCH (n:{label}) WHERE ({scope_clause_t}) AND n.ACCOUNTNO IN $pt AND n.BENACCOUNTNO IS NOT NULL AND n.BENACCOUNTNO <> '' "
         f"RETURN elementId(n) AS id, n.ACCOUNTNO AS acc, n.BENACCOUNTNO AS ben, n.TRANSACTIONDATE AS date, n.TRANSACTIONTIME AS time, "
-        f"coalesce(toFloat(n.AMOUNTINBIRR), toFloat(n.AMOUNT), toFloat(n.amount), toFloat(n.LOCAL_AMOUNT), 0.0) AS amt",
+        f"coalesce(toFloat(n.AMOUNTINBIRR), toFloat(n.AMOUNT), toFloat(n.amount), 0.0) AS amt",
         session_id=session_id, pt=pass_through_accounts
     )
     outbounds = [dict(r) for r in outbound_res]
@@ -931,7 +929,7 @@ def execute_circular_flow_rule(
         f"n.LOGICAL_ACCOUNTNO AS acc, n.LOGICAL_BENACCOUNTNO AS ben, "
         f"n.TRANSACTIONDATE AS date, "
         f"coalesce(n.TRANSACTIONTIME, '') AS time, "
-        f"coalesce(toFloat(n.AMOUNTINBIRR), toFloat(n.AMOUNT), toFloat(n.amount), toFloat(n.LOCAL_AMOUNT), 0.0) AS amt, "
+        f"coalesce(toFloat(n.AMOUNTINBIRR), toFloat(n.AMOUNT), toFloat(n.amount), 0.0) AS amt, "
         f"coalesce(n.PASSTHROUGH_HOPS, 0) AS pt_hops, "
         f"coalesce(n.LOGICAL_PATH, '') AS logical_path, "
         f"coalesce(n.LOGICAL_TRANSFORMATION_REASON, 'NONE') AS logical_transform, "
