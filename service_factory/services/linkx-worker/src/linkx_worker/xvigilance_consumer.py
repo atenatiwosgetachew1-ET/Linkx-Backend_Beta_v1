@@ -592,6 +592,10 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             rules_completed.append("EFFECTIVE_FLOW")
             print("  [Rule] EFFECTIVE_FLOW ✓ (skipped: no pass-through accounts configured)", flush=True)
 
+        if SHUTTING_DOWN:
+            print("[xVigilance-Consumer] Shutdown requested — stopping analysis early.", flush=True)
+            return
+
         # ---- 0.5. LOGICAL TRANSACTION LAYER ----
         try:
             start_time = datetime.now()
@@ -608,6 +612,10 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
         except Exception as e:
             rules_failed.append(("LOGICAL_LAYER", str(e)[:100]))
             print(f"  [Rule] LOGICAL_LAYER ✗ {str(e)[:100]}", flush=True)
+
+        if SHUTTING_DOWN:
+            print("[xVigilance-Consumer] Shutdown requested — stopping analysis early.", flush=True)
+            return
 
         # ---- 1. SMURFING ----
         try:
@@ -630,6 +638,10 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             rules_failed.append(("SMURFING", str(e)[:100]))
             print(f"  [Rule] SMURFING ✗ {str(e)[:100]}", flush=True)
 
+        if SHUTTING_DOWN:
+            print("[xVigilance-Consumer] Shutdown requested — stopping analysis early.", flush=True)
+            return
+
         # ---- 2. CIRCULAR_FLOW (Python accelerated: in-memory hash matching) ----
         try:
             start_time = datetime.now()
@@ -649,6 +661,10 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
         except Exception as e:
             rules_failed.append(("CIRCULAR_FLOW", str(e)[:100]))
             print(f"  [Rule] CIRCULAR_FLOW ✗ {str(e)[:100]}", flush=True)
+
+        if SHUTTING_DOWN:
+            print("[xVigilance-Consumer] Shutdown requested — stopping analysis early.", flush=True)
+            return
 
         # ---- 3. FUND_FLOW (Python accelerated: in-memory temporal matching) ----
         try:
@@ -670,6 +686,10 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             rules_failed.append(("FUND_FLOW", str(e)[:100]))
             print(f"  [Rule] FUND_FLOW ✗ {str(e)[:100]}", flush=True)
 
+        if SHUTTING_DOWN:
+            print("[xVigilance-Consumer] Shutdown requested — stopping analysis early.", flush=True)
+            return
+
         # ---- 4. DORMANT_TO_ACTIVE ----
         try:
             start_time = datetime.now()
@@ -687,6 +707,10 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             rules_failed.append(("DORMANT_TO_ACTIVE", str(e)[:100]))
             print(f"  [Rule] DORMANT_TO_ACTIVE ✗ {str(e)[:100]}", flush=True)
 
+        if SHUTTING_DOWN:
+            print("[xVigilance-Consumer] Shutdown requested — stopping analysis early.", flush=True)
+            return
+
         # ---- 5. ABNORMAL_BALANCE_CHANGE ----
         try:
             start_time = datetime.now()
@@ -703,6 +727,10 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
         except Exception as e:
             rules_failed.append(("ABNORMAL_BALANCE_CHANGE", str(e)[:100]))
             print(f"  [Rule] ABNORMAL_BALANCE_CHANGE ✗ {str(e)[:100]}", flush=True)
+
+        if SHUTTING_DOWN:
+            print("[xVigilance-Consumer] Shutdown requested — stopping analysis early.", flush=True)
+            return
 
         # ---- 6. HUB_AND_SPOKE (outgoing) ----
         try:
@@ -722,6 +750,10 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             rules_failed.append(("HUB_AND_SPOKE_OUT", str(e)[:100]))
             print(f"  [Rule] HUB_AND_SPOKE (outgoing) ✗ {str(e)[:100]}", flush=True)
 
+        if SHUTTING_DOWN:
+            print("[xVigilance-Consumer] Shutdown requested — stopping analysis early.", flush=True)
+            return
+
         # ---- 7. HUB_AND_SPOKE (incoming) ----
         try:
             start_time = datetime.now()
@@ -740,6 +772,10 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             rules_failed.append(("HUB_AND_SPOKE_IN", str(e)[:100]))
             print(f"  [Rule] HUB_AND_SPOKE (incoming) ✗ {str(e)[:100]}", flush=True)
 
+        if SHUTTING_DOWN:
+            print("[xVigilance-Consumer] Shutdown requested — stopping analysis early.", flush=True)
+            return
+
         # ---- 8. SHARED_IDENTIFIER ----
         try:
             start_time = datetime.now()
@@ -757,6 +793,9 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             rules_failed.append(("SHARED_IDENTIFIER", str(e)[:100]))
             print(f"  [Rule] SHARED_IDENTIFIER ✗ {str(e)[:100]}", flush=True)
 
+        if SHUTTING_DOWN:
+            print("[xVigilance-Consumer] Shutdown requested — stopping analysis early.", flush=True)
+            return
 
         # ---- 9a. LATE_NIGHT_TX ----
         try:
@@ -775,6 +814,10 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             rules_failed.append(("LATE_NIGHT_TX", str(e)[:100]))
             print(f"  [Rule] LATE_NIGHT_TX ✗ {str(e)[:100]}", flush=True)
 
+        if SHUTTING_DOWN:
+            print("[xVigilance-Consumer] Shutdown requested — stopping analysis early.", flush=True)
+            return
+
         # ---- 9b. JUST_BELOW_THRESHOLD ----
         try:
             start_time = datetime.now()
@@ -792,6 +835,10 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             rules_failed.append(("JUST_BELOW_THRESHOLD", str(e)[:100]))
             print(f"  [Rule] JUST_BELOW_THRESHOLD ✗ {str(e)[:100]}", flush=True)
 
+        if SHUTTING_DOWN:
+            print("[xVigilance-Consumer] Shutdown requested — stopping analysis early.", flush=True)
+            return
+
         # ---- 10. RAPID_WITHDRAWAL ----
         try:
             start_time = datetime.now()
@@ -808,6 +855,10 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
         except Exception as e:
             rules_failed.append(("RAPID_WITHDRAWAL", str(e)[:100]))
             print(f"  [Rule] RAPID_WITHDRAWAL ✗ {str(e)[:100]}", flush=True)
+
+        if SHUTTING_DOWN:
+            print("[xVigilance-Consumer] Shutdown requested — stopping analysis early.", flush=True)
+            return
 
         # ---- 12. ACCOUNT_ACTIVITY_SPIKE ----
         try:
@@ -827,6 +878,10 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             rules_failed.append(("ACCOUNT_ACTIVITY_SPIKE", str(e)[:100]))
             print(f"  [Rule] ACCOUNT_ACTIVITY_SPIKE ✗ {str(e)[:100]}", flush=True)
 
+        if SHUTTING_DOWN:
+            print("[xVigilance-Consumer] Shutdown requested — stopping analysis early.", flush=True)
+            return
+
         # ---- 13. HIGH_RISK_LINK (from risk_entities) ----
         try:
             start_time = datetime.now()
@@ -843,6 +898,9 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
             rules_failed.append(("HIGH_RISK_LINK", str(e)[:100]))
             print(f"  [Rule] HIGH_RISK_LINK / PEP / SANCTION ✗ {str(e)[:100]}", flush=True)
 
+        if SHUTTING_DOWN:
+            print("[xVigilance-Consumer] Shutdown requested — stopping analysis early.", flush=True)
+            return
 
         # ---- 14. FRAUD_AGGREGATOR ----
         try:
