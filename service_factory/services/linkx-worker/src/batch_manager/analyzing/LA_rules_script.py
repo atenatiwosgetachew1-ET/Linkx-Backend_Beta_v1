@@ -1521,7 +1521,7 @@ def batch_graph_analysis_transactions(
         session.run(query, session_id=session_param)
 
         counts = _count_transaction_relationships(session, session_param) if session_param else {}
-        _write_gds_metrics(session, f"{session_param}_transactions", nodes_label, session_param, TRANSACTION_RELATIONSHIPS, log_file)
+        _write_gds_metrics(session, f"{session_param}_transactions", nodes_label, session_param, TRANSACTION_RELATIONSHIPS, log_file, anomaly_only=True)
 
     log_writer(log_file, f"[{datetime.now()}] [Success] Transactions analysis completed")
     return counts
@@ -1680,17 +1680,36 @@ def _cypher_string(value):
     return str(value).replace("\\", "\\\\").replace("'", "\\'")
 
 
-def _write_gds_metrics(session, graph_name, label, session_id, relationship_types, log_file):
+def _write_gds_metrics(session, graph_name, label, session_id, relationship_types, log_file, anomaly_only=False):
     if not session_id or not relationship_types:
         return
 
     escaped_session = _cypher_string(session_id)
     relationship_literal = "[" + ", ".join(f"'{_cypher_string(rel)}'" for rel in relationship_types) + "]"
-    node_query = (
-        "MATCH (n) "
-        f"WHERE n.batch_id STARTS WITH '{escaped_session}' OR n.session_id = '{escaped_session}' "
-        "RETURN id(n) AS id"
-    )
+
+    if anomaly_only:
+        # Project ONLY nodes that participate in at least one evidence edge.
+        # This gives more meaningful centrality scores: PageRank reflects
+        # importance within the suspicious subgraph, not diluted by clean traffic.
+        node_query = (
+            "MATCH (n)-[r]->() "
+            f"WHERE r.session_id = '{escaped_session}' AND type(r) IN {relationship_literal} "
+            "AND r.is_evidence = true "
+            "RETURN DISTINCT id(n) AS id "
+            "UNION "
+            "MATCH ()-[r]->(n) "
+            f"WHERE r.session_id = '{escaped_session}' AND type(r) IN {relationship_literal} "
+            "AND r.is_evidence = true "
+            "RETURN DISTINCT id(n) AS id"
+        )
+    else:
+        # Full projection: all session nodes (used by Source-Target and other flows)
+        node_query = (
+            "MATCH (n) "
+            f"WHERE n.batch_id STARTS WITH '{escaped_session}' OR n.session_id = '{escaped_session}' "
+            "RETURN id(n) AS id"
+        )
+
     rel_query = (
         "MATCH (a)-[r]->(b) "
         f"WHERE r.session_id = '{escaped_session}' AND type(r) IN {relationship_literal} "
@@ -1698,7 +1717,8 @@ def _write_gds_metrics(session, graph_name, label, session_id, relationship_type
     )
 
     try:
-        log_writer(log_file, f"[{datetime.now()}] [Info] Starting GDS metrics for {graph_name}")
+        if log_file:
+            log_writer(log_file, f"[{datetime.now()}] [Info] Starting GDS metrics for {graph_name}")
         session.run("CALL gds.graph.drop($graph_name, false) YIELD graphName RETURN graphName", graph_name=graph_name)
         session.run(
             """
@@ -1722,9 +1742,11 @@ def _write_gds_metrics(session, graph_name, label, session_id, relationship_type
           AND (n.inDegree IS NOT NULL OR n.outDegree IS NOT NULL)
         SET n.degree = coalesce(n.inDegree, 0) + coalesce(n.outDegree, 0)
         """, session_id=session_id)
-        log_writer(log_file, f"[{datetime.now()}] [Success] GDS metrics completed for {graph_name}")
+        if log_file:
+            log_writer(log_file, f"[{datetime.now()}] [Success] GDS metrics completed for {graph_name}")
     except Exception as exc:
-        log_writer(log_file, f"[{datetime.now()}] [Warning] GDS metrics skipped for {graph_name}: {exc}")
+        if log_file:
+            log_writer(log_file, f"[{datetime.now()}] [Warning] GDS metrics skipped for {graph_name}: {exc}")
 
 
 # ====================================================

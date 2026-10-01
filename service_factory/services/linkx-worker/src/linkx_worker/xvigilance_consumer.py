@@ -26,7 +26,9 @@ from batch_manager.analyzing.LA_rules_script import (
     get_shared_identifier_query,
     get_rapid_withdrawal_query,
     get_account_activity_spike_query,
-    get_high_risk_link_query
+    get_high_risk_link_query,
+    _write_gds_metrics,
+    TRANSACTION_RELATIONSHIPS,
 )
 
 
@@ -1088,6 +1090,25 @@ def consume_firehose():
                         import traceback
                         traceback.print_exc()
                     # ============================================================
+
+                    # GDS CENTRALITY: Compute PageRank/betweenness on anomaly subgraph
+                    try:
+                        gds_start = datetime.now()
+                        gds_driver = create_neo4j_driver(credentials)
+                        with gds_driver.session() as gds_session:
+                            _write_gds_metrics(
+                                gds_session,
+                                f"{sp}_xvigilance",
+                                label,
+                                sp,
+                                TRANSACTION_RELATIONSHIPS,
+                                log_file=None,
+                                anomaly_only=True,
+                            )
+                        gds_driver.close()
+                        print(f"  [GDS] Anomaly subgraph centrality ✓ ({(datetime.now() - gds_start).total_seconds():.2f}s)", flush=True)
+                    except Exception as gds_err:
+                        print(f"  [GDS] Centrality skipped: {str(gds_err)[:100]}", flush=True)
 
                     # PROMOTE: Read anomaly relationships and save to PostgreSQL
                     promote_anomalies_to_postgres(credentials, session_id, data.get('window_id'), execution_meta={'total_records': data.get('total_records'), 'batch_id': data.get('batch_id'), 'elastic_endpoint': data.get('elastic_endpoint'), 'worker_node': data.get('worker_node')})
