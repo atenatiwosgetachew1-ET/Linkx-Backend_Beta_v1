@@ -708,9 +708,19 @@ def get_high_risk_link_query(label, scope_clause_t, is_provisional=False, increm
     WHERE size(matched_categories) > 0
     CALL (t, matched_categories) {_OPEN}
       UNWIND matched_categories AS cat
+      FOREACH (ignore IN CASE WHEN cat = 'PEP' THEN [1] ELSE [] END |
+          MERGE (t)-[r:PEP_INVOLVED {_SID}]->(t)
+          SET r.is_evidence = true, r.anomaly_score = 0.9, r.bgcolor = '#0099ff', r.textcolor = '#eeeeee', r.provisional = {prov_str}, r.reason = 'PEP matched', r.risk_source = 'risk_entities', r.category = cat,
+              r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
+      )
+      FOREACH (ignore IN CASE WHEN cat IN ['SANCTION', 'SANCTIONS', 'SANCTIONED'] THEN [1] ELSE [] END |
+          MERGE (t)-[r:SANCTIONED_ENTITY_MATCH {_SID}]->(t)
+          SET r.is_evidence = true, r.anomaly_score = 1.0, r.bgcolor = '#ff3b3b', r.textcolor = '#eeeeee', r.provisional = {prov_str}, r.reason = 'Sanctioned entity matched', r.risk_source = 'risk_entities', r.category = cat,
+              r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
+      )
       FOREACH (ignore IN CASE WHEN NOT cat IN ['PEP', 'SANCTION', 'SANCTIONS', 'SANCTIONED'] THEN [1] ELSE [] END |
           MERGE (t)-[r:HIGH_RISK_LINK {_SID}]->(t)
-          SET r.is_evidence = true, r.anomaly_score = 0.7, r.bgcolor = '#de7d07', r.provisional = {prov_str}, r.reason = 'Configured risk entity matched', r.risk_source = 'risk_entities', r.category = cat,
+          SET r.is_evidence = true, r.anomaly_score = 0.7, r.bgcolor = '#de7d07', r.textcolor = '#eeeeee', r.provisional = {prov_str}, r.reason = 'Configured risk entity matched', r.risk_source = 'risk_entities', r.category = cat,
               r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
       )
     {_CLOSE} IN TRANSACTIONS OF 1000 ROWS
