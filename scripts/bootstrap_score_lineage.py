@@ -15,19 +15,33 @@ default_config = {
     "base_scores": {
         "HIGH_RISK_LINK": 50,
         "CIRCULAR_FLOW": 30,
+        "EFFECTIVE_FLOW": 25,
         "SMURFING": 20,
         "SHARED_IDENTIFIER": 20,
         "HUB_AND_SPOKE": 10,
         "RAPID_FAN_OUT": 10,
-        "ABNORMAL_BALANCE_CHANGE": 10
+        "ABNORMAL_BALANCE_CHANGE": 10,
+        "LATE_NIGHT_TX": 15,
+        "JUST_BELOW_THRESHOLD": 20,
+        "RAPID_WITHDRAWAL": 25,
+        "ACCOUNT_ACTIVITY_SPIKE": 15,
+        "FUND_FLOW": 10,
+        "DORMANT_TO_ACTIVE": 25,
+        "PEP_INVOLVED": 50,
+        "SANCTIONED_ENTITY_MATCH": 100,
+        "FRAUD_AGGREGATOR": 50
     },
     "node_thresholds": [
         { "min_nodes": 10000, "add_points": 30 },
-        { "min_nodes": 5000, "add_points": 20 }
+        { "min_nodes": 5000, "add_points": 20 },
+        { "min_nodes": 1000, "add_points": 10 },
+        { "min_nodes": 100, "add_points": 5 }
     ],
     "money_thresholds": [
         { "min_amount": 10000000, "add_points": 40 },
-        { "min_amount": 5000000, "add_points": 30 }
+        { "min_amount": 5000000, "add_points": 30 },
+        { "min_amount": 1000000, "add_points": 20 },
+        { "min_amount": 500000, "add_points": 10 }
     ]
 }
 

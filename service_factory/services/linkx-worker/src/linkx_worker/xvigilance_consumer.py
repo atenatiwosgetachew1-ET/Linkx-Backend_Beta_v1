@@ -2,7 +2,7 @@ import os
 import json
 import time
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 import signal
 import sys
 
@@ -41,11 +41,17 @@ import json
 from kafka import KafkaConsumer
 
 RUNNING = True
+SHUTTING_DOWN = False
 
 def handle_shutdown(signum, frame):
-    global RUNNING
-    print("\n[xVigilance-Consumer] Shutting down gracefully...", flush=True)
-    RUNNING = False
+    global RUNNING, SHUTTING_DOWN
+    sig_name = signal.Signals(signum).name if hasattr(signal, 'Signals') else str(signum)
+    if not SHUTTING_DOWN:
+        SHUTTING_DOWN = True
+        RUNNING = False
+        print(f"\n[xVigilance-Consumer] Received {sig_name}. Finishing current work then exiting...", flush=True)
+    else:
+        print(f"[xVigilance-Consumer] Received {sig_name} again. Already shutting down — please wait.", flush=True)
 
 
 
@@ -433,7 +439,7 @@ def fast_ingest_batch(credentials, session_id, df, batch_number, node_label):
         clean["session_id"] = str(session_id or "")
         clean["created_by"] = "linkx"
         clean["linkx_managed"] = True
-        clean["created_at"] = datetime.utcnow().isoformat()
+        clean["created_at"] = datetime.now(timezone.utc).isoformat()
         clean["batch_id"] = str(batch_id)
         clean["nodes_label"] = node_label
         clean_rows.append(clean)
@@ -1079,41 +1085,44 @@ def consume_firehose():
                     # ============================================================
                     # FULL BATCH ANALYSIS: Run ALL rules on the complete hour graph
                     # ============================================================
-                    print("[xVigilance-Consumer] Ingestion complete. Running FULL batch LA rules (Smurfing, Circular Flow, Hub&Spoke, etc.)...", flush=True)
-                    t0 = time.time()
-                    try:
-                        run_full_graph_analysis(credentials, session_id, node_label)
-                        analysis_time = time.time() - t0
-                        print(f"[xVigilance-Consumer] Full batch analysis completed in {analysis_time:.1f}s.", flush=True)
-                    except Exception as analysis_err:
-                        print(f"[xVigilance-Consumer] Error during batch analysis: {analysis_err}", flush=True)
-                        import traceback
-                        traceback.print_exc()
-                    # ============================================================
+                    if SHUTTING_DOWN:
+                        print("[xVigilance-Consumer] Shutdown requested — skipping analysis, proceeding to cleanup.", flush=True)
+                    else:
+                        print("[xVigilance-Consumer] Ingestion complete. Running FULL batch LA rules (Smurfing, Circular Flow, Hub&Spoke, etc.)...", flush=True)
+                        t0 = time.time()
+                        try:
+                            run_full_graph_analysis(credentials, session_id, node_label)
+                            analysis_time = time.time() - t0
+                            print(f"[xVigilance-Consumer] Full batch analysis completed in {analysis_time:.1f}s.", flush=True)
+                        except Exception as analysis_err:
+                            print(f"[xVigilance-Consumer] Error during batch analysis: {analysis_err}", flush=True)
+                            import traceback
+                            traceback.print_exc()
+                        # ============================================================
 
-                    # GDS CENTRALITY: Compute PageRank/betweenness on anomaly subgraph
-                    try:
-                        gds_start = datetime.now()
-                        gds_driver = create_neo4j_driver(credentials)
-                        safe_gds_label = f"`{str(node_label).replace('`', '')}`"
-                        gds_graph_name = f"xvigilance_{str(session_id).replace('-', '_')}"
-                        with gds_driver.session() as gds_session:
-                            _write_gds_metrics(
-                                gds_session,
-                                gds_graph_name,
-                                safe_gds_label,
-                                session_id,
-                                TRANSACTION_RELATIONSHIPS,
-                                log_file=None,
-                                anomaly_only=True,
-                            )
-                        gds_driver.close()
-                        print(f"  [GDS] Anomaly subgraph centrality ✓ ({(datetime.now() - gds_start).total_seconds():.2f}s)", flush=True)
-                    except Exception as gds_err:
-                        print(f"  [GDS] Centrality skipped: {str(gds_err)[:100]}", flush=True)
+                        # GDS CENTRALITY: Compute PageRank/betweenness on anomaly subgraph
+                        try:
+                            gds_start = datetime.now()
+                            gds_driver = create_neo4j_driver(credentials)
+                            safe_gds_label = f"`{str(node_label).replace('`', '')}`"
+                            gds_graph_name = f"xvigilance_{str(session_id).replace('-', '_')}"
+                            with gds_driver.session() as gds_session:
+                                _write_gds_metrics(
+                                    gds_session,
+                                    gds_graph_name,
+                                    safe_gds_label,
+                                    session_id,
+                                    TRANSACTION_RELATIONSHIPS,
+                                    log_file=None,
+                                    anomaly_only=True,
+                                )
+                            gds_driver.close()
+                            print(f"  [GDS] Anomaly subgraph centrality ✓ ({(datetime.now() - gds_start).total_seconds():.2f}s)", flush=True)
+                        except Exception as gds_err:
+                            print(f"  [GDS] Centrality skipped: {str(gds_err)[:100]}", flush=True)
 
-                    # PROMOTE: Read anomaly relationships and save to PostgreSQL
-                    promote_anomalies_to_postgres(credentials, session_id, data.get('window_id'), execution_meta={'total_records': data.get('total_records'), 'batch_id': data.get('batch_id'), 'elastic_endpoint': data.get('elastic_endpoint'), 'worker_node': data.get('worker_node')})
+                        # PROMOTE: Read anomaly relationships and save to PostgreSQL
+                        promote_anomalies_to_postgres(credentials, session_id, data.get('window_id'), execution_meta={'total_records': data.get('total_records'), 'batch_id': data.get('batch_id'), 'elastic_endpoint': data.get('elastic_endpoint'), 'worker_node': data.get('worker_node')})
                     
                     # EPHEMERAL GRAPH WIPE: Purge nodes for this window to protect RAM
                     print(f"[xVigilance-Consumer] Executing Ephemeral Graph Wipe for window {data.get('window_id')}...", flush=True)
