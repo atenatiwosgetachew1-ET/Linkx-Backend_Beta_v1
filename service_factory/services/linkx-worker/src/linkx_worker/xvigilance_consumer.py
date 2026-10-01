@@ -1095,12 +1095,14 @@ def consume_firehose():
                     try:
                         gds_start = datetime.now()
                         gds_driver = create_neo4j_driver(credentials)
+                        safe_gds_label = f"`{str(node_label).replace('`', '')}`"
+                        gds_graph_name = f"xvigilance_{str(session_id).replace('-', '_')}"
                         with gds_driver.session() as gds_session:
                             _write_gds_metrics(
                                 gds_session,
-                                f"{sp}_xvigilance",
-                                label,
-                                sp,
+                                gds_graph_name,
+                                safe_gds_label,
+                                session_id,
                                 TRANSACTION_RELATIONSHIPS,
                                 log_file=None,
                                 anomaly_only=True,
