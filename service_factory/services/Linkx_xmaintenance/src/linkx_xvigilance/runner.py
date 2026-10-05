@@ -1,4 +1,5 @@
 import argparse
+import fcntl
 import os
 import signal
 import socket
@@ -13,10 +14,84 @@ from linkx_xvigilance.checkpoints import (
     clean_zombie_runs,
 )
 from linkx_xvigilance.config import get_xvigilance_config
+from linkx_xvigilance.db import connect
 from linkx_xvigilance.fetcher import stream_window_records
 from linkx_xvigilance.schema import ensure_xvigilance_schema
 
 RUNNING = True
+
+# Cluster advisory lock key for xVigilance Runner: 0x58564947494c = 97130282477900
+XVIGILANCE_LEADER_LOCK_KEY = 97130282477900
+_host_lock_fd = None
+_leader_db_conn = None
+
+
+def acquire_host_lock(lock_path: str = "/tmp/linkx_xvigilance_runner.lock") -> bool:
+    """Acquires a non-blocking exclusive lock on the host operating system kernel."""
+    global _host_lock_fd
+    try:
+        _host_lock_fd = open(lock_path, "a+")
+        fcntl.flock(_host_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _host_lock_fd.seek(0)
+        _host_lock_fd.truncate()
+        _host_lock_fd.write(
+            f"pid={os.getpid()}\nhost={socket.gethostname()}\nstarted={datetime.now(timezone.utc).isoformat()}\n"
+        )
+        _host_lock_fd.flush()
+        return True
+    except (BlockingIOError, IOError):
+        existing_info = ""
+        try:
+            with open(lock_path, "r") as f:
+                existing_info = f.read().replace("\n", " | ")
+        except Exception:
+            pass
+        print(f"[xvigilance] 🛑 MUTEX LOCK REJECTED: Another runner instance is already active on host '{socket.gethostname()}'! ({existing_info})", flush=True)
+        return False
+
+
+def acquire_cluster_lock() -> bool:
+    """Acquires a cluster-wide PostgreSQL session advisory lock to ensure only 1 runner runs across all nodes."""
+    global _leader_db_conn
+    try:
+        _leader_db_conn = connect(application_name="xvigilance-leader-lock")
+        with _leader_db_conn.cursor() as cur:
+            cur.execute("SELECT pg_try_advisory_lock(%s);", (XVIGILANCE_LEADER_LOCK_KEY,))
+            acquired = cur.fetchone()[0]
+            if acquired:
+                print(f"[xvigilance] 👑 CLUSTER LEADER ELECTED: Acquired PostgreSQL advisory lock (key={XVIGILANCE_LEADER_LOCK_KEY}) on {socket.gethostname()}:{os.getpid()}", flush=True)
+                return True
+            else:
+                print(f"[xvigilance] 🛑 CLUSTER LEADER REJECTED: Another runner in the cluster holds PostgreSQL advisory lock (key={XVIGILANCE_LEADER_LOCK_KEY}).", flush=True)
+                _leader_db_conn.close()
+                _leader_db_conn = None
+                return False
+    except Exception as e:
+        print(f"[xvigilance] ⚠️ Error during cluster lock acquisition: {e}", flush=True)
+        return False
+
+
+def release_locks():
+    """Releases both host and cluster locks cleanly."""
+    global _host_lock_fd, _leader_db_conn
+    if _leader_db_conn:
+        try:
+            with _leader_db_conn.cursor() as cur:
+                cur.execute("SELECT pg_advisory_unlock(%s);", (XVIGILANCE_LEADER_LOCK_KEY,))
+            _leader_db_conn.close()
+            print("[xvigilance] Cluster PostgreSQL advisory lock released cleanly.", flush=True)
+        except Exception as e:
+            print(f"[xvigilance] Error releasing cluster advisory lock: {e}", flush=True)
+        _leader_db_conn = None
+
+    if _host_lock_fd:
+        try:
+            fcntl.flock(_host_lock_fd, fcntl.LOCK_UN)
+            _host_lock_fd.close()
+            print("[xvigilance] Host mutex lock released cleanly.", flush=True)
+        except Exception:
+            pass
+        _host_lock_fd = None
 
 
 def handle_shutdown(signum, frame):
@@ -27,6 +102,21 @@ def handle_shutdown(signum, frame):
 
 def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = False):
     global RUNNING
+
+    # 1. Tier 1: Host Mutex Lock (Kernel level)
+    if not acquire_host_lock():
+        print("[xvigilance] Exiting immediately to prevent concurrent host processes.", flush=True)
+        sys.exit(0)
+
+    # 2. Tier 2: Cluster Distributed Advisory Lock (PostgreSQL ACID level)
+    if not acquire_cluster_lock():
+        print("[xvigilance] Exiting immediately because another node is active cluster leader.", flush=True)
+        release_locks()
+        sys.exit(0)
+
+    import atexit
+    atexit.register(release_locks)
+
     signal.signal(signal.SIGTERM, handle_shutdown)
     signal.signal(signal.SIGINT, handle_shutdown)
 
@@ -279,7 +369,8 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
             print(f"[xvigilance] Daemon error: {loop_exc}", flush=True)
             time.sleep(10.0)
 
-    print(f"[xvigilance] Service {worker_name} stopped cleanly.", flush=True)
+    release_locks()
+    print(f"[xvigilance] Service {worker_name} stopped cleanly and released all locks.", flush=True)
 
 
 def main():
