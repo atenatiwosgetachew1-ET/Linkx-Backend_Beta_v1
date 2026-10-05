@@ -100,6 +100,13 @@ def handle_shutdown(signum, frame):
     RUNNING = False
 
 
+def interruptible_sleep(seconds: float):
+    """Sleeps in short 0.5s increments, breaking immediately if RUNNING becomes False on SIGTERM."""
+    deadline = time.time() + seconds
+    while RUNNING and time.time() < deadline:
+        time.sleep(min(0.5, max(0.01, deadline - time.time())))
+
+
 def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = False):
     global RUNNING
 
@@ -189,7 +196,7 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
             
             if checkpoint.get("is_paused"):
                 print("[xvigilance] ⏸️ Daemon is paused by Admin. Sleeping...", flush=True)
-                time.sleep(30)
+                interruptible_sleep(30)
                 continue
 
             window_start = checkpoint["last_window_end"]
@@ -359,7 +366,7 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
                     error_message=str(fetch_exc),
                 )
                 print(f"[xvigilance] Phase failed for window [{start_str} -> {end_str}]: {fetch_exc}", flush=True)
-                time.sleep(15.0)
+                interruptible_sleep(15.0)
 
             if once:
                 print("[xvigilance] Run-once mode finished.", flush=True)
@@ -367,7 +374,7 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
 
         except Exception as loop_exc:
             print(f"[xvigilance] Daemon error: {loop_exc}", flush=True)
-            time.sleep(10.0)
+            interruptible_sleep(10.0)
 
     release_locks()
     print(f"[xvigilance] Service {worker_name} stopped cleanly and released all locks.", flush=True)
