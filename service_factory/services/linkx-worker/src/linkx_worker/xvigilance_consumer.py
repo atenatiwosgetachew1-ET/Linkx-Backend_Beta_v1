@@ -501,19 +501,42 @@ def fetch_rule_thresholds():
 
 _last_pause_check_time = 0.0
 _last_pause_state = False
+_pause_conn = None
+
+def _get_pause_conn():
+    global _pause_conn
+    dsn = os.getenv("LINKX_POSTGRES_DSN")
+    if not dsn:
+        return None
+    if _pause_conn is not None:
+        try:
+            if not _pause_conn.closed:
+                return _pause_conn
+        except Exception:
+            pass
+    try:
+        _pause_conn = psycopg.connect(
+            dsn, 
+            connect_timeout=10, 
+            autocommit=True, 
+            application_name="xvigilance-pause-monitor"
+        )
+        return _pause_conn
+    except Exception:
+        _pause_conn = None
+        raise
+
 
 def is_engine_paused(feed_name: str = "hourly_transaction_detective", ttl_seconds: float = 5.0) -> bool:
     """Checks PostgreSQL xvigilance_checkpoints to see if the Admin paused the engine."""
-    global _last_pause_check_time, _last_pause_state
+    global _last_pause_check_time, _last_pause_state, _pause_conn
     now = time.time()
     if (now - _last_pause_check_time) < ttl_seconds:
         return _last_pause_state
 
-    dsn = os.getenv("LINKX_POSTGRES_DSN")
-    if not dsn:
-        return False
     try:
-        with psycopg.connect(dsn, connect_timeout=3) as conn:
+        conn = _get_pause_conn()
+        if conn is not None:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT is_paused FROM xvigilance_checkpoints WHERE feed_name = %s LIMIT 1",
@@ -525,6 +548,12 @@ def is_engine_paused(feed_name: str = "hourly_transaction_detective", ttl_second
                     _last_pause_check_time = now
                     return _last_pause_state
     except Exception as e:
+        try:
+            if _pause_conn:
+                _pause_conn.close()
+        except Exception:
+            pass
+        _pause_conn = None
         print(f"[xVigilance-Consumer] Warning: Could not check pause state: {e}", flush=True)
     _last_pause_check_time = now
     return _last_pause_state
