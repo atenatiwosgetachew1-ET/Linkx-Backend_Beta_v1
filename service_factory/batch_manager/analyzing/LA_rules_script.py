@@ -80,10 +80,18 @@ def _trusted_entry_match(alias):
         f"OR (toUpper(entry.key) IN ['ACCOUNTNO', 'ACCOUNT_NO', 'ACCOUNT', 'BENACCOUNTNO'] AND ("
         f"toString(coalesce({alias}.ACCOUNTNO, {alias}.accountno, {alias}.LOGICAL_ACCOUNTNO, '')) = toString(entry.value) "
         f"OR toString(coalesce({alias}.BENACCOUNTNO, {alias}.benaccountno, {alias}.LOGICAL_BENACCOUNTNO, '')) = toString(entry.value)"
+        f")) "
+        f"OR (toUpper(entry.key) IN ['BUSINESSMOBILENO', 'PHONE', 'PHONENO', 'BENTELNO', 'MOBILENO', 'TELNO'] AND ("
+        f"toString(coalesce({alias}.BUSINESSMOBILENO, {alias}.businessmobileno, '')) = toString(entry.value) "
+        f"OR toString(coalesce({alias}.BENTELNO, {alias}.bentelno, '')) = toString(entry.value)"
+        f")) "
+        f"OR (toUpper(entry.key) IN ['CUSTOMERNAME', 'NAME', 'SENDER_FULL_NAME', 'RECEIVER_FULL_NAME'] AND ("
+        f"toLower(toString(coalesce({alias}.SENDER_FULL_NAME, {alias}.sender_full_name, ''))) = toLower(toString(entry.value)) "
+        f"OR toLower(toString(coalesce({alias}.RECEIVER_FULL_NAME, {alias}.receiver_full_name, ''))) = toLower(toString(entry.value))"
         f"))"
         f")) "
         f"OR "
-        f"(entry.key IS NULL AND all(k IN keys(entry) WHERE toLower(k) IN ['category', 'type', 'reason', 'pass_through', 'passthrough', 'classification', 'notes', 'name'] OR toString(coalesce({alias}[k], {alias}[toLower(k)], '')) = toString(entry[k])))"
+        f"(entry.key IS NULL AND all(k IN keys(entry) WHERE toLower(k) IN ['category', 'type', 'reason', 'pass_through', 'passthrough', 'classification', 'notes', 'name', 'account', 'phone'] OR toString(coalesce({alias}[k], {alias}[toLower(k)], '')) = toString(entry[k])))"
         f")"
     )
 
@@ -158,10 +166,18 @@ def _is_trusted_entity_dict(node_dict, trusted_entries):
                 for k in ("ACCOUNTNO", "BENACCOUNTNO", "LOGICAL_ACCOUNTNO", "LOGICAL_BENACCOUNTNO", "accountno", "benaccountno"):
                     if str(node_dict.get(k, "")).strip() == val_str:
                         return True
+            if str(key).upper() in ("BUSINESSMOBILENO", "PHONE", "PHONENO", "BENTELNO", "MOBILENO", "TELNO"):
+                for k in ("BUSINESSMOBILENO", "BENTELNO", "businessmobileno", "bentelno"):
+                    if str(node_dict.get(k, "")).strip() == val_str:
+                        return True
+            if str(key).upper() in ("CUSTOMERNAME", "NAME", "SENDER_FULL_NAME", "RECEIVER_FULL_NAME"):
+                for k in ("SENDER_FULL_NAME", "RECEIVER_FULL_NAME", "sender_full_name", "receiver_full_name"):
+                    if str(node_dict.get(k, "")).strip().lower() == val_str.lower():
+                        return True
         else:
             match = True
             for k, v in entry.items():
-                if str(k).lower() in ("category", "type", "reason", "pass_through", "passthrough", "classification", "notes", "name", "key", "value"):
+                if str(k).lower() in ("category", "type", "reason", "pass_through", "passthrough", "classification", "notes", "name", "key", "value", "account", "phone"):
                     continue
                 if str(node_dict.get(k, "")).strip() != str(v).strip():
                     match = False
@@ -522,7 +538,8 @@ def get_fund_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, t
 
 def get_dormant_to_active_query(label, scope_clause_t, is_provisional=False, incremental_batch_id=None):
     prov_str = "true" if is_provisional else "false"
-    seed_block = f"MATCH (t:{label}) WHERE t.batch_id = {incremental_batch_id} AND coalesce(t.IGNORE_LOGICAL, false) = false AND toLower(coalesce(t.ACCOUNTSTATE, '')) = 'dormant' AND toLower(coalesce(t.BENACCOUNTSTATE, '')) = 'active' " if incremental_batch_id else f"MATCH (t:{label}) WHERE ({scope_clause_t}) AND coalesce(t.IGNORE_LOGICAL, false) = false AND toLower(coalesce(t.ACCOUNTSTATE, '')) = 'dormant' AND toLower(coalesce(t.BENACCOUNTSTATE, '')) = 'active' "
+    trusted_clause = _trusted_node_clause('t')
+    seed_block = f"MATCH (t:{label}) WHERE t.batch_id = {incremental_batch_id} AND coalesce(t.IGNORE_LOGICAL, false) = false AND {trusted_clause} AND toLower(coalesce(t.ACCOUNTSTATE, '')) = 'dormant' AND toLower(coalesce(t.BENACCOUNTSTATE, '')) = 'active' " if incremental_batch_id else f"MATCH (t:{label}) WHERE ({scope_clause_t}) AND coalesce(t.IGNORE_LOGICAL, false) = false AND {trusted_clause} AND toLower(coalesce(t.ACCOUNTSTATE, '')) = 'dormant' AND toLower(coalesce(t.BENACCOUNTSTATE, '')) = 'active' "
     return f"""
     {seed_block}
     MERGE (t)-[r:DORMANT_TO_ACTIVE {_SID}]->(t)
@@ -533,10 +550,11 @@ def get_dormant_to_active_query(label, scope_clause_t, is_provisional=False, inc
 
 def get_abnormal_balance_query(label, scope_clause_t, is_provisional=False, incremental_batch_id=None):
     prov_str = "true" if is_provisional else "false"
+    trusted_clause = _trusted_node_clause('t')
     seed_block = ""
     match_filters = ""
     if incremental_batch_id:
-        seed_block = f"MATCH (seed:{label}) WHERE seed.batch_id = {incremental_batch_id} WITH DISTINCT seed.LOGICAL_ACCOUNTNO AS acc, coalesce(seed.TRANSACTIONDATE, toString(date())) AS seed_day WHERE acc IS NOT NULL AND acc <> ''"
+        seed_block = f"MATCH (seed:{label}) WHERE seed.batch_id = {incremental_batch_id} WITH DISTINCT seed.LOGICAL_ACCOUNTNO AS acc, coalesce(seed.TRANSACTIONDATE, toString(date())) AS seed_day WHERE acc IS NOT NULL AND acc <> '' AND NOT toString(acc) IN $pt AND NOT acc IN $pt"
         match_filters = "AND t.LOGICAL_ACCOUNTNO = acc AND coalesce(t.TRANSACTIONDATE, '') >= toString(date(seed_day) - duration({days: $historical_baseline_days}))"
         
     return f"""
@@ -544,7 +562,8 @@ def get_abnormal_balance_query(label, scope_clause_t, is_provisional=False, incr
     MATCH (t:{label})
     WHERE ({scope_clause_t})
       AND coalesce(t.IGNORE_LOGICAL, false) = false
-      {match_filters if incremental_batch_id else "AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> ''"}
+      AND {trusted_clause}
+      {match_filters if incremental_batch_id else "AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> '' AND NOT toString(t.LOGICAL_ACCOUNTNO) IN $pt AND NOT t.LOGICAL_ACCOUNTNO IN $pt"}
     WITH {"acc, t" if incremental_batch_id else "t.LOGICAL_ACCOUNTNO AS acc, t"}
     ORDER BY t.TRANSACTIONDATE, t.TRANSACTIONTIME
     WITH acc, collect(t) AS txns
@@ -626,8 +645,9 @@ def get_hub_and_spoke_in_query(label, scope_clause_t, trusted_pair_clause, is_pr
     {_CLOSE} IN TRANSACTIONS OF 1000 ROWS
     """
 
-def get_shared_identifier_query(label, scope_clause_t, is_provisional=False, incremental_batch_id=None):
+def get_shared_identifier_query(label, scope_clause_t, is_provisional=False, incremental_batch_id=None, trusted_pair_clause=None):
     prov_str = "true" if is_provisional else "false"
+    pair_clause = trusted_pair_clause if trusted_pair_clause is not None else _trusted_pair_clause('a', 'b')
     seed_block = ""
     match_filters = ""
     if incremental_batch_id:
@@ -657,6 +677,7 @@ def get_shared_identifier_query(label, scope_clause_t, is_provisional=False, inc
     CALL (txns, identifier_type, identifier_value, accounts) {_OPEN}
       UNWIND range(0, size(txns)-2) AS i
       WITH txns[i] AS a, txns[i+1] AS b, identifier_type, identifier_value, accounts
+      WHERE {pair_clause}
       MERGE (a)-[r:SHARED_IDENTIFIER {_SID}]->(b)
       SET r.is_evidence = true, r.anomaly_score = 0.8, r.bgcolor = '#0d898a', r.textcolor = '#eeeeee', r.provisional = {prov_str},
           r.reason = 'same identifier appears on multiple accounts',
@@ -760,10 +781,34 @@ def get_high_risk_link_query(label, scope_clause_t, is_provisional=False, increm
     UNWIND $risk_entries AS risk_entity
     WITH t, risk_entity
     WHERE
-       (risk_entity.account IS NOT NULL AND risk_entity.account <> '' AND (t.LOGICAL_ACCOUNTNO = risk_entity.account OR t.LOGICAL_BENACCOUNTNO = risk_entity.account)) OR
-       (risk_entity.phone IS NOT NULL AND risk_entity.phone <> '' AND (t.BUSINESSMOBILENO = risk_entity.phone OR t.BENTELNO = risk_entity.phone)) OR
-       (risk_entity.name IS NOT NULL AND risk_entity.name <> '' AND (toLower(t.SENDER_FULL_NAME) = toLower(risk_entity.name) OR toLower(t.RECEIVER_FULL_NAME) = toLower(risk_entity.name)))
-    WITH t, collect(DISTINCT toUpper(risk_entity.category)) AS matched_categories
+       (risk_entity.key IS NOT NULL AND risk_entity.value IS NOT NULL AND (
+           toString(coalesce(t[risk_entity.key], t[toLower(risk_entity.key)], t[toUpper(risk_entity.key)], '')) = toString(risk_entity.value)
+           OR (toUpper(risk_entity.key) IN ['ACCOUNTNO', 'ACCOUNT_NO', 'ACCOUNT', 'BENACCOUNTNO'] AND (
+               toString(coalesce(t.ACCOUNTNO, t.accountno, t.LOGICAL_ACCOUNTNO, '')) = toString(risk_entity.value)
+               OR toString(coalesce(t.BENACCOUNTNO, t.benaccountno, t.LOGICAL_BENACCOUNTNO, '')) = toString(risk_entity.value)
+           ))
+           OR (toUpper(risk_entity.key) IN ['BUSINESSMOBILENO', 'PHONE', 'PHONENO', 'BENTELNO', 'MOBILENO', 'TELNO'] AND (
+               toString(coalesce(t.BUSINESSMOBILENO, t.businessmobileno, '')) = toString(risk_entity.value)
+               OR toString(coalesce(t.BENTELNO, t.bentelno, '')) = toString(risk_entity.value)
+           ))
+           OR (toUpper(risk_entity.key) IN ['CUSTOMERNAME', 'NAME', 'SENDER_FULL_NAME', 'RECEIVER_FULL_NAME'] AND (
+               toLower(toString(coalesce(t.SENDER_FULL_NAME, t.sender_full_name, ''))) = toLower(toString(risk_entity.value))
+               OR toLower(toString(coalesce(t.RECEIVER_FULL_NAME, t.receiver_full_name, ''))) = toLower(toString(risk_entity.value))
+           ))
+       )) OR
+       (risk_entity.account IS NOT NULL AND risk_entity.account <> '' AND (
+           toString(coalesce(t.LOGICAL_ACCOUNTNO, t.ACCOUNTNO, '')) = toString(risk_entity.account)
+           OR toString(coalesce(t.LOGICAL_BENACCOUNTNO, t.BENACCOUNTNO, '')) = toString(risk_entity.account)
+       )) OR
+       (risk_entity.phone IS NOT NULL AND risk_entity.phone <> '' AND (
+           toString(coalesce(t.BUSINESSMOBILENO, '')) = toString(risk_entity.phone)
+           OR toString(coalesce(t.BENTELNO, '')) = toString(risk_entity.phone)
+       )) OR
+       (risk_entity.name IS NOT NULL AND risk_entity.name <> '' AND (
+           toLower(toString(coalesce(t.SENDER_FULL_NAME, ''))) = toLower(toString(risk_entity.name))
+           OR toLower(toString(coalesce(t.RECEIVER_FULL_NAME, ''))) = toLower(toString(risk_entity.name))
+       ))
+    WITH t, collect(DISTINCT toUpper(coalesce(risk_entity.category, risk_entity.classification, 'HIGH_RISK'))) AS matched_categories
     WHERE size(matched_categories) > 0
     CALL (t, matched_categories) {_OPEN}
       UNWIND matched_categories AS cat
