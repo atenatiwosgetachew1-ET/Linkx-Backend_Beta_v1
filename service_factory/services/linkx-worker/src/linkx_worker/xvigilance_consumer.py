@@ -539,8 +539,12 @@ def wait_while_paused(consumer, context: str = "processing"):
         consumer.pause(*assignment)
     print(f"[xVigilance-Consumer] ⏸️ Engine paused by Admin in UI ({context}). Resting...", flush=True)
     while RUNNING and is_engine_paused():
-        consumer.poll(timeout_ms=2000)
-        time.sleep(3)
+        consumer.poll(timeout_ms=1000)
+        time.sleep(2)
+        if not assignment:
+            assignment = consumer.assignment()
+            if assignment:
+                consumer.pause(*assignment)
     if assignment:
         consumer.resume(*assignment)
     print(f"[xVigilance-Consumer] ▶️ Engine resumed by Admin. Resuming {context}...", flush=True)
@@ -1095,6 +1099,7 @@ def consume_firehose():
             auto_offset_reset="earliest",
             enable_auto_commit=True,
             max_poll_interval_ms=300000,
+            consumer_timeout_ms=1000,
             value_deserializer=lambda v: json.loads(v.decode("utf-8")) if v else None
         )
     except Exception as e:
