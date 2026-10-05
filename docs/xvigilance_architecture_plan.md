@@ -1,53 +1,118 @@
-# National-Scale Architecture Plan: xVigilance Detective Pipeline
+# National-Scale Production Architecture: xVigilance Autonomous Detective Pipeline
 
-This architecture relies on **Event-Driven Streaming**. `xvigilance` acts as the autonomous data broker, feeding the heavy lifting entirely to the governed Worker server. 
+## 1. System Mission & Scope
 
-### Phase 1: Ingestion & Routing (The Kafka Firehose)
-`xvigilance` operates entirely autonomously, reading the strict 1-hour sliding windows from Elasticsearch. 
-
-1. **Micro-Batching:** It fetches up to 150,000 transactions per hour and loops through them rapidly.
-2. **Kafka Streaming:** It pushes the transactions to the Worker’s standard input topic (e.g., `dev.scoring.score.calculated.v1`). 
-3. **The Governance Badge:** Crucially, it stamps every payload with the badge `session_id = 'XVIGILANCE_FINDINGS'`.
-
-*Why this is optimal:* It bypasses the REST API completely, prevents PostgreSQL from choking on raw data, and utilizes Kafka’s infinite streaming scalability.
+The **xVigilance** autonomous detective engine is engineered for national-scale financial monitoring (specifically designed for the National Bank of Ethiopia). It processes continuous streams of banking transactions, constructs real-time temporal relationship graphs, detects complex anti-money laundering (AML) typologies (circular transfers, mule accounts, smurfing rings), and autonomously alerts compliance analysts.
 
 ---
 
-### Phase 2: Governed Execution & Ingestion (The Worker Server)
-The Worker server acts as the blind, highly-governed processing engine. It handles all database insertions exactly as it does for frontend REST API requests.
+## 2. Multi-Server Distributed Topology
 
-1. **Layer 1 Mapping (Ingestion):** The Worker consumes the Kafka topic and handles the heavy ingestion of inserting the raw transactions into the Neo4j "Detection Window" graph.
-2. **Layer 2 & 3 Algorithms:** The Worker executes the official `LA_Script_rules` (e.g., Smurfing, Circular Flow) on the newly ingested graph nodes. 
+The production architecture physically separates extraction, messaging, consumption, and computation across four dedicated nodes:
 
-*Why this is optimal:* We don't write rogue ingestion or analysis scripts. The governed Worker handles all graph mapping securely.
+```mermaid
+flowchart LR
+    subgraph Node22["Node 22 (Extraction & Graph Engine)"]
+        Runner["linkx-xvigilance.service<br/>(runner.py)"]
+        ES[("Elasticsearch<br/>(Core Banking)")]
+        Neo4j[("Neo4j Bolt Graph<br/>:7687")]
+    end
+
+    subgraph Node20["Node 20 (Control Plane & Bus)"]
+        Kafka[("Apache Kafka<br/>dev.xvigilance.transactions.raw.v2")]
+        Postgres[("PostgreSQL Control DB<br/>xvigilance_checkpoints<br/>linkx_reports")]
+    end
+
+    subgraph Node21["Node 21 (Worker & Detection Engine)"]
+        Consumer["linkx-xvigilance-consumer.service<br/>(xvigilance_consumer.py)"]
+        Normalizer["Field Normalizer & Validator"]
+        Detection["Batch Graph AML Rules Engine"]
+    end
+
+    subgraph Node19["Node 19 (API Gateway)"]
+        API["linkx-api.service<br/>(/reports/xvigilance/*)"]
+    end
+
+    ES -->|1-Hour Slices| Runner
+    Runner -->|Kafka Producer| Kafka
+    Runner -->|Advisory Lock| Postgres
+    Kafka -->|Streaming Consumer| Consumer
+    Consumer --> Normalizer
+    Normalizer -->|Fast Ingest Micro-Batches| Neo4j
+    Consumer -->|At Watermark| Detection
+    Detection -->|Anomalies & Reports| Postgres
+    API -->|Read Health / Set State| Postgres
+```
+
+| Server | IP | Primary Responsibilities |
+| :--- | :--- | :--- |
+| **Node 19** | `172.27.23.95` | **Flask API Gateway (`linkx-api.service`)**: Exposes health monitoring, pause/resume state management, and clock rewind endpoints to the Admin UI. |
+| **Node 20** | `172.27.23.106` | **Control Plane & Message Bus**: Hosts PostgreSQL (audit ledger, checkpoints, evidence tables) and Apache Kafka (port `9092`). |
+| **Node 21** | `172.27.23.18` | **Worker Consumer (`linkx-xvigilance-consumer.service`)**: Streams records from Kafka, normalizes banking fields, fast-ingests micro-batches into Neo4j, and executes AML graph algorithms upon receiving watermarks. |
+| **Node 22** | `172.27.23.85` | **Extraction & Graph Host**: Runs `linkx-xvigilance.service` (extracts sliding hour windows from Elasticsearch) and hosts the Neo4j Graph Database (Bolt port `7687`). |
 
 ---
 
-### Phase 3: Automatic Promotion (The Evidence Table)
-Because `xvigilance` pushed the data with the `XVIGILANCE_FINDINGS` badge, the Worker's native promotion logic automatically handles the rest.
+## 3. High-Concurrency Mutual Exclusion (Dual-Layer Mutex)
 
-1. **Evidence Logging:** When the Worker detects an anomaly (e.g., a Smurfing ring), it automatically logs the result into the PostgreSQL `link_analysis_evidence` table.
-2. **The Frontend Link:** Because the logged evidence carries the `session_id: 'XVIGILANCE_FINDINGS'`, the Admin Dashboard can instantly query this table to display the autonomous alerts to human analysts.
+To prevent duplicate processes from racing against the same historical window (which could flood Kafka with duplicate transactions), `runner.py` enforces a **Dual-Layer Enterprise Mutex**:
 
-*Why this is optimal:* `xvigilance` doesn't have to poll or write back to PostgreSQL itself. The Worker natively promotes the evidence for us.
+1. **Host-Level OS Kernel Lock:** Acquired via non-blocking `fcntl.flock(LOCK_EX | LOCK_NB)` on `/tmp/linkx_xvigilance_runner.lock`. If another process is running on Node-22, the second process exits in `<2ms`.
+2. **Cluster-Wide PostgreSQL Advisory Lock:** Acquired via `SELECT pg_try_advisory_lock(97130282477900)` on the shared database on Node-20. This prevents multiple nodes or containers from ever executing concurrent extractions on the same feed.
 
 ---
 
-### Phase 4: Ephemeral Graph Hygiene (The Safe Clean-up)
-To prevent graph bloat while maintaining a safe auditing buffer, we strictly delegate graph sweeping to the dedicated cleanup daemon.
+## 4. End-to-End Processing Lifecycle
 
-1. **The Safety Buffer:** Innocent transactions are NOT deleted immediately. They remain in Neo4j for a safe retention period (determined by the cleanup service's default cleaning schedule) to allow for manual investigations, delayed historical context matching, and rule replays.
-2. **Dedicated Sweeping:** The `linkx-xcleanup` daemon runs on its scheduled cadence. It executes Cypher queries to safely delete unflagged background transactions that have gracefully aged past the retention period, ensuring the graph remains performant without risking accidental data loss.
+### Phase 1: High-Speed Window Extraction (Node-22)
+1. Reads `xvigilance_checkpoints.last_window_end` from PostgreSQL.
+2. If the current time is ahead of `last_window_end`, it processes the 1-hour window `[window_start -> window_end]`.
+3. Streams records from Elasticsearch in 50,000-row pages.
+4. Pushes transactions to Kafka topic `dev.xvigilance.transactions.raw.v2` stamped with headers:
+   * `source = "xvigilance-daemon"`
+   * `session_id = "XVIGILANCE_FINDINGS"`
+   * `window_id = window_start.isoformat()`
+5. Upon reaching the end of the hour window, it emits a `WINDOW_COMPLETE` **Watermark** containing metadata (`total_records`, `batch_id`, `window_id`) and flushes the Kafka producer.
+6. Advances `xvigilance_checkpoints.last_window_end` and logs the completed run to `xvigilance_slice_runs`.
 
-*Why this is optimal:* Separation of concerns. The Worker focuses entirely on catching fraud, while the Cleanup daemon ensures database health with a massive safety net for human auditors.
+### Phase 2: Fast-Ingestion Micro-Batching (Node-21)
+1. The consumer listens to `dev.xvigilance.transactions.raw.v2` as group `xvigilance-graph-consumer-v2`.
+2. **Micro-Batch Buffering:** Buffers incoming Kafka messages into 10,000-row micro-batches.
+3. **Data Normalization:** Validates required AML attributes (`ACCOUNTNO`, `BENACCOUNTNO`, `AMOUNT`, `TRANSACTIONDATE`, `TRANSACTIONTIME`).
+4. **Optimized Neo4j Ingestion:** Uses parameterized Cypher with `UNWIND` to insert relationships and account nodes in high-speed batches (~6.5 seconds per 10k batch, ~1,500 tx/sec).
+5. All ephemeral nodes are tagged with `:bank_transactions_xvigilance-daemon` to ensure 100% isolation from manual user investigations.
 
-## The Ephemeral Graph Strategy (Single-Server Optimization)
-Because the pipeline must process **1.4 Billion transactions** sequentially on a single Neo4j server, leaving all data in the graph would cause catastrophic Out-Of-Memory (OOM) crashes.
+### Phase 3: Batch Graph Analytics at Watermark (Node-21)
+1. Ingestion continues at top speed until the consumer encounters the `WINDOW_COMPLETE` Watermark event.
+2. Ingestion pauses, and the worker executes the batch AML graph algorithms against the assembled 1-hour graph in Neo4j:
+   * **Circular Transaction Loops:** Multi-hop cycles where funds return to origin accounts.
+   * **Fan-In / Fan-Out (Smurfing):** High-frequency rapid dispersal or consolidation.
+   * **Mule Account Rings:** Accounts with sudden spikes in counterparty degree.
+3. Detected anomalies are:
+   * Exported to PostgreSQL `linkx_reports` with dynamic fraud scores and score bands.
+   * Saved into `link_analysis_evidence`.
+   * Dispatched asynchronously to the external Risk Scoring service API (`/api/risk_scoring/analysis_request`).
 
-To achieve maximum throughput and safety:
-1. The daemon loads exactly 1 chronological time window into Neo4j.
-2. It executes all algorithmic anomaly rules (`LA_Script_rules`) in memory.
-3. It securely exports all anomalous evidence and JSON reports to PostgreSQL.
-4. **It immediately wipes Neo4j clean (`MATCH (n) DETACH DELETE n`)**.
+### Phase 4: Ephemeral Graph Purge & Clean Slate
+1. Once batch analysis completes, the consumer executes:
+   ```cypher
+   MATCH (n:bank_transactions_xvigilance-daemon)
+   DETACH DELETE n
+   ```
+2. This clears Neo4j memory completely, preventing graph bloat or OOM crashes while processing billions of historical records.
+3. Permanent investigative evidence is safely retained in PostgreSQL.
 
-**Note for Analysts:** If you check the Neo4j database directly, it will always appear mostly empty. This is intentional. Neo4j acts purely as a high-speed computational engine. All permanent, long-term graph evidence is safely stored in PostgreSQL (`linkx_reports` and `link_analysis_evidence`).
+---
+
+## 5. Administrative Controls: Pause & Clock Rewind
+
+### Operational Pause (Graceful Quiescence)
+- **Consumer (Node-21):** Pauses between 10k-record micro-batches (<6 seconds response). Unconsumed messages wait safely in Kafka.
+- **Runner (Node-22):** Completes the currently in-flight 1-hour window to preserve ledger atomicity, emits the Watermark, and halts before opening the next window. Resuming picks up cleanly with **zero duplicate messages** and **zero dropped transactions**.
+
+### Clock Rewind (Scenario B: 1-Click Fresh Reset)
+- Endpoint: `POST /api/v1/reports/xvigilance/rewind`.
+- Updates `last_window_end` to the target historical timestamp.
+- Purges any in-flight ephemeral nodes in Neo4j.
+- Resets Kafka consumer offsets to `latest` to clear obsolete buffer data.
+- Both Runner and Consumer detect the timestamp rollback automatically in memory without service restarts.

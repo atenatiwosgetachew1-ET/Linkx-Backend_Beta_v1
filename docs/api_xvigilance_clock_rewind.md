@@ -1,38 +1,89 @@
-# Architecture Plan: UI-Driven xVigilance Clock Rewind
+# Production Architecture: UI-Driven xVigilance Clock Rewind (Scenario B: Fresh Reset)
 
-This document outlines the architecture for allowing admin users to rewind the xVigilance processing clock directly from the frontend UI, completely eliminating the need for manual SSH restarts.
+## 1. Overview
 
-## Phase 1: Backend API Endpoint (Node-19)
-Create a new REST endpoint: `POST /api/xvigilance/rewind`
-- **Auth:** Bearer token + `users:manage` permission.
-- **Payload:** `{ "target_date": "2026-08-24T00:00:00Z" }`
-- **Logic:**
-  1. `UPDATE xvigilance_checkpoints SET last_window_end = target_date`
-  2. `DELETE FROM xvigilance_slice_runs WHERE window_end > target_date` (To clear the "future" audit log so the frontend sees the new runs at the top).
-  3. `DELETE FROM anomalies WHERE detected_at > target_date` (Optional: to prevent duplicate anomalies).
+The **xVigilance Clock Rewind** feature allows administrators to roll back the analysis window directly from the web interface. This is vital when AML risk thresholds are updated and historical transactions need to be re-evaluated under newly configured rules.
 
-## Phase 2: Producer Polling (Node-22)
-Modify `Linkx_xmaintenance/src/linkx_xvigilance/runner.py`.
-- **Current Behavior:** It fetches `last_window_end` once on boot and stores it in a Python variable.
-- **New Behavior:** At the start of every while-loop iteration, fetch `last_window_end` from Postgres. 
-- If `db_timestamp < memory_timestamp`, log `"Clock rewind detected!"` and overwrite the `memory_timestamp` with the `db_timestamp`.
-
-## Phase 3: Consumer Idempotency (Node-21)
-- The consumer is already idempotent (Neo4j `MERGE` statements handle duplicate anomalies safely). No changes needed here.
+To ensure total integrity, the backend implements **Scenario B (1-Click Fresh Reset)**: rewinding the clock is not just a database timestamp edit—it performs a complete, atomic clean-slate reset across PostgreSQL, Kafka, and Neo4j.
 
 ---
 
-## 📋 Copy/Paste Prompt for the Frontend Agent
+## 2. API Specification
 
-Copy the text below and paste it into a new session with your frontend AI agent:
+- **Endpoint:** `POST /api/v1/reports/xvigilance/rewind`
+- **Authentication:** Bearer JWT with `users:manage` permission.
+- **Request Payload:**
+```json
+{
+  "target_date": "2026-08-24T09:00:00Z"
+}
+```
 
-> **Task: Build the xVigilance "Re-Analyze" (Rewind) UI**
->
-> We are adding a feature that allows admins to rewind the xVigilance graph engine clock to re-process historical transactions under newly updated thresholds.
-> 
-> **Requirements:**
-> 1. On the existing xVigilance Audit Log / Dashboard page, add a "Re-Analyze History" button (preferably near the top right, styled as a secondary or warning button).
-> 2. Clicking the button opens a Modal with a Date/Time picker.
-> 3. Add a warning text: *"Rewinding the clock will clear the audit log after the selected date and force the engine to re-process all transactions. This may cause high CPU usage."*
-> 4. When submitted, make a `POST /api/xvigilance/rewind` request with the payload: `{ "target_date": "YYYY-MM-DDTHH:mm:ssZ" }`.
-> 5. On success, show a toast notification and refresh the Audit Log table.
+- **Successful Response (200 OK):**
+```json
+{
+  "message": "Clock successfully rewound with full fresh reset.",
+  "target_date": "2026-08-24T09:00:00Z",
+  "neo4j_nodes_purged": 40000,
+  "kafka_offset_reset": true
+}
+```
+
+- **Error Response (400 / 500):**
+```json
+{
+  "error": "Missing target_date"
+}
+```
+
+---
+
+## 3. Atomic Multi-Store Reset Pipeline
+
+When `/xvigilance/rewind` is called, the backend executes four synchronized operations:
+
+### Step 1: PostgreSQL Checkpoint Rollback & Audit Pruning
+* Sets `xvigilance_checkpoints.last_window_end` to `target_date`.
+* Deletes all future runs from `xvigilance_slice_runs WHERE window_end > target_date`.
+* This ensures the Admin UI Audit Table instantly reflects the rewound starting point with no orphaned "future" runs.
+
+### Step 2: Neo4j Ephemeral Graph Purge
+* Purges any partially ingested or dirty in-flight nodes labeled `bank_transactions_xvigilance-daemon`:
+  ```cypher
+  MATCH (n:bank_transactions_xvigilance-daemon)
+  WITH n LIMIT 50000
+  DETACH DELETE n
+  RETURN count(n) AS deleted_count
+  ```
+* Leaves all permanent investigation evidence and other system labels intact.
+
+### Step 3: Kafka Consumer Offset Reset
+* Connects to Kafka as the consumer group `xvigilance-graph-consumer-v2` for topic `dev.xvigilance.transactions.raw.v2`.
+* Seeks all partition offsets to `latest` (end of stream).
+* This flushes out any stale messages from future dates that were still buffered in Kafka, ensuring Node-21 begins immediately on the fresh historical stream.
+
+---
+
+## 4. Autonomous Worker Coordination
+
+### Node-22 (Runner Daemon)
+- Actively polls the PostgreSQL checkpoint on every loop iteration and during sleep cycles.
+- If a rewind is detected while sleeping on time difference, it breaks sleep immediately:
+  ```text
+  [xvigilance] ⚠️ Clock rewind detected in database! Resetting internal clock to 2026-08-24 09:00:00+00:00
+  [xvigilance] Phase starting for window [2026-08-24 09:00:00 UTC -> 2026-08-24 10:00:00 UTC]
+  ```
+- It begins pulling records from Elasticsearch starting from the new target date.
+
+### Node-21 (Consumer Daemon)
+- Continuously tracks the active window timestamp.
+- If incoming Kafka messages arrive with timestamps significantly earlier than the currently held graph window (indicating an external rewind), the consumer automatically purges its local graph and resets its tracking state without requiring a daemon restart.
+
+---
+
+## 5. Frontend UI Integration Notes
+
+1. **Button Placement:** Add a **"Re-Analyze History"** or **"Rewind Clock"** button on the xVigilance Monitoring Dashboard.
+2. **Confirmation Modal:** Prompt the user with a date-time picker and clear warning:
+   > *"Rewinding will reset the processing clock to the selected hour and wipe uncommitted in-flight graph state. All transactions from the selected date forward will be re-analyzed."*
+3. **Post-Action:** On a `200 OK` response, trigger a toast notification (`"Engine rewound to [Date]. Reset [N] graph nodes."`) and refresh the Health table (`GET /api/v1/reports/xvigilance/health`).
