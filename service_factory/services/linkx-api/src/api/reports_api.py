@@ -1,3 +1,4 @@
+import os
 from flask import Blueprint, request, jsonify
 from auth.decorators import permission_required, current_actor_from_request
 from auth.repository import record_security_event
@@ -105,10 +106,61 @@ def bind_workspace(report_id):
         _audit("reports.bind_workspace", target_id=str(report_id), success=False, metadata={"error": str(e)})
         return jsonify({"error": str(e)}), 500
 
+def _purge_xvigilance_neo4j():
+    """Wipes all ephemeral nodes and alerts created by xVigilance daemon."""
+    from batch_manager.utils.neo4j_utils import create_neo4j_driver
+    try:
+        credentials = {
+            "url": os.getenv("LINKX_NEO4J_URL", "bolt://172.27.23.85:7687"),
+            "username": os.getenv("LINKX_NEO4J_USERNAME", "neo4j"),
+            "password": os.getenv("LINKX_NEO4J_PASSWORD") or os.getenv("LINKX_CLEANUP_NEO4J_PASSWORD", "neo4j"),
+            "database": os.getenv("LINKX_NEO4J_DATABASE", "neo4j")
+        }
+        driver = create_neo4j_driver(credentials)
+        total_purged = 0
+        with driver.session() as session:
+            while True:
+                res = session.run("MATCH (n:`bank_transactions_xvigilance-daemon`) WITH n LIMIT 10000 DETACH DELETE n RETURN count(n) AS deleted")
+                deleted = res.single()["deleted"]
+                total_purged += deleted
+                if deleted == 0:
+                    break
+            session.run("MATCH (a:AccountAlert) WHERE a.session_id = 'xvigilance-daemon' DETACH DELETE a")
+        driver.close()
+        return total_purged
+    except Exception as e:
+        print(f"[reports_api] Warning: Failed to purge xVigilance Neo4j nodes during rewind: {e}", flush=True)
+        return -1
+
+
+def _reset_xvigilance_kafka_offset():
+    """Resets Kafka consumer group offset to the latest message (purging in-flight abandoned windows)."""
+    try:
+        from kafka import KafkaConsumer, TopicPartition
+        brokers = os.getenv("LINKX_KAFKA_BOOTSTRAP_SERVERS", "172.27.23.106:9092")
+        topic = "dev.xvigilance.transactions.raw.v2"
+        group_id = "linkx-xvigilance-super-final-500"
+        server_list = [b.strip() for b in brokers.split(",") if b.strip()]
+        
+        c = KafkaConsumer(bootstrap_servers=server_list, group_id=group_id, enable_auto_commit=False, request_timeout_ms=5000)
+        partitions = [TopicPartition(topic, p) for p in c.partitions_for_topic(topic) or []]
+        if partitions:
+            c.assign(partitions)
+            end_offsets = c.end_offsets(partitions)
+            for tp in partitions:
+                c.seek(tp, end_offsets[tp])
+            c.commit()
+        c.close()
+        return True
+    except Exception as e:
+        print(f"[reports_api] Warning: Failed to reset Kafka offset during rewind: {e}", flush=True)
+        return False
+
+
 @reports_api.route('/xvigilance/rewind', methods=['POST'])
 @permission_required("users:manage")
 def xvigilance_rewind():
-    """Rewinds the xVigilance engine clock by updating checkpoints and clearing future runs."""
+    """Rewinds the xVigilance engine clock by updating checkpoints, purging ephemeral Neo4j nodes, and resetting Kafka offsets."""
     payload = request.get_json() or {}
     target_date = payload.get("target_date")
     if not target_date:
@@ -116,6 +168,7 @@ def xvigilance_rewind():
 
     from batch_manager.utils.postgres_utils import get_postgres_connection
     try:
+        # 1. Update Database checkpoints & clear future slice runs
         with get_postgres_connection() as conn:
             with conn.cursor() as cur:
                 # Rewind checkpoint
@@ -130,9 +183,25 @@ def xvigilance_rewind():
                     (target_date,)
                 )
             conn.commit()
-            
-        _audit("xvigilance.rewind", success=True, metadata={"target_date": target_date})
-        return jsonify({"message": "Clock successfully rewound.", "target_date": target_date}), 200
+
+        # 2. Scenario B: Wipe any dirty/partial ephemeral graph nodes from Neo4j
+        purged_nodes = _purge_xvigilance_neo4j()
+
+        # 3. Scenario B: Reset Kafka consumer group offset so consumer starts fresh
+        kafka_reset = _reset_xvigilance_kafka_offset()
+        
+        metadata = {
+            "target_date": target_date,
+            "neo4j_nodes_purged": purged_nodes,
+            "kafka_offset_reset": kafka_reset
+        }
+        _audit("xvigilance.rewind", success=True, metadata=metadata)
+        return jsonify({
+            "message": "Clock successfully rewound with full fresh reset.",
+            "target_date": target_date,
+            "neo4j_nodes_purged": purged_nodes,
+            "kafka_offset_reset": kafka_reset
+        }), 200
     except Exception as e:
         _audit("xvigilance.rewind", success=False, metadata={"error": str(e)})
         return jsonify({"error": str(e)}), 500

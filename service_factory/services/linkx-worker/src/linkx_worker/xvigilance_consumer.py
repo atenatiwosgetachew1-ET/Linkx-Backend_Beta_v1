@@ -1115,6 +1115,7 @@ def consume_firehose():
     buffer = []
     batch_size = 10000
     batch_number = 1
+    current_buffer_window_id = None
 
     credentials = _neo4j_credentials(session_id)
     node_label = rule_to_node_label("bank transactions", session_id)
@@ -1172,12 +1173,33 @@ def consume_firehose():
                 if not data:
                     continue
                     
-                # Check if it's the watermark
+                # Check if it's the watermark and extract window_id
                 is_watermark = False
+                msg_window_id = None
                 if msg.headers:
                     for k, v in msg.headers:
                         if k == "type" and v == b"watermark":
                             is_watermark = True
+                        elif k == "window_id" and v:
+                            try:
+                                msg_window_id = v.decode("utf-8")
+                            except Exception:
+                                msg_window_id = str(v)
+
+                # Stream Rewind Auto-Detection:
+                # If an incoming message belongs to an earlier window than what is currently in buffer,
+                # a clock rewind occurred. Discard stale in-memory buffer so old data doesn't mix with rewound data.
+                if buffer and current_buffer_window_id and msg_window_id and msg_window_id < current_buffer_window_id:
+                    print(
+                        f"[xVigilance-Consumer] ⚠️ Stream rewind detected ({current_buffer_window_id} -> {msg_window_id}). "
+                        f"Discarding {len(buffer)} stale in-memory records from abandoned window.",
+                        flush=True
+                    )
+                    buffer.clear()
+                    batch_number = 1
+
+                if msg_window_id:
+                    current_buffer_window_id = msg_window_id
 
                 if is_watermark:
                     wait_while_paused(c, f"watermark window {data.get('window_id')}")
@@ -1272,6 +1294,7 @@ def consume_firehose():
                         
                     print(f"[xVigilance-Consumer] Window {data.get('window_id')} finalized successfully.", flush=True)
                     batch_number = 1  # Reset batch counter for next window
+                    current_buffer_window_id = None
                     continue
 
                 # It's a standard transaction — buffer it
