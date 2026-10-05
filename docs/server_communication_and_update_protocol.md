@@ -21,6 +21,29 @@ The LinkX backend split consists of 4 physical/virtual servers connected over a 
 
 ---
 
+## 1.1 Architectural Law: Execution Decoupling (API vs Worker)
+
+> [!IMPORTANT]
+> **ALL BACKGROUND, INGESTION, SEARCH, DATAFRAME, AND GRAPH ANALYSIS WORK IS EXECUTED EXCLUSIVELY ON SERVER 3 (`node-21` - `linkx-worker`).**
+>
+> 1. **Server 1 (`node-19` - `linkx-api`) is STRICTLY an Ingress Gateway**:
+>    - It accepts incoming HTTP/REST requests and WebSocket connections from the frontend or external systems.
+>    - It validates authentication, RBAC permissions, and JSON payloads.
+>    - It enqueues asynchronous tasks (`search`, `create_DF`, `start_session`, `graph_fetch`, `risk_scoring`) into the PostgreSQL `jobs` table on Server 2 (`node-20`).
+>    - **It DOES NOT execute the actual data ingestion, batch processing, or Neo4j Cypher rule execution.**
+>
+> 2. **File Existence on Server 1 Does NOT Imply Execution**:
+>    - Due to the repository's modular layout, backend code folders such as `batch_manager/analyzing/LA_rules_script.py` and `analyzer.py` may exist under both `linkx-api` and `linkx-worker`.
+>    - **The presence of analytical files inside `linkx-api` DOES NOT mean the analysis runs on Server 1.**
+>    - In production, `_async_worker_jobs_enabled()` is active; every manual and automated analysis session is claimed by `locked_by: 'linkx-worker-1'` on Server 3 (`node-21`).
+>
+> 3. **Deployment Golden Rule for Analysis & Rules**:
+>    - **Any modification to Link Analysis, Cypher rules, entity filtering, pass-through accounts, or DataFrame transformations MUST be pulled and restarted on Server 3 (`node-21` - `linkx-worker.service`).**
+>    - Updating Server 1 alone will NEVER affect active graph rule execution.
+
+
+---
+
 ## 2. Server Communication Matrix & Open Ports
 
 ```mermaid

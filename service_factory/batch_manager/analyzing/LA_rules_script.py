@@ -129,8 +129,14 @@ def _extract_pass_through_accounts(trusted_entities_raw):
 
             if val and str(val).strip():
                 if key in ("ACCOUNTNO", "ACCOUNT_NO", "ACCOUNT", "BENACCOUNTNO", "") or any(k in entity for k in ("ACCOUNTNO", "accountno")):
-                    accounts.add(str(val).strip())
-    return sorted(list(accounts))
+                    val_str = str(val).strip()
+                    accounts.add(val_str)
+                    if val_str.isdigit():
+                        try:
+                            accounts.add(int(val_str))
+                        except Exception:
+                            pass
+    return sorted(list(accounts), key=lambda x: str(x))
 
 
 def _is_trusted_entity_dict(node_dict, trusted_entries):
@@ -476,7 +482,7 @@ def get_fund_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, t
       AND coalesce(t.IGNORE_LOGICAL, false) = false
       AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> ''
     WITH t.LOGICAL_ACCOUNTNO AS acc, count(t) AS out_count
-    WHERE out_count < 1000 AND NOT acc IN $pt
+    WHERE out_count < 1000 AND NOT toString(acc) IN $pt AND NOT acc IN $pt
 
     MATCH (a:{label})
     WHERE ({scope_clause_a}) AND a.LOGICAL_BENACCOUNTNO = acc
@@ -565,7 +571,7 @@ def get_hub_and_spoke_out_query(label, scope_clause_t, trusted_pair_clause, is_p
     seed_block = ""
     match_filters = ""
     if incremental_batch_id:
-        seed_block = f"MATCH (seed:{label}) WHERE seed.batch_id = {incremental_batch_id} WITH DISTINCT seed.LOGICAL_ACCOUNTNO AS hub, seed.TRANSACTIONDATE AS tx_day WHERE hub IS NOT NULL AND hub <> '' AND tx_day IS NOT NULL AND tx_day <> '' AND NOT hub IN $pt"
+        seed_block = f"MATCH (seed:{label}) WHERE seed.batch_id = {incremental_batch_id} WITH DISTINCT seed.LOGICAL_ACCOUNTNO AS hub, seed.TRANSACTIONDATE AS tx_day WHERE hub IS NOT NULL AND hub <> '' AND tx_day IS NOT NULL AND tx_day <> '' AND NOT toString(hub) IN $pt AND NOT hub IN $pt"
         match_filters = "AND t.LOGICAL_ACCOUNTNO = hub AND t.TRANSACTIONDATE = tx_day"
         
     return f"""
@@ -576,11 +582,11 @@ def get_hub_and_spoke_out_query(label, scope_clause_t, trusted_pair_clause, is_p
       AND t.LOGICAL_BENACCOUNTNO IS NOT NULL AND t.LOGICAL_BENACCOUNTNO <> ''
       {match_filters if incremental_batch_id else "AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> ''"}
     WITH {"hub, tx_day," if incremental_batch_id else "t.LOGICAL_ACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day,"} collect(t) AS txns, count(DISTINCT t.LOGICAL_BENACCOUNTNO) AS spoke_count
-    WHERE {"spoke_count >= $hub_spoke_min_counterparties" if incremental_batch_id else "hub IS NOT NULL AND hub <> '' AND NOT hub IN $pt AND spoke_count >= $hub_spoke_min_counterparties"} AND size(txns) < 1000
+    WHERE {"spoke_count >= $hub_spoke_min_counterparties" if incremental_batch_id else "hub IS NOT NULL AND hub <> '' AND NOT toString(hub) IN $pt AND NOT hub IN $pt AND spoke_count >= $hub_spoke_min_counterparties"} AND size(txns) < 1000
     CALL (txns, hub, tx_day, spoke_count) {_OPEN}
       UNWIND range(0, size(txns)-2) AS i
       WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
-      WHERE {trusted_pair_clause}
+      WHERE {trusted_pair_clause} AND NOT toString(hub) IN $pt AND NOT hub IN $pt
       MERGE (a)-[r:HUB_AND_SPOKE {_SID}]->(b)
       SET r.is_evidence = true, r.anomaly_score = 0.5, r.bgcolor = '#6f42c1', r.textcolor = '#eeeeee', r.provisional = {prov_str},
           r.reason = 'account connects with multiple counterparties on same day',
@@ -594,7 +600,7 @@ def get_hub_and_spoke_in_query(label, scope_clause_t, trusted_pair_clause, is_pr
     seed_block = ""
     match_filters = ""
     if incremental_batch_id:
-        seed_block = f"MATCH (seed:{label}) WHERE seed.batch_id = {incremental_batch_id} WITH DISTINCT seed.LOGICAL_BENACCOUNTNO AS hub, seed.TRANSACTIONDATE AS tx_day WHERE hub IS NOT NULL AND hub <> '' AND tx_day IS NOT NULL AND tx_day <> '' AND NOT hub IN $pt"
+        seed_block = f"MATCH (seed:{label}) WHERE seed.batch_id = {incremental_batch_id} WITH DISTINCT seed.LOGICAL_BENACCOUNTNO AS hub, seed.TRANSACTIONDATE AS tx_day WHERE hub IS NOT NULL AND hub <> '' AND tx_day IS NOT NULL AND tx_day <> '' AND NOT toString(hub) IN $pt AND NOT hub IN $pt"
         match_filters = "AND t.LOGICAL_BENACCOUNTNO = hub AND t.TRANSACTIONDATE = tx_day"
         
     return f"""
@@ -605,11 +611,11 @@ def get_hub_and_spoke_in_query(label, scope_clause_t, trusted_pair_clause, is_pr
       AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> ''
       {match_filters if incremental_batch_id else "AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> ''"}
     WITH {"hub, tx_day," if incremental_batch_id else "t.LOGICAL_BENACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day,"} collect(t) AS txns, count(DISTINCT t.LOGICAL_ACCOUNTNO) AS spoke_count
-    WHERE {"spoke_count >= $hub_spoke_min_counterparties" if incremental_batch_id else "hub IS NOT NULL AND hub <> '' AND NOT hub IN $pt AND spoke_count >= $hub_spoke_min_counterparties"} AND size(txns) < 1000
+    WHERE {"spoke_count >= $hub_spoke_min_counterparties" if incremental_batch_id else "hub IS NOT NULL AND hub <> '' AND NOT toString(hub) IN $pt AND NOT hub IN $pt AND spoke_count >= $hub_spoke_min_counterparties"} AND size(txns) < 1000
     CALL (txns, hub, tx_day, spoke_count) {_OPEN}
       UNWIND range(0, size(txns)-2) AS i
       WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
-      WHERE {trusted_pair_clause}
+      WHERE {trusted_pair_clause} AND NOT toString(hub) IN $pt AND NOT hub IN $pt
       MERGE (a)-[r:HUB_AND_SPOKE {_SID}]->(b)
       SET r.is_evidence = true, r.anomaly_score = 0.5, r.bgcolor = '#6f42c1', r.textcolor = '#eeeeee', r.provisional = {prov_str},
           r.reason = 'account connects with multiple counterparties on same day',
@@ -663,10 +669,10 @@ def get_rapid_withdrawal_query(label, scope_clause_t, is_provisional=False, incr
     seed_block = ""
     match_filters = ""
     if incremental_batch_id:
-        seed_block = f"MATCH (seed:{label}) WHERE seed.batch_id = {incremental_batch_id} WITH DISTINCT seed.LOGICAL_ACCOUNTNO AS acc, seed.TRANSACTIONDATE AS tx_day WHERE acc IS NOT NULL AND acc <> '' AND tx_day IS NOT NULL AND tx_day <> '' AND NOT acc IN $pt"
+        seed_block = f"MATCH (seed:{label}) WHERE seed.batch_id = {incremental_batch_id} WITH DISTINCT seed.LOGICAL_ACCOUNTNO AS acc, seed.TRANSACTIONDATE AS tx_day WHERE acc IS NOT NULL AND acc <> '' AND tx_day IS NOT NULL AND tx_day <> '' AND NOT toString(acc) IN $pt AND NOT acc IN $pt"
         match_filters = "AND (t.LOGICAL_ACCOUNTNO = acc OR t.LOGICAL_BENACCOUNTNO = acc) AND t.TRANSACTIONDATE = tx_day"
 
-    where_filter = match_filters if incremental_batch_id else "AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> '' AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> '' AND NOT t.LOGICAL_ACCOUNTNO IN $pt"
+    where_filter = match_filters if incremental_batch_id else "AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> '' AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> '' AND NOT toString(t.LOGICAL_ACCOUNTNO) IN $pt AND NOT t.LOGICAL_ACCOUNTNO IN $pt"
     with_acc = "acc, tx_day," if incremental_batch_id else "t.LOGICAL_ACCOUNTNO AS acc, t.TRANSACTIONDATE AS tx_day,"
 
     return f"""
@@ -695,6 +701,7 @@ def get_rapid_withdrawal_query(label, scope_clause_t, is_provisional=False, incr
            coalesce(toFloat(t2.AMOUNTINBIRR), toFloat(t2.AMOUNT), 0.0) AS out_amt
       WHERE in_amt > 0 AND out_amt > 0
         AND abs(in_amt - out_amt) <= (in_amt * $rapid_withdrawal_amount_tolerance)
+        AND NOT toString(acc) IN $pt AND NOT acc IN $pt
       MERGE (t1)-[r:RAPID_WITHDRAWAL {_SID}]->(t2)
       SET r.is_evidence = true, r.anomaly_score = 0.4, r.bgcolor = '#e07624', r.textcolor = '#eeeeee', r.provisional = {prov_str},
           r.reason = 'funds rapidly withdrawn or passed through on same day',
@@ -708,10 +715,10 @@ def get_account_activity_spike_query(label, scope_clause_t, is_provisional=False
     seed_block = ""
     match_filters = ""
     if incremental_batch_id:
-        seed_block = f"MATCH (seed:{label}) WHERE seed.batch_id = {incremental_batch_id} WITH DISTINCT seed.LOGICAL_ACCOUNTNO AS acc, seed.TRANSACTIONDATE AS tx_day WHERE acc IS NOT NULL AND acc <> '' AND tx_day IS NOT NULL AND tx_day <> '' AND NOT acc IN $pt"
+        seed_block = f"MATCH (seed:{label}) WHERE seed.batch_id = {incremental_batch_id} WITH DISTINCT seed.LOGICAL_ACCOUNTNO AS acc, seed.TRANSACTIONDATE AS tx_day WHERE acc IS NOT NULL AND acc <> '' AND tx_day IS NOT NULL AND tx_day <> '' AND NOT toString(acc) IN $pt AND NOT acc IN $pt"
         match_filters = "AND t.LOGICAL_ACCOUNTNO = acc AND t.TRANSACTIONDATE = tx_day"
         
-    where_filter = match_filters if incremental_batch_id else "AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> '' AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> '' AND NOT t.LOGICAL_ACCOUNTNO IN $pt"
+    where_filter = match_filters if incremental_batch_id else "AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> '' AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> '' AND NOT toString(t.LOGICAL_ACCOUNTNO) IN $pt AND NOT t.LOGICAL_ACCOUNTNO IN $pt"
     with_acc = "acc, tx_day," if incremental_batch_id else "t.LOGICAL_ACCOUNTNO AS acc, t.TRANSACTIONDATE AS tx_day,"
 
     return f"""
