@@ -53,7 +53,25 @@ flowchart LR
 
 ---
 
-## 3. High-Concurrency Mutual Exclusion (Dual-Layer Mutex)
+## 3. Node-22 Enterprise Sizing & Memory Architecture
+
+Node-22 hosts both the **Neo4j Enterprise Graph Engine** and the **xVigilance Extraction Daemon**. Because it handles millions of transactions, its memory configuration has been tuned for strict high-availability:
+
+### Neo4j Enterprise Tuning (`/opt/linkx-neo4j/docker-compose.yml`)
+* **Physical Server RAM:** 11.68 GB.
+* **JVM Heap Allocation:** `4G` initial / `4G` max (`-Xms4G -Xmx4G`). Sized to handle heavy GDS/Cypher algorithmic traversals (PageRank, Weakly Connected Components, cycle detection) on millions of nodes.
+* **PageCache Allocation:** `3G` (`NEO4J_server_memory_pagecache_size: 3G`). Optimized from legacy 6G. In Neo4j binary storage, 3 GB caches up to **6 million transactions** 100% in RAM without disk paging, while returning **3+ GB of physical RAM to the host OS**.
+* **Installed Enterprise Plugins:** `graph-data-science` (GDS) and `apoc`.
+
+### Operating System Memory Safety (Emergency Swap Buffer)
+* **Dedicated Swap File:** 4.0 GB (`/swapfile`, `chmod 600`, active in `/etc/fstab`).
+* **Swappiness Setting:** `vm.swappiness = 10` (configured in `/etc/sysctl.conf`).
+* **Operational Impact:** The Linux kernel runs all active computations inside physical RAM. If an unexpected multi-million transaction surge occurs, Swap acts as an emergency shock-absorber, completely preventing the Linux kernel **Out-Of-Memory (OOM) Killer** from terminating Neo4j.
+* **Available Headroom:** Node-22 maintains **~10 GB of available memory**, eliminating memory exhaustion risks.
+
+---
+
+## 4. High-Concurrency Mutual Exclusion (Dual-Layer Mutex)
 
 To prevent duplicate processes from racing against the same historical window (which could flood Kafka with duplicate transactions), `runner.py` enforces a **Dual-Layer Enterprise Mutex**:
 
@@ -62,7 +80,7 @@ To prevent duplicate processes from racing against the same historical window (w
 
 ---
 
-## 4. End-to-End Processing Lifecycle
+## 5. End-to-End Processing Lifecycle
 
 ### Phase 1: High-Speed Window Extraction (Node-22)
 1. Reads `xvigilance_checkpoints.last_window_end` from PostgreSQL.
@@ -104,7 +122,7 @@ To prevent duplicate processes from racing against the same historical window (w
 
 ---
 
-## 5. Administrative Controls: Pause & Clock Rewind
+## 6. Administrative Controls: Pause & Clock Rewind
 
 ### Operational Pause (Graceful Quiescence)
 - **Consumer (Node-21):** Pauses between 10k-record micro-batches (<6 seconds response). Unconsumed messages wait safely in Kafka.

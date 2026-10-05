@@ -118,3 +118,20 @@ sudo -u postgres psql -d linkx_db -c "SELECT pid, locktype, objid, granted FROM 
 - When actively running, `LAG` will hover around 10,000–50,000 as micro-batches process.
 - When paused, `LAG` will remain stable.
 - Once Node-21 resumes and processes all records up to the watermark, `LAG` drops to **0**.
+
+### Checking Node-22 Graph Database & Memory Health
+```bash
+# Check physical RAM and emergency swap usage
+free -h
+swapon --show
+
+# Check Neo4j Docker container memory usage
+sudo docker stats --no-stream linkx-neo4j
+
+# View recent Neo4j logs
+sudo docker logs --tail 25 linkx-neo4j
+
+# Inspect Neo4j memory configuration (/opt/linkx-neo4j/docker-compose.yml)
+grep -iE "pagecache|heap" /opt/linkx-neo4j/docker-compose.yml
+```
+
