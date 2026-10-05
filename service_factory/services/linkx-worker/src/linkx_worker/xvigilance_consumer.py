@@ -27,8 +27,16 @@ from batch_manager.analyzing.LA_rules_script import (
     get_rapid_withdrawal_query,
     get_account_activity_spike_query,
     get_high_risk_link_query,
+    _extract_pass_through_accounts,
+    _trusted_entry_match,
+    _trusted_node_clause,
+    _trusted_pair_clause,
     _write_gds_metrics,
     TRANSACTION_RELATIONSHIPS,
+)
+from batch_manager.utils.Classified_entities import (
+    trusted_entities_cypher_entries,
+    risk_entities_cypher_entries,
 )
 
 
@@ -579,52 +587,6 @@ def wait_while_paused(consumer, context: str = "processing"):
     print(f"[xVigilance-Consumer] ▶️ Engine resumed by Admin. Resuming {context}...", flush=True)
 
 
-def format_cypher_entries(entities):
-    if not entities or not isinstance(entities, list):
-        return []
-    return [{str(k): str(v) for k, v in entry.items()} for entry in entities if isinstance(entry, dict)]
-
-def _trusted_entry_match(alias):
-    # Re-map alias to use logical fields for matching
-    logical_alias = f'{{alias}}'
-
-    return f"all(k IN keys(entry) WHERE toLower(k) IN ['category', 'type', 'reason'] OR toString(coalesce({alias}[k], \"\")) = toString(entry[k]))"
-
-def _trusted_node_clause(alias):
-    return f'NOT any(entry IN $trusted_entries WHERE {_trusted_entry_match(alias)})'
-
-def _trusted_pair_clause(left_alias, right_alias):
-    return (
-        "NOT any(entry IN $trusted_entries WHERE "
-        f"({_trusted_entry_match(left_alias)} OR {_trusted_entry_match(right_alias)}))"
-    )
-
-def _extract_pass_through_accounts(global_config):
-    """Extract account numbers of entities marked as pass-through intermediaries.
-
-    Works with both the raw DB format (bool ``True``) and the stringified
-    Cypher-parameter format (``"True"``/``"true"``/``"1"``).
-    """
-    accounts = set()
-    for entity in (global_config.get("trusted_entities") or []):
-        if not isinstance(entity, dict):
-            continue
-        pt = entity.get("pass_through", entity.get("passthrough", ""))
-        if str(pt).lower() in ("true", "1", "yes"):
-            # The UI stores entities as {"key": "...", "value": "..."}
-            key = str(entity.get("key") or "").upper()
-            val = entity.get("value")
-            
-            # Also support flat key-values just in case
-            if not val and entity.get("ACCOUNTNO"):
-                val = entity.get("ACCOUNTNO")
-
-            if key in ("ACCOUNTNO", "ACCOUNT_NO", "ACCOUNT") or entity.get("ACCOUNTNO"):
-                if val and str(val).strip():
-                    accounts.add(str(val).strip())
-    return list(accounts)
-
-
 def run_full_graph_analysis(credentials, session_id, node_label, mock_global_config=None):
     """
     Run ALL LA rules on the complete hourly graph.
@@ -641,9 +603,11 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
 
     # Fetch and format global entities
     global_config = mock_global_config if mock_global_config is not None else fetch_global_entities()
-    trusted_entries = format_cypher_entries(global_config.get("trusted_entities", []))
-    risk_entries = format_cypher_entries(global_config.get("risk_entities", []))
-    pass_through_accounts = _extract_pass_through_accounts(global_config)
+    raw_trusted = global_config.get("trusted_entities", []) if isinstance(global_config, dict) else []
+    raw_risk = global_config.get("risk_entities", []) if isinstance(global_config, dict) else []
+    trusted_entries = trusted_entities_cypher_entries(raw_trusted)
+    risk_entries = risk_entities_cypher_entries(raw_risk)
+    pass_through_accounts = _extract_pass_through_accounts(raw_trusted)
     if pass_through_accounts:
         print(f"[xVigilance-Consumer] Pass-through accounts loaded: {len(pass_through_accounts)}", flush=True)
 

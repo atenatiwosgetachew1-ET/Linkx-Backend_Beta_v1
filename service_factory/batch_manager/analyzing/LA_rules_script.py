@@ -110,6 +110,8 @@ def _extract_pass_through_accounts(trusted_entities_raw):
     Works with both the raw DB format (bool True) and stringified format ("True"/"true"/"1").
     """
     accounts = set()
+    if isinstance(trusted_entities_raw, dict):
+        trusted_entities_raw = trusted_entities_raw.get("trusted_entities") or []
     if not trusted_entities_raw or not isinstance(trusted_entities_raw, list):
         return list(accounts)
     for entity in trusted_entities_raw:
