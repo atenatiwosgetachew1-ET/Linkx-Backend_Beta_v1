@@ -19,7 +19,20 @@ def _safe_index_name(*parts):
 
 
 def _trusted_entry_match(alias):
-    return f"all(k IN keys(entry) WHERE toLower(k) IN ['category', 'type', 'reason'] OR toString(coalesce({alias}[k], \"\")) = toString(entry[k]))"
+    # Support matching against both UI key/value format and legacy flat properties
+    return (
+        f"("
+        f"(entry.key IS NOT NULL AND entry.value IS NOT NULL AND ("
+        f"toString(coalesce({alias}[entry.key], {alias}[toLower(entry.key)], {alias}[toUpper(entry.key)], '')) = toString(entry.value) "
+        f"OR (toUpper(entry.key) IN ['ACCOUNTNO', 'ACCOUNT_NO', 'ACCOUNT', 'BENACCOUNTNO'] AND ("
+        f"toString(coalesce({alias}.ACCOUNTNO, {alias}.accountno, {alias}.LOGICAL_ACCOUNTNO, '')) = toString(entry.value) "
+        f"OR toString(coalesce({alias}.BENACCOUNTNO, {alias}.benaccountno, {alias}.LOGICAL_BENACCOUNTNO, '')) = toString(entry.value)"
+        f"))"
+        f")) "
+        f"OR "
+        f"(entry.key IS NULL AND all(k IN keys(entry) WHERE toLower(k) IN ['category', 'type', 'reason', 'pass_through', 'passthrough', 'classification', 'notes', 'name'] OR toString(coalesce({alias}[k], {alias}[toLower(k)], '')) = toString(entry[k])))"
+        f")"
+    )
 
 
 def _trusted_node_clause(alias):
@@ -40,8 +53,8 @@ def _risk_node_clause(alias):
 def _extract_pass_through_accounts(trusted_entities_raw):
     """Extract account numbers of entities marked as pass-through intermediaries.
 
-    Works with both the raw DB format (bool ``True``) and the stringified
-    Cypher-parameter format (``"True"``/``"true"``/``"1"``).
+    Supports both UI format ({"key": "ACCOUNTNO", "value": "..."}) and flat format ({"ACCOUNTNO": "..."}).
+    Works with both the raw DB format (bool True) and stringified format ("True"/"true"/"1").
     """
     accounts = set()
     if not trusted_entities_raw or not isinstance(trusted_entities_raw, list):
@@ -51,12 +64,50 @@ def _extract_pass_through_accounts(trusted_entities_raw):
             continue
         pt = entity.get("pass_through", entity.get("passthrough", ""))
         if str(pt).lower() in ("true", "1", "yes"):
-            for key in ("ACCOUNTNO", "accountno", "account_no", "account"):
-                val = entity.get(key)
-                if val and str(val).strip():
+            key = str(entity.get("key") or "").upper()
+            val = entity.get("value")
+
+            # If flat dictionary format
+            if not val:
+                for k in ("ACCOUNTNO", "accountno", "account_no", "account", "BENACCOUNTNO", "benaccountno"):
+                    if entity.get(k):
+                        val = entity.get(k)
+                        break
+
+            if val and str(val).strip():
+                if key in ("ACCOUNTNO", "ACCOUNT_NO", "ACCOUNT", "BENACCOUNTNO", "") or any(k in entity for k in ("ACCOUNTNO", "accountno")):
                     accounts.add(str(val).strip())
+    return sorted(list(accounts))
+
+
+def _is_trusted_entity_dict(node_dict, trusted_entries):
+    """Check if node dictionary matches any trusted entity entry (Python equivalent
+    of the Cypher _trusted_entry_match)."""
+    if not trusted_entries:
+        return False
+    for entry in trusted_entries:
+        key = entry.get("key")
+        val = entry.get("value")
+        if key and val:
+            val_str = str(val).strip()
+            for k in (key, str(key).upper(), str(key).lower()):
+                if str(node_dict.get(k, "")).strip() == val_str:
+                    return True
+            if str(key).upper() in ("ACCOUNTNO", "ACCOUNT_NO", "ACCOUNT", "BENACCOUNTNO"):
+                for k in ("ACCOUNTNO", "BENACCOUNTNO", "LOGICAL_ACCOUNTNO", "LOGICAL_BENACCOUNTNO", "accountno", "benaccountno"):
+                    if str(node_dict.get(k, "")).strip() == val_str:
+                        return True
+        else:
+            match = True
+            for k, v in entry.items():
+                if str(k).lower() in ("category", "type", "reason", "pass_through", "passthrough", "classification", "notes", "name", "key", "value"):
+                    continue
+                if str(node_dict.get(k, "")).strip() != str(v).strip():
+                    match = False
                     break
-    return list(accounts)
+            if match:
+                return True
+    return False
 
 
 TRANSACTION_RELATIONSHIPS = [
