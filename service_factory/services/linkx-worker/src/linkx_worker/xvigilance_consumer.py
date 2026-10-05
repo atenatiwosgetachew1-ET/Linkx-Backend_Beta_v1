@@ -498,6 +498,54 @@ def fetch_rule_thresholds():
         print(f"[xVigilance] Failed to fetch rule thresholds, using defaults: {e}")
     return defaults
 
+
+_last_pause_check_time = 0.0
+_last_pause_state = False
+
+def is_engine_paused(feed_name: str = "hourly_transaction_detective", ttl_seconds: float = 5.0) -> bool:
+    """Checks PostgreSQL xvigilance_checkpoints to see if the Admin paused the engine."""
+    global _last_pause_check_time, _last_pause_state
+    now = time.time()
+    if (now - _last_pause_check_time) < ttl_seconds:
+        return _last_pause_state
+
+    dsn = os.getenv("LINKX_POSTGRES_DSN")
+    if not dsn:
+        return False
+    try:
+        with psycopg.connect(dsn, connect_timeout=3) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT is_paused FROM xvigilance_checkpoints WHERE feed_name = %s LIMIT 1",
+                    (feed_name,)
+                )
+                row = cur.fetchone()
+                if row is not None:
+                    _last_pause_state = bool(row[0])
+                    _last_pause_check_time = now
+                    return _last_pause_state
+    except Exception as e:
+        print(f"[xVigilance-Consumer] Warning: Could not check pause state: {e}", flush=True)
+    _last_pause_check_time = now
+    return _last_pause_state
+
+
+def wait_while_paused(consumer, context: str = "processing"):
+    """If the engine is paused in PostgreSQL, pauses Kafka partition fetch and sleeps until resumed."""
+    if not is_engine_paused():
+        return
+    assignment = consumer.assignment()
+    if assignment:
+        consumer.pause(*assignment)
+    print(f"[xVigilance-Consumer] ⏸️ Engine paused by Admin in UI ({context}). Resting...", flush=True)
+    while RUNNING and is_engine_paused():
+        consumer.poll(timeout_ms=2000)
+        time.sleep(3)
+    if assignment:
+        consumer.resume(*assignment)
+    print(f"[xVigilance-Consumer] ▶️ Engine resumed by Admin. Resuming {context}...", flush=True)
+
+
 def format_cypher_entries(entities):
     if not entities or not isinstance(entities, list):
         return []
@@ -1110,6 +1158,7 @@ def consume_firehose():
 
     while RUNNING:
         try:
+            wait_while_paused(c, "consumer loop")
             for msg in c:
                 if not RUNNING:
                     break
@@ -1126,6 +1175,7 @@ def consume_firehose():
                             is_watermark = True
 
                 if is_watermark:
+                    wait_while_paused(c, f"watermark window {data.get('window_id')}")
                     print(f"[xVigilance-Consumer] Received WATERMARK for window {data.get('window_id')}. Flushing buffer...", flush=True)
                     if buffer:
 
@@ -1205,7 +1255,11 @@ def consume_firehose():
                         with psycopg.connect(os.getenv('LINKX_POSTGRES_DSN')) as conn:
                             with conn.cursor() as cur:
                                 cur.execute("UPDATE xvigilance_checkpoints SET total_graph_analyzed = total_graph_analyzed + %s", (data.get('total_records', 0),))
-                                cur.execute("UPDATE xvigilance_slice_runs SET status = 'succeeded', finished_at = NOW() WHERE window_end = %s", (data.get('window_id'),))
+                                batch_id = data.get('batch_id')
+                                if batch_id:
+                                    cur.execute("UPDATE xvigilance_slice_runs SET status = 'succeeded', finished_at = NOW() WHERE id = %s", (batch_id,))
+                                else:
+                                    cur.execute("UPDATE xvigilance_slice_runs SET status = 'succeeded', finished_at = NOW() WHERE window_start = %s OR window_end = %s", (data.get('window_id'), data.get('window_id')))
                             conn.commit()
                         print(f"[xVigilance-Consumer] Checkpoint total_graph_analyzed advanced by {data.get('total_records', 0)}.", flush=True)
                     except Exception as pg_e:
@@ -1219,6 +1273,7 @@ def consume_firehose():
                 buffer.append(data)
                 
                 if len(buffer) >= batch_size:
+                    wait_while_paused(c, f"micro-batch {batch_number}")
                     df = pd.DataFrame(buffer)
                     
                     # --- NORMALIZATION APPLIED HERE ---
