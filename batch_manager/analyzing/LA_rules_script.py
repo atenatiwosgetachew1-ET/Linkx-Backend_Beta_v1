@@ -8,16 +8,24 @@ def fetch_rule_thresholds():
         "smurfing_min_tx_count": 3,
         "smurfing_cumulative_threshold": 900000,
         "reporting_threshold": 300000,
+        "global_min_anomaly_amount": 100.0,
         "circular_flow_check_amounts": False,
         "circular_flow_amount_tolerance": 0.05,
+        "circular_flow_min_amount": 200.0,
         "fund_flow_max_downstream": 5,
         "fund_flow_hub_threshold": 1000,
+        "fund_flow_min_amount": 200.0,
         "late_night_start": 2300,
         "late_night_end": 400,
+        "late_night_min_amount": 500.0,
         "hub_spoke_min_counterparties": 3,
+        "hub_spoke_min_amount": 500.0,
         "activity_spike_multiplier": 3,
         "activity_spike_min_daily_count": 10,
-        "rapid_withdrawal_amount_tolerance": 0.1
+        "activity_spike_min_amount": 500.0,
+        "rapid_withdrawal_amount_tolerance": 0.1,
+        "rapid_withdrawal_min_amount": 250.0,
+        "abnormal_balance_min_change": 500.0,
     }
     try:
         dsn = os.getenv('DATABASE_URL') or os.getenv('LINKX_POSTGRES_DSN')
@@ -80,10 +88,18 @@ def _trusted_entry_match(alias):
         f"OR (toUpper(entry.key) IN ['ACCOUNTNO', 'ACCOUNT_NO', 'ACCOUNT', 'BENACCOUNTNO'] AND ("
         f"toString(coalesce({alias}.ACCOUNTNO, {alias}.accountno, {alias}.LOGICAL_ACCOUNTNO, '')) = toString(entry.value) "
         f"OR toString(coalesce({alias}.BENACCOUNTNO, {alias}.benaccountno, {alias}.LOGICAL_BENACCOUNTNO, '')) = toString(entry.value)"
+        f")) "
+        f"OR (toUpper(entry.key) IN ['BUSINESSMOBILENO', 'PHONE', 'PHONENO', 'BENTELNO', 'MOBILENO', 'TELNO'] AND ("
+        f"toString(coalesce({alias}.BUSINESSMOBILENO, {alias}.businessmobileno, '')) = toString(entry.value) "
+        f"OR toString(coalesce({alias}.BENTELNO, {alias}.bentelno, '')) = toString(entry.value)"
+        f")) "
+        f"OR (toUpper(entry.key) IN ['CUSTOMERNAME', 'NAME', 'SENDER_FULL_NAME', 'RECEIVER_FULL_NAME'] AND ("
+        f"toLower(toString(coalesce({alias}.SENDER_FULL_NAME, {alias}.sender_full_name, ''))) = toLower(toString(entry.value)) "
+        f"OR toLower(toString(coalesce({alias}.RECEIVER_FULL_NAME, {alias}.receiver_full_name, ''))) = toLower(toString(entry.value))"
         f"))"
         f")) "
         f"OR "
-        f"(entry.key IS NULL AND all(k IN keys(entry) WHERE toLower(k) IN ['category', 'type', 'reason', 'pass_through', 'passthrough', 'classification', 'notes', 'name'] OR toString(coalesce({alias}[k], {alias}[toLower(k)], '')) = toString(entry[k])))"
+        f"(entry.key IS NULL AND all(k IN keys(entry) WHERE toLower(k) IN ['category', 'type', 'reason', 'pass_through', 'passthrough', 'classification', 'notes', 'name', 'account', 'phone'] OR toString(coalesce({alias}[k], {alias}[toLower(k)], '')) = toString(entry[k])))"
         f")"
     )
 
@@ -158,10 +174,18 @@ def _is_trusted_entity_dict(node_dict, trusted_entries):
                 for k in ("ACCOUNTNO", "BENACCOUNTNO", "LOGICAL_ACCOUNTNO", "LOGICAL_BENACCOUNTNO", "accountno", "benaccountno"):
                     if str(node_dict.get(k, "")).strip() == val_str:
                         return True
+            if str(key).upper() in ("BUSINESSMOBILENO", "PHONE", "PHONENO", "BENTELNO", "MOBILENO", "TELNO"):
+                for k in ("BUSINESSMOBILENO", "BENTELNO", "businessmobileno", "bentelno"):
+                    if str(node_dict.get(k, "")).strip() == val_str:
+                        return True
+            if str(key).upper() in ("CUSTOMERNAME", "NAME", "SENDER_FULL_NAME", "RECEIVER_FULL_NAME"):
+                for k in ("SENDER_FULL_NAME", "RECEIVER_FULL_NAME", "sender_full_name", "receiver_full_name"):
+                    if str(node_dict.get(k, "")).strip().lower() == val_str.lower():
+                        return True
         else:
             match = True
             for k, v in entry.items():
-                if str(k).lower() in ("category", "type", "reason", "pass_through", "passthrough", "classification", "notes", "name", "key", "value"):
+                if str(k).lower() in ("category", "type", "reason", "pass_through", "passthrough", "classification", "notes", "name", "key", "value", "account", "phone"):
                     continue
                 if str(node_dict.get(k, "")).strip() != str(v).strip():
                     match = False
@@ -370,15 +394,15 @@ def get_circular_flow_query(
 
         AND sender_a <> receiver_a
 
-        AND amt_a > 0
-        AND amt_b > 0
+        AND amt_a >= $circular_flow_min_amount
+        AND amt_b >= $circular_flow_min_amount
 
         AND abs(amt_a - amt_b)
             <= (
                 CASE
                     WHEN amt_a < amt_b THEN amt_a
                     ELSE amt_b
-                END * 0.05
+                END * $circular_flow_amount_tolerance
             )
 
         AND {trusted_pair_clause}
@@ -522,7 +546,8 @@ def get_fund_flow_query(label, scope_clause_t, scope_clause_a, scope_clause_b, t
 
 def get_dormant_to_active_query(label, scope_clause_t, is_provisional=False, incremental_batch_id=None):
     prov_str = "true" if is_provisional else "false"
-    seed_block = f"MATCH (t:{label}) WHERE t.batch_id = {incremental_batch_id} AND coalesce(t.IGNORE_LOGICAL, false) = false AND toLower(coalesce(t.ACCOUNTSTATE, '')) = 'dormant' AND toLower(coalesce(t.BENACCOUNTSTATE, '')) = 'active' " if incremental_batch_id else f"MATCH (t:{label}) WHERE ({scope_clause_t}) AND coalesce(t.IGNORE_LOGICAL, false) = false AND toLower(coalesce(t.ACCOUNTSTATE, '')) = 'dormant' AND toLower(coalesce(t.BENACCOUNTSTATE, '')) = 'active' "
+    trusted_clause = _trusted_node_clause('t')
+    seed_block = f"MATCH (t:{label}) WHERE t.batch_id = {incremental_batch_id} AND coalesce(t.IGNORE_LOGICAL, false) = false AND {trusted_clause} AND toLower(coalesce(t.ACCOUNTSTATE, '')) = 'dormant' AND toLower(coalesce(t.BENACCOUNTSTATE, '')) = 'active' " if incremental_batch_id else f"MATCH (t:{label}) WHERE ({scope_clause_t}) AND coalesce(t.IGNORE_LOGICAL, false) = false AND {trusted_clause} AND toLower(coalesce(t.ACCOUNTSTATE, '')) = 'dormant' AND toLower(coalesce(t.BENACCOUNTSTATE, '')) = 'active' "
     return f"""
     {seed_block}
     MERGE (t)-[r:DORMANT_TO_ACTIVE {_SID}]->(t)
@@ -533,10 +558,11 @@ def get_dormant_to_active_query(label, scope_clause_t, is_provisional=False, inc
 
 def get_abnormal_balance_query(label, scope_clause_t, is_provisional=False, incremental_batch_id=None):
     prov_str = "true" if is_provisional else "false"
+    trusted_clause = _trusted_node_clause('t')
     seed_block = ""
     match_filters = ""
     if incremental_batch_id:
-        seed_block = f"MATCH (seed:{label}) WHERE seed.batch_id = {incremental_batch_id} WITH DISTINCT seed.LOGICAL_ACCOUNTNO AS acc, coalesce(seed.TRANSACTIONDATE, toString(date())) AS seed_day WHERE acc IS NOT NULL AND acc <> ''"
+        seed_block = f"MATCH (seed:{label}) WHERE seed.batch_id = {incremental_batch_id} WITH DISTINCT seed.LOGICAL_ACCOUNTNO AS acc, coalesce(seed.TRANSACTIONDATE, toString(date())) AS seed_day WHERE acc IS NOT NULL AND acc <> '' AND NOT toString(acc) IN $pt AND NOT acc IN $pt"
         match_filters = "AND t.LOGICAL_ACCOUNTNO = acc AND coalesce(t.TRANSACTIONDATE, '') >= toString(date(seed_day) - duration({days: $historical_baseline_days}))"
         
     return f"""
@@ -544,7 +570,8 @@ def get_abnormal_balance_query(label, scope_clause_t, is_provisional=False, incr
     MATCH (t:{label})
     WHERE ({scope_clause_t})
       AND coalesce(t.IGNORE_LOGICAL, false) = false
-      {match_filters if incremental_batch_id else "AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> ''"}
+      AND {trusted_clause}
+      {match_filters if incremental_batch_id else "AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> '' AND NOT toString(t.LOGICAL_ACCOUNTNO) IN $pt AND NOT t.LOGICAL_ACCOUNTNO IN $pt"}
     WITH {"acc, t" if incremental_batch_id else "t.LOGICAL_ACCOUNTNO AS acc, t"}
     ORDER BY t.TRANSACTIONDATE, t.TRANSACTIONTIME
     WITH acc, collect(t) AS txns
@@ -554,7 +581,7 @@ def get_abnormal_balance_query(label, scope_clause_t, is_provisional=False, incr
     WITH current, previous,
          abs(coalesce(toFloat(current.SENDERPREVIOUSBALANCE), 0.0) - coalesce(toFloat(previous.SENDERPREVIOUSBALANCE), 0.0)) AS current_change,
          history
-    WHERE current_change > 0
+    WHERE current_change >= $abnormal_balance_min_change
     WITH current, previous, current_change, history
     WITH current, previous, current_change,
          [idx IN range(1, size(history)-1) | abs(coalesce(toFloat(history[idx].SENDERPREVIOUSBALANCE), 0.0) - coalesce(toFloat(history[idx-1].SENDERPREVIOUSBALANCE), 0.0))] AS history_changes
@@ -584,15 +611,20 @@ def get_hub_and_spoke_out_query(label, scope_clause_t, trusted_pair_clause, is_p
       AND t.LOGICAL_BENACCOUNTNO IS NOT NULL AND t.LOGICAL_BENACCOUNTNO <> ''
       {match_filters if incremental_batch_id else "AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> ''"}
     WITH {"hub, tx_day," if incremental_batch_id else "t.LOGICAL_ACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day,"} collect(t) AS txns, count(DISTINCT t.LOGICAL_BENACCOUNTNO) AS spoke_count
-    WHERE {"spoke_count >= $hub_spoke_min_counterparties" if incremental_batch_id else "hub IS NOT NULL AND hub <> '' AND NOT toString(hub) IN $pt AND NOT hub IN $pt AND spoke_count >= $hub_spoke_min_counterparties"} AND size(txns) < 1000
-    CALL (txns, hub, tx_day, spoke_count) {_OPEN}
+    WITH hub, tx_day, txns, spoke_count,
+         reduce(total = 0.0, tx IN txns | total + coalesce(toFloat(tx.AMOUNTINBIRR), toFloat(tx.AMOUNT), toFloat(tx.amount), 0.0)) AS total_hub_amount
+    WHERE {"spoke_count >= $hub_spoke_min_counterparties" if incremental_batch_id else "hub IS NOT NULL AND hub <> '' AND NOT toString(hub) IN $pt AND NOT hub IN $pt AND spoke_count >= $hub_spoke_min_counterparties"}
+      AND total_hub_amount >= $hub_spoke_min_amount
+      AND size(txns) < 1000
+    CALL (txns, hub, tx_day, spoke_count, total_hub_amount) {_OPEN}
       UNWIND range(0, size(txns)-2) AS i
-      WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
+      WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count, total_hub_amount
       WHERE {trusted_pair_clause} AND NOT toString(hub) IN $pt AND NOT hub IN $pt
       MERGE (a)-[r:HUB_AND_SPOKE {_SID}]->(b)
       SET r.is_evidence = true, r.anomaly_score = 0.5, r.bgcolor = '#6f42c1', r.textcolor = '#eeeeee', r.provisional = {prov_str},
           r.reason = 'account connects with multiple counterparties on same day',
           r.hub_account = hub, r.direction = 'outgoing', r.tx_day = tx_day, r.spoke_count = spoke_count,
+          r.total_amount = total_hub_amount,
           r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
     {_CLOSE} IN TRANSACTIONS OF 1000 ROWS
     """
@@ -613,21 +645,27 @@ def get_hub_and_spoke_in_query(label, scope_clause_t, trusted_pair_clause, is_pr
       AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> ''
       {match_filters if incremental_batch_id else "AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> ''"}
     WITH {"hub, tx_day," if incremental_batch_id else "t.LOGICAL_BENACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day,"} collect(t) AS txns, count(DISTINCT t.LOGICAL_ACCOUNTNO) AS spoke_count
-    WHERE {"spoke_count >= $hub_spoke_min_counterparties" if incremental_batch_id else "hub IS NOT NULL AND hub <> '' AND NOT toString(hub) IN $pt AND NOT hub IN $pt AND spoke_count >= $hub_spoke_min_counterparties"} AND size(txns) < 1000
-    CALL (txns, hub, tx_day, spoke_count) {_OPEN}
+    WITH hub, tx_day, txns, spoke_count,
+         reduce(total = 0.0, tx IN txns | total + coalesce(toFloat(tx.AMOUNTINBIRR), toFloat(tx.AMOUNT), toFloat(tx.amount), 0.0)) AS total_hub_amount
+    WHERE {"spoke_count >= $hub_spoke_min_counterparties" if incremental_batch_id else "hub IS NOT NULL AND hub <> '' AND NOT toString(hub) IN $pt AND NOT hub IN $pt AND spoke_count >= $hub_spoke_min_counterparties"}
+      AND total_hub_amount >= $hub_spoke_min_amount
+      AND size(txns) < 1000
+    CALL (txns, hub, tx_day, spoke_count, total_hub_amount) {_OPEN}
       UNWIND range(0, size(txns)-2) AS i
-      WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count
+      WITH txns[i] AS a, txns[i+1] AS b, hub, tx_day, spoke_count, total_hub_amount
       WHERE {trusted_pair_clause} AND NOT toString(hub) IN $pt AND NOT hub IN $pt
       MERGE (a)-[r:HUB_AND_SPOKE {_SID}]->(b)
       SET r.is_evidence = true, r.anomaly_score = 0.5, r.bgcolor = '#6f42c1', r.textcolor = '#eeeeee', r.provisional = {prov_str},
           r.reason = 'account connects with multiple counterparties on same day',
           r.hub_account = hub, r.direction = 'incoming', r.tx_day = tx_day, r.spoke_count = spoke_count,
+          r.total_amount = total_hub_amount,
           r.edge_semantic = 'GROUPING', r.financial_flow = false, r.directed_display = false
     {_CLOSE} IN TRANSACTIONS OF 1000 ROWS
     """
 
-def get_shared_identifier_query(label, scope_clause_t, is_provisional=False, incremental_batch_id=None):
+def get_shared_identifier_query(label, scope_clause_t, is_provisional=False, incremental_batch_id=None, trusted_pair_clause=None):
     prov_str = "true" if is_provisional else "false"
+    pair_clause = trusted_pair_clause if trusted_pair_clause is not None else _trusted_pair_clause('a', 'b')
     seed_block = ""
     match_filters = ""
     if incremental_batch_id:
@@ -657,6 +695,7 @@ def get_shared_identifier_query(label, scope_clause_t, is_provisional=False, inc
     CALL (txns, identifier_type, identifier_value, accounts) {_OPEN}
       UNWIND range(0, size(txns)-2) AS i
       WITH txns[i] AS a, txns[i+1] AS b, identifier_type, identifier_value, accounts
+      WHERE {pair_clause}
       MERGE (a)-[r:SHARED_IDENTIFIER {_SID}]->(b)
       SET r.is_evidence = true, r.anomaly_score = 0.8, r.bgcolor = '#0d898a', r.textcolor = '#eeeeee', r.provisional = {prov_str},
           r.reason = 'same identifier appears on multiple accounts',
@@ -701,7 +740,7 @@ def get_rapid_withdrawal_query(label, scope_clause_t, is_provisional=False, incr
       WITH t1, t2, acc, tx_day,
            coalesce(toFloat(t1.AMOUNTINBIRR), toFloat(t1.AMOUNT), 0.0) AS in_amt,
            coalesce(toFloat(t2.AMOUNTINBIRR), toFloat(t2.AMOUNT), 0.0) AS out_amt
-      WHERE in_amt > 0 AND out_amt > 0
+      WHERE in_amt >= $rapid_withdrawal_min_amount AND out_amt >= $rapid_withdrawal_min_amount
         AND abs(in_amt - out_amt) <= (in_amt * $rapid_withdrawal_amount_tolerance)
         AND NOT toString(acc) IN $pt AND NOT acc IN $pt
       MERGE (t1)-[r:RAPID_WITHDRAWAL {_SID}]->(t2)
@@ -731,21 +770,23 @@ def get_account_activity_spike_query(label, scope_clause_t, is_provisional=False
       {where_filter}
     WITH {with_acc} count(t) AS daily_count, collect(t) AS txns
     WHERE daily_count >= $activity_spike_min_daily_count AND daily_count < 2000
-    WITH acc, tx_day, daily_count, txns
+    WITH acc, tx_day, daily_count, txns,
+         reduce(tot = 0.0, x IN txns | tot + coalesce(toFloat(x.AMOUNTINBIRR), toFloat(x.AMOUNT), toFloat(x.amount), 0.0)) AS daily_amount
+    WHERE daily_amount >= $activity_spike_min_amount
     MATCH (history:{label} {_CK_LOGACC})
     WHERE coalesce(history.IGNORE_LOGICAL, false) = false
       AND history.TRANSACTIONDATE IS NOT NULL AND history.TRANSACTIONDATE <> tx_day
       AND history.TRANSACTIONDATE >= toString(date(tx_day) - duration({_CK_DAYS}))
-    WITH acc, tx_day, daily_count, txns, count(history) AS hist_count, count(DISTINCT history.TRANSACTIONDATE) AS hist_days
+    WITH acc, tx_day, daily_count, daily_amount, txns, count(history) AS hist_count, count(DISTINCT history.TRANSACTIONDATE) AS hist_days
     WHERE hist_days > 0
-    WITH acc, tx_day, daily_count, txns, (toFloat(hist_count) / hist_days) AS avg_daily
+    WITH acc, tx_day, daily_count, daily_amount, txns, (toFloat(hist_count) / hist_days) AS avg_daily
     WHERE daily_count > (avg_daily * $activity_spike_multiplier)
-    CALL (txns, daily_count, avg_daily) {_OPEN}
+    CALL (txns, daily_count, daily_amount, avg_daily) {_OPEN}
       UNWIND txns AS t
       MERGE (t)-[r:ACCOUNT_ACTIVITY_SPIKE {_SID}]->(t)
       SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#99153c', r.textcolor = '#eeeeee', r.provisional = {prov_str},
           r.reason = 'unusually high transaction volume for this account on this day',
-          r.daily_count = daily_count, r.avg_daily = avg_daily,
+          r.daily_count = daily_count, r.daily_amount = daily_amount, r.avg_daily = avg_daily,
           r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
     {_CLOSE} IN TRANSACTIONS OF 1000 ROWS
     """
@@ -760,10 +801,34 @@ def get_high_risk_link_query(label, scope_clause_t, is_provisional=False, increm
     UNWIND $risk_entries AS risk_entity
     WITH t, risk_entity
     WHERE
-       (risk_entity.account IS NOT NULL AND risk_entity.account <> '' AND (t.LOGICAL_ACCOUNTNO = risk_entity.account OR t.LOGICAL_BENACCOUNTNO = risk_entity.account)) OR
-       (risk_entity.phone IS NOT NULL AND risk_entity.phone <> '' AND (t.BUSINESSMOBILENO = risk_entity.phone OR t.BENTELNO = risk_entity.phone)) OR
-       (risk_entity.name IS NOT NULL AND risk_entity.name <> '' AND (toLower(t.SENDER_FULL_NAME) = toLower(risk_entity.name) OR toLower(t.RECEIVER_FULL_NAME) = toLower(risk_entity.name)))
-    WITH t, collect(DISTINCT toUpper(risk_entity.category)) AS matched_categories
+       (risk_entity.key IS NOT NULL AND risk_entity.value IS NOT NULL AND (
+           toString(coalesce(t[risk_entity.key], t[toLower(risk_entity.key)], t[toUpper(risk_entity.key)], '')) = toString(risk_entity.value)
+           OR (toUpper(risk_entity.key) IN ['ACCOUNTNO', 'ACCOUNT_NO', 'ACCOUNT', 'BENACCOUNTNO'] AND (
+               toString(coalesce(t.ACCOUNTNO, t.accountno, t.LOGICAL_ACCOUNTNO, '')) = toString(risk_entity.value)
+               OR toString(coalesce(t.BENACCOUNTNO, t.benaccountno, t.LOGICAL_BENACCOUNTNO, '')) = toString(risk_entity.value)
+           ))
+           OR (toUpper(risk_entity.key) IN ['BUSINESSMOBILENO', 'PHONE', 'PHONENO', 'BENTELNO', 'MOBILENO', 'TELNO'] AND (
+               toString(coalesce(t.BUSINESSMOBILENO, t.businessmobileno, '')) = toString(risk_entity.value)
+               OR toString(coalesce(t.BENTELNO, t.bentelno, '')) = toString(risk_entity.value)
+           ))
+           OR (toUpper(risk_entity.key) IN ['CUSTOMERNAME', 'NAME', 'SENDER_FULL_NAME', 'RECEIVER_FULL_NAME'] AND (
+               toLower(toString(coalesce(t.SENDER_FULL_NAME, t.sender_full_name, ''))) = toLower(toString(risk_entity.value))
+               OR toLower(toString(coalesce(t.RECEIVER_FULL_NAME, t.receiver_full_name, ''))) = toLower(toString(risk_entity.value))
+           ))
+       )) OR
+       (risk_entity.account IS NOT NULL AND risk_entity.account <> '' AND (
+           toString(coalesce(t.LOGICAL_ACCOUNTNO, t.ACCOUNTNO, '')) = toString(risk_entity.account)
+           OR toString(coalesce(t.LOGICAL_BENACCOUNTNO, t.BENACCOUNTNO, '')) = toString(risk_entity.account)
+       )) OR
+       (risk_entity.phone IS NOT NULL AND risk_entity.phone <> '' AND (
+           toString(coalesce(t.BUSINESSMOBILENO, '')) = toString(risk_entity.phone)
+           OR toString(coalesce(t.BENTELNO, '')) = toString(risk_entity.phone)
+       )) OR
+       (risk_entity.name IS NOT NULL AND risk_entity.name <> '' AND (
+           toLower(toString(coalesce(t.SENDER_FULL_NAME, ''))) = toLower(toString(risk_entity.name))
+           OR toLower(toString(coalesce(t.RECEIVER_FULL_NAME, ''))) = toLower(toString(risk_entity.name))
+       ))
+    WITH t, collect(DISTINCT toUpper(coalesce(risk_entity.category, risk_entity.classification, 'HIGH_RISK'))) AS matched_categories
     WHERE size(matched_categories) > 0
     CALL (t, matched_categories) {_OPEN}
       UNWIND matched_categories AS cat
@@ -799,12 +864,15 @@ def get_late_night_tx_query(label, scope_clause_t, is_provisional=False, increme
       AND t.TRANSACTIONTIME IS NOT NULL
       AND toString(t.TRANSACTIONTIME) <> ''
       AND {_trusted_node_clause('t')}
-    WITH t, toInteger(substring(replace(toString(t.TRANSACTIONTIME), ':', ''), 0, 4)) AS t_time
-    WHERE t_time >= $late_night_start OR t_time <= $late_night_end
+    WITH t, toInteger(substring(replace(toString(t.TRANSACTIONTIME), ':', ''), 0, 4)) AS t_time,
+         coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), 0.0) AS amt
+    WHERE (t_time >= $late_night_start OR t_time <= $late_night_end)
+      AND amt >= $late_night_min_amount
     MERGE (t)-[r:LATE_NIGHT_TX {_SID}]->(t)
     SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#00c1a2',
         r.provisional = {prov_str},
         r.reason = 'transaction occurred outside typical business hours',
+        r.amount = amt,
         r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
     """
 
@@ -985,6 +1053,7 @@ def execute_circular_flow_rule(
 
     # --- Configuration-driven tolerance from database ---
     amount_tolerance = float(thresholds.get("circular_flow_amount_tolerance", 0.05))
+    circular_min_amount = float(thresholds.get("circular_flow_min_amount") or thresholds.get("global_min_anomaly_amount", 200.0))
 
     # ---- 1. Fetch transaction data into Python memory ----
     fetch_query = (
@@ -994,6 +1063,7 @@ def execute_circular_flow_rule(
         f"AND n.LOGICAL_BENACCOUNTNO IS NOT NULL AND n.LOGICAL_BENACCOUNTNO <> '' "
         f"AND n.TRANSACTIONDATE IS NOT NULL AND n.TRANSACTIONDATE <> '' "
         f"AND n.LOGICAL_ACCOUNTNO <> n.LOGICAL_BENACCOUNTNO "
+        f"AND coalesce(toFloat(n.AMOUNTINBIRR), toFloat(n.AMOUNT), toFloat(n.amount), 0.0) >= $circular_min_amount "
         f"RETURN elementId(n) AS id, "
         f"n.LOGICAL_ACCOUNTNO AS acc, n.LOGICAL_BENACCOUNTNO AS ben, "
         f"n.TRANSACTIONDATE AS date, "
@@ -1004,7 +1074,7 @@ def execute_circular_flow_rule(
         f"coalesce(n.LOGICAL_TRANSFORMATION_REASON, 'NONE') AS logical_transform, "
         f"coalesce(n.batch_id, '') AS batch_id"
     )
-    params = {"session_id": session_id}
+    params = {"session_id": session_id, "circular_min_amount": circular_min_amount}
     if incremental_batch_id:
         params["incremental_batch_id"] = incremental_batch_id
     if boundary_batch_id:
@@ -1049,7 +1119,7 @@ def execute_circular_flow_rule(
 
         for a in a_rows:
             amt_a = a["amt"]
-            if amt_a is None or amt_a <= 0:
+            if amt_a is None or amt_a < circular_min_amount:
                 continue
 
             for b in b_rows:
@@ -1061,7 +1131,7 @@ def execute_circular_flow_rule(
                     continue
 
                 amt_b = b["amt"]
-                if amt_b is None or amt_b <= 0:
+                if amt_b is None or amt_b < circular_min_amount:
                     continue
 
                 # Amount tolerance check (configuration-driven)
@@ -1205,20 +1275,23 @@ def execute_fund_flow_rule(
     # --- Configuration-driven limits from database ---
     max_downstream = int(thresholds.get("fund_flow_max_downstream", 5))
     hub_threshold = int(thresholds.get("fund_flow_hub_threshold", 1000))
+    fund_flow_min_amount = float(thresholds.get("fund_flow_min_amount") or thresholds.get("global_min_anomaly_amount", 200.0))
 
     # ---- 1. Fetch transaction data into Python memory ----
     fetch_query = (
         f"MATCH (n:{label}) WHERE ({scope_clause}) "
         f"AND coalesce(n.IGNORE_LOGICAL, false) = false "
         f"AND n.LOGICAL_ACCOUNTNO IS NOT NULL AND n.LOGICAL_ACCOUNTNO <> '' "
+        f"AND coalesce(toFloat(n.AMOUNTINBIRR), toFloat(n.AMOUNT), toFloat(n.amount), 0.0) >= $fund_flow_min_amount "
         f"RETURN elementId(n) AS id, "
         f"n.LOGICAL_ACCOUNTNO AS acc, "
         f"coalesce(n.LOGICAL_BENACCOUNTNO, '') AS ben, "
         f"coalesce(n.TRANSACTIONDATE, '') AS date, "
         f"coalesce(n.TRANSACTIONTIME, '') AS time, "
+        f"coalesce(toFloat(n.AMOUNTINBIRR), toFloat(n.AMOUNT), toFloat(n.amount), 0.0) AS amt, "
         f"coalesce(n.batch_id, '') AS batch_id"
     )
-    params = {"session_id": session_id}
+    params = {"session_id": session_id, "fund_flow_min_amount": fund_flow_min_amount}
     if boundary_batch_id:
         params["boundary_batch_id"] = boundary_batch_id
 
@@ -1504,19 +1577,24 @@ def batch_graph_analysis_transactions(
         # 5. ABNORMAL_BALANCE_CHANGE
         # ----------------------------
         query = get_abnormal_balance_query(label=label, scope_clause_t=scope_full, is_provisional=False)
-        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, historical_baseline_days=30)
+        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, historical_baseline_days=30,
+                    abnormal_balance_min_change=thresholds.get("abnormal_balance_min_change", thresholds.get("global_min_anomaly_amount", 500.0)))
 
         # ----------------------------
         # 6. HUB_AND_SPOKE (outgoing)
         # ----------------------------
         query = get_hub_and_spoke_out_query(label=label, scope_clause_t=scope_full, trusted_pair_clause=_trusted_pair_clause('a', 'b'), is_provisional=False)
-        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties", 3))
+        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts,
+                    hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties", 3),
+                    hub_spoke_min_amount=thresholds.get("hub_spoke_min_amount", thresholds.get("global_min_anomaly_amount", 500.0)))
 
         # ----------------------------
         # 7. HUB_AND_SPOKE (incoming)
         # ----------------------------
         query = get_hub_and_spoke_in_query(label=label, scope_clause_t=scope_full, trusted_pair_clause=_trusted_pair_clause('a', 'b'), is_provisional=False)
-        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties", 3))
+        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts,
+                    hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties", 3),
+                    hub_spoke_min_amount=thresholds.get("hub_spoke_min_amount", thresholds.get("global_min_anomaly_amount", 500.0)))
 
         # ----------------------------
         # 8. SHARED_IDENTIFIER
@@ -1528,7 +1606,9 @@ def batch_graph_analysis_transactions(
         # 9. LATE_NIGHT_TX
         # ----------------------------
         query = get_late_night_tx_query(label=label, scope_clause_t=scope_full, is_provisional=False)
-        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, late_night_start=thresholds.get("late_night_start", 2300), late_night_end=thresholds.get("late_night_end", 400))
+        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts,
+                    late_night_start=thresholds.get("late_night_start", 2300), late_night_end=thresholds.get("late_night_end", 400),
+                    late_night_min_amount=thresholds.get("late_night_min_amount", thresholds.get("global_min_anomaly_amount", 500.0)))
 
         # ----------------------------
         # 10. JUST_BELOW_THRESHOLD
@@ -1540,13 +1620,19 @@ def batch_graph_analysis_transactions(
         # 11. RAPID_WITHDRAWAL
         # ----------------------------
         query = get_rapid_withdrawal_query(label=label, scope_clause_t=scope_full, is_provisional=False)
-        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, rapid_withdrawal_amount_tolerance=thresholds.get("rapid_withdrawal_amount_tolerance", 0.1))
+        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts,
+                    rapid_withdrawal_amount_tolerance=thresholds.get("rapid_withdrawal_amount_tolerance", 0.1),
+                    rapid_withdrawal_min_amount=thresholds.get("rapid_withdrawal_min_amount", thresholds.get("global_min_anomaly_amount", 250.0)))
 
         # ----------------------------
         # 12. ACCOUNT_ACTIVITY_SPIKE
         # ----------------------------
         query = get_account_activity_spike_query(label=label, scope_clause_t=scope_full, is_provisional=False)
-        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, activity_spike_min_daily_count=thresholds.get("activity_spike_min_daily_count", 10), activity_spike_multiplier=thresholds.get("activity_spike_multiplier", 3), historical_baseline_days=30)
+        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts,
+                    activity_spike_min_daily_count=thresholds.get("activity_spike_min_daily_count", 10),
+                    activity_spike_multiplier=thresholds.get("activity_spike_multiplier", 3),
+                    activity_spike_min_amount=thresholds.get("activity_spike_min_amount", thresholds.get("global_min_anomaly_amount", 500.0)),
+                    historical_baseline_days=30)
 
         # ----------------------------
         # 13. HIGH_RISK_LINK
@@ -1673,15 +1759,20 @@ def incremental_graph_analysis_transactions(
 
         # 5. ABNORMAL_BALANCE_CHANGE
         query = get_abnormal_balance_query(label=label, scope_clause_t=scope_inc, is_provisional=True, incremental_batch_id="$batch_id")
-        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, historical_baseline_days=30, threshold=threshold_multiplier)
+        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, historical_baseline_days=30, threshold=threshold_multiplier,
+                    abnormal_balance_min_change=thresholds.get("abnormal_balance_min_change", thresholds.get("global_min_anomaly_amount", 500.0)))
 
         # 6. HUB_AND_SPOKE (outgoing)
         query = get_hub_and_spoke_out_query(label=label, scope_clause_t=scope_inc, trusted_pair_clause=_trusted_pair_clause('a', 'b'), is_provisional=True, incremental_batch_id="$batch_id")
-        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties", 3))
+        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts,
+                    hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties", 3),
+                    hub_spoke_min_amount=thresholds.get("hub_spoke_min_amount", thresholds.get("global_min_anomaly_amount", 500.0)))
 
         # 7. HUB_AND_SPOKE (incoming)
         query = get_hub_and_spoke_in_query(label=label, scope_clause_t=scope_inc, trusted_pair_clause=_trusted_pair_clause('a', 'b'), is_provisional=True, incremental_batch_id="$batch_id")
-        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties", 3))
+        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts,
+                    hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties", 3),
+                    hub_spoke_min_amount=thresholds.get("hub_spoke_min_amount", thresholds.get("global_min_anomaly_amount", 500.0)))
 
         # 8. SHARED_IDENTIFIER
         query = get_shared_identifier_query(label=label, scope_clause_t=scope_inc, is_provisional=True, incremental_batch_id="$batch_id")
@@ -1689,7 +1780,9 @@ def incremental_graph_analysis_transactions(
 
         # 9. LATE_NIGHT_TX
         query = get_late_night_tx_query(label=label, scope_clause_t=scope_inc, is_provisional=True, incremental_batch_id="$batch_id")
-        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, late_night_start=thresholds.get("late_night_start", 2300), late_night_end=thresholds.get("late_night_end", 400))
+        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts,
+                    late_night_start=thresholds.get("late_night_start", 2300), late_night_end=thresholds.get("late_night_end", 400),
+                    late_night_min_amount=thresholds.get("late_night_min_amount", thresholds.get("global_min_anomaly_amount", 500.0)))
 
         # 10. JUST_BELOW_THRESHOLD
         query = get_just_below_threshold_query(label=label, scope_clause_t=scope_inc, is_provisional=True, incremental_batch_id="$batch_id")
@@ -1697,11 +1790,17 @@ def incremental_graph_analysis_transactions(
 
         # 11. RAPID_WITHDRAWAL
         query = get_rapid_withdrawal_query(label=label, scope_clause_t=scope_inc, is_provisional=True, incremental_batch_id="$batch_id")
-        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, rapid_withdrawal_amount_tolerance=thresholds.get("rapid_withdrawal_amount_tolerance", 0.1))
+        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts,
+                    rapid_withdrawal_amount_tolerance=thresholds.get("rapid_withdrawal_amount_tolerance", 0.1),
+                    rapid_withdrawal_min_amount=thresholds.get("rapid_withdrawal_min_amount", thresholds.get("global_min_anomaly_amount", 250.0)))
 
         # 12. ACCOUNT_ACTIVITY_SPIKE
         query = get_account_activity_spike_query(label=label, scope_clause_t=scope_inc, is_provisional=True, incremental_batch_id="$batch_id")
-        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, activity_spike_min_daily_count=thresholds.get("activity_spike_min_daily_count", 10), activity_spike_multiplier=thresholds.get("activity_spike_multiplier", 3), historical_baseline_days=30)
+        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts,
+                    activity_spike_min_daily_count=thresholds.get("activity_spike_min_daily_count", 10),
+                    activity_spike_multiplier=thresholds.get("activity_spike_multiplier", 3),
+                    activity_spike_min_amount=thresholds.get("activity_spike_min_amount", thresholds.get("global_min_anomaly_amount", 500.0)),
+                    historical_baseline_days=30)
 
         # 13. HIGH_RISK_LINK
         query = get_high_risk_link_query(label=label, scope_clause_t=scope_inc, is_provisional=True, incremental_batch_id="$batch_id")

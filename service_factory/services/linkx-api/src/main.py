@@ -814,18 +814,71 @@ def admin_cleanup_session():
 
 # ── Rule Thresholds (Admin-Only) ─────────────────────────────────────
 
+_DEFAULT_RULE_THRESHOLDS = {
+    "smurfing_single_tx_threshold": 300000,
+    "smurfing_min_tx_count": 3,
+    "smurfing_cumulative_threshold": 900000,
+    "reporting_threshold": 300000,
+    "global_min_anomaly_amount": 100.0,
+    "circular_flow_check_amounts": False,
+    "circular_flow_amount_tolerance": 0.05,
+    "circular_flow_min_amount": 200.0,
+    "fund_flow_max_downstream": 5,
+    "fund_flow_hub_threshold": 1000,
+    "fund_flow_min_amount": 200.0,
+    "late_night_start": 2300,
+    "late_night_end": 400,
+    "late_night_min_amount": 500.0,
+    "hub_spoke_min_counterparties": 3,
+    "hub_spoke_min_amount": 500.0,
+    "activity_spike_multiplier": 3,
+    "activity_spike_min_daily_count": 10,
+    "activity_spike_min_amount": 500.0,
+    "rapid_withdrawal_amount_tolerance": 0.1,
+    "rapid_withdrawal_min_amount": 250.0,
+    "abnormal_balance_min_change": 500.0,
+}
+
 _RULE_THRESHOLD_GUARDRAILS = {
+    # Smurfing & Reporting
     "smurfing_single_tx_threshold":    {"type": (int, float), "min": 1000,  "max": 10000000},
     "smurfing_min_tx_count":           {"type": (int,),       "min": 2,     "max": 100},
     "smurfing_cumulative_threshold":   {"type": (int, float), "min": 5000,  "max": 50000000},
     "reporting_threshold":             {"type": (int, float), "min": 1000,  "max": 10000000},
+
+    # Global Anomaly Floor
+    "global_min_anomaly_amount":       {"type": (int, float), "min": 0,     "max": 10000000},
+
+    # Circular Flow
     "circular_flow_check_amounts":     {"type": (bool,),      "min": None,  "max": None},
+    "circular_flow_amount_tolerance":  {"type": (float, int), "min": 0.0,   "max": 1.0},
+    "circular_flow_min_amount":        {"type": (int, float), "min": 0,     "max": 10000000},
+
+    # Fund Flow
+    "fund_flow_max_downstream":        {"type": (int,),       "min": 1,     "max": 50},
+    "fund_flow_hub_threshold":         {"type": (int, float), "min": 0,     "max": 10000000},
+    "fund_flow_min_amount":            {"type": (int, float), "min": 0,     "max": 10000000},
+
+    # Late Night
     "late_night_start":                {"type": (int,),       "min": 0,     "max": 2359},
     "late_night_end":                  {"type": (int,),       "min": 0,     "max": 800},
+    "late_night_min_amount":           {"type": (int, float), "min": 0,     "max": 10000000},
+
+    # Hub and Spoke
     "hub_spoke_min_counterparties":    {"type": (int,),       "min": 2,     "max": 50},
+    "hub_spoke_min_amount":            {"type": (int, float), "min": 0,     "max": 10000000},
+
+    # Activity Spike
     "activity_spike_multiplier":       {"type": (int, float), "min": 1.5,   "max": 20},
     "activity_spike_min_daily_count":  {"type": (int,),       "min": 3,     "max": 1000},
+    "activity_spike_min_amount":       {"type": (int, float), "min": 0,     "max": 10000000},
+
+    # Rapid Withdrawal
     "rapid_withdrawal_amount_tolerance": {"type": (float, int), "min": 0.01, "max": 0.5},
+    "rapid_withdrawal_min_amount":     {"type": (int, float), "min": 0,     "max": 10000000},
+
+    # Abnormal Balance Change
+    "abnormal_balance_min_change":     {"type": (int, float), "min": 0,     "max": 10000000},
 }
 
 
@@ -841,15 +894,18 @@ def get_rule_thresholds():
                 cur.execute("SELECT config_data, updated_by, created_at FROM global_rule_thresholds ORDER BY created_at DESC LIMIT 1")
                 row = cur.fetchone()
                 if row:
+                    merged = dict(_DEFAULT_RULE_THRESHOLDS)
+                    if row[0] and isinstance(row[0], dict):
+                        merged.update(row[0])
                     return jsonify({
                         "message": "success",
                         "results": {
-                            "config": row[0],
+                            "config": merged,
                             "updated_by": row[1],
                             "updated_at": row[2].isoformat() if row[2] else None,
                         }
                     }), 200
-                return jsonify({"message": "success", "results": {"config": {}, "updated_by": None, "updated_at": None}}), 200
+                return jsonify({"message": "success", "results": {"config": dict(_DEFAULT_RULE_THRESHOLDS), "updated_by": None, "updated_at": None}}), 200
     except Exception as e:
         current_app.logger.warning("Failed to fetch rule thresholds: %s", e)
         return jsonify({"message": "failed", "error": "rule_thresholds_fetch_failed"}), 500
@@ -873,6 +929,9 @@ def save_rule_thresholds():
             errors.append(f"Unknown threshold key: '{key}'")
             continue
         guard = _RULE_THRESHOLD_GUARDRAILS[key]
+        if isinstance(value, bool) and bool not in guard["type"]:
+            errors.append(f"'{key}' must be {'/'.join(t.__name__ for t in guard['type'])}, got bool")
+            continue
         if not isinstance(value, guard["type"]):
             errors.append(f"'{key}' must be {'/'.join(t.__name__ for t in guard['type'])}, got {type(value).__name__}")
             continue

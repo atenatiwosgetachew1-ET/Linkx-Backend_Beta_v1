@@ -505,13 +505,24 @@ def fetch_rule_thresholds():
         "smurfing_min_tx_count": 3,
         "smurfing_cumulative_threshold": 900000,
         "reporting_threshold": 300000,
+        "global_min_anomaly_amount": 100.0,
         "circular_flow_check_amounts": False,
+        "circular_flow_amount_tolerance": 0.05,
+        "circular_flow_min_amount": 200.0,
+        "fund_flow_max_downstream": 5,
+        "fund_flow_hub_threshold": 1000,
+        "fund_flow_min_amount": 200.0,
         "late_night_start": 2300,
         "late_night_end": 400,
+        "late_night_min_amount": 500.0,
         "hub_spoke_min_counterparties": 3,
+        "hub_spoke_min_amount": 500.0,
         "activity_spike_multiplier": 3,
         "activity_spike_min_daily_count": 10,
-        "rapid_withdrawal_amount_tolerance": 0.1
+        "activity_spike_min_amount": 500.0,
+        "rapid_withdrawal_amount_tolerance": 0.1,
+        "rapid_withdrawal_min_amount": 250.0,
+        "abnormal_balance_min_change": 500.0,
     }
     try:
         with psycopg.connect(os.getenv('LINKX_POSTGRES_DSN')) as conn:
@@ -786,7 +797,9 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                     scope_clause_t="($session_id IS NULL OR $session_id = '' OR t.session_id = $session_id)",
                     is_provisional=False
                 )
-                s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts, historical_baseline_days=thresholds.get("historical_baseline_days", 30))
+                s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts,
+                      historical_baseline_days=thresholds.get("historical_baseline_days", 30),
+                      abnormal_balance_min_change=thresholds.get("abnormal_balance_min_change", thresholds.get("global_min_anomaly_amount", 500.0)))
             rules_completed.append("ABNORMAL_BALANCE_CHANGE")
             print(f"  [Rule] ABNORMAL_BALANCE_CHANGE ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
         except Exception as e:
@@ -808,7 +821,9 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                     trusted_pair_clause=_trusted_pair_clause('a', 'b'),
                     is_provisional=False
                 )
-                s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts, hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties"))
+                s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts,
+                      hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties", 3),
+                      hub_spoke_min_amount=thresholds.get("hub_spoke_min_amount", thresholds.get("global_min_anomaly_amount", 500.0)))
             rules_completed.append("HUB_AND_SPOKE_OUT")
             print(f"  [Rule] HUB_AND_SPOKE (outgoing) ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
         except Exception as e:
@@ -830,7 +845,9 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                     trusted_pair_clause=_trusted_pair_clause('a', 'b'),
                     is_provisional=False
                 )
-                s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts, hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties"))
+                s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts,
+                      hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties", 3),
+                      hub_spoke_min_amount=thresholds.get("hub_spoke_min_amount", thresholds.get("global_min_anomaly_amount", 500.0)))
             rules_completed.append("HUB_AND_SPOKE_IN")
             print(f"  [Rule] HUB_AND_SPOKE (incoming) ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
         except Exception as e:
@@ -872,7 +889,8 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                     is_provisional=False
                 )
                 s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts,
-                      late_night_start=thresholds.get("late_night_start", 2300), late_night_end=thresholds.get("late_night_end", 400))
+                      late_night_start=thresholds.get("late_night_start", 2300), late_night_end=thresholds.get("late_night_end", 400),
+                      late_night_min_amount=thresholds.get("late_night_min_amount", thresholds.get("global_min_anomaly_amount", 500.0)))
             rules_completed.append("LATE_NIGHT_TX")
             print(f"  [Rule] LATE_NIGHT_TX ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
         except Exception as e:
@@ -914,7 +932,9 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                     scope_clause_t="($session_id IS NULL OR $session_id = '' OR t.session_id = $session_id)",
                     is_provisional=False
                 )
-                s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts, rapid_withdrawal_amount_tolerance=thresholds.get("rapid_withdrawal_amount_tolerance"))
+                s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts,
+                      rapid_withdrawal_amount_tolerance=thresholds.get("rapid_withdrawal_amount_tolerance", 0.1),
+                      rapid_withdrawal_min_amount=thresholds.get("rapid_withdrawal_min_amount", thresholds.get("global_min_anomaly_amount", 250.0)))
             rules_completed.append("RAPID_WITHDRAWAL")
             print(f"  [Rule] RAPID_WITHDRAWAL ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
         except Exception as e:
@@ -935,8 +955,10 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                     scope_clause_t="($session_id IS NULL OR $session_id = '' OR t.session_id = $session_id)"
                 )
                 s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries,
-                      activity_spike_min_daily_count=thresholds.get("activity_spike_min_daily_count"),
-                      activity_spike_multiplier=thresholds.get("activity_spike_multiplier"), pt=pass_through_accounts, historical_baseline_days=thresholds.get("historical_baseline_days", 30))
+                      activity_spike_min_daily_count=thresholds.get("activity_spike_min_daily_count", 10),
+                      activity_spike_multiplier=thresholds.get("activity_spike_multiplier", 3),
+                      activity_spike_min_amount=thresholds.get("activity_spike_min_amount", thresholds.get("global_min_anomaly_amount", 500.0)),
+                      pt=pass_through_accounts, historical_baseline_days=thresholds.get("historical_baseline_days", 30))
             rules_completed.append("ACCOUNT_ACTIVITY_SPIKE")
             print(f"  [Rule] ACCOUNT_ACTIVITY_SPIKE ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
         except Exception as e:
