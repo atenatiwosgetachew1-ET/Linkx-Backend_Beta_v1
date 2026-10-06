@@ -165,7 +165,15 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
     total_anomalies = 0
     try:
         with driver.session() as session:
-            result = session.run(f"MATCH (n:{safe_label})-[r]->(m:{safe_label}) WHERE r.reason IS NOT NULL RETURN n, r, m")
+            if window_id:
+                result = session.run(
+                    f"MATCH (n:{safe_label})-[r]->(m:{safe_label}) "
+                    f"WHERE r.reason IS NOT NULL AND (n.window_id = $window_id OR n.window_id IS NULL OR n.window_id = '') "
+                    f"RETURN n, r, m",
+                    window_id=str(window_id)
+                )
+            else:
+                result = session.run(f"MATCH (n:{safe_label})-[r]->(m:{safe_label}) WHERE r.reason IS NOT NULL RETURN n, r, m")
             for record in result:
                 n = record["n"]
                 r = record["r"]
@@ -244,6 +252,8 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
                     conn.rollback() # Crucial: rollback the failed select so subsequent inserts don't fail
                 # ------------------------------------
                 
+                api_attempted = False
+                api_failed = False
                 for anomaly_type, graph_data in graphs.items():
                     nodes_list = list(graph_data["nodes"].values())
                     edges_list = graph_data["edges"]
@@ -359,19 +369,27 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
                     }
                     
                     evidence_json = json.dumps(handoff_payload, default=str)
-                    # 2. POST to Risk Scoring Async Endpoint
-                    try:
-                        import requests
-                        api_host = os.getenv("LINKX_API_HOST", "172.27.23.95")
-                        api_port = os.getenv("LINKX_API_PORT", "8000")
-                        api_url = f"http://{api_host}:{api_port}/api/risk_scoring/analysis_request"
-                        api_key = os.getenv("LINK_ANALYSIS_API_KEY") or os.getenv("LINKX_RISK_SCORING_API_KEY", "")
-                        headers = {"X-API-Key": api_key, "Content-Type": "application/json"} if api_key else {"Content-Type": "application/json"}
-                        
-                        resp = requests.post(api_url, data=evidence_json, headers=headers, timeout=5)
-                        print(f"[xVigilance-Escalation] Posted findings to Risk Scoring API. Response: {resp.status_code}", flush=True)
-                    except Exception as e:
-                        print(f"[xVigilance-Escalation] Warning: External Risk Scoring API unreachable: {e}", flush=True)
+                    # 2. POST to Risk Scoring Async Endpoint (Attempted only once per window run)
+                    if not api_attempted and not api_failed:
+                        api_attempted = True
+                        try:
+                            import requests
+                            from urllib3.util import Retry
+                            from requests.adapters import HTTPAdapter
+
+                            api_host = os.getenv("LINKX_API_HOST", "172.27.23.95")
+                            api_port = os.getenv("LINKX_API_PORT", "8000")
+                            api_url = f"http://{api_host}:{api_port}/api/risk_scoring/analysis_request"
+                            api_key = os.getenv("LINK_ANALYSIS_API_KEY") or os.getenv("LINKX_RISK_SCORING_API_KEY", "")
+                            headers = {"X-API-Key": api_key, "Content-Type": "application/json"} if api_key else {"Content-Type": "application/json"}
+                            
+                            s = requests.Session()
+                            s.mount("http://", HTTPAdapter(max_retries=Retry(total=0, connect=0, read=0, status=0)))
+                            resp = s.post(api_url, data=evidence_json, headers=headers, timeout=5)
+                            print(f"[xVigilance-Escalation] Posted findings to Risk Scoring API. Response: {resp.status_code}", flush=True)
+                        except Exception as e:
+                            api_failed = True
+                            print(f"[xVigilance-Escalation] Warning: External Risk Scoring API unreachable (single attempt): {e}", flush=True)
                     
                     # 3. Store the graph evidence exactly once
                     evidence_json = json.dumps(handoff_payload, default=str)
@@ -429,7 +447,7 @@ def _neo4j_property_value(value):
     return str(value)
 
 
-def fast_ingest_batch(credentials, session_id, df, batch_number, node_label):
+def fast_ingest_batch(credentials, session_id, df, batch_number, node_label, window_id=None):
     """
     Ingest a DataFrame of transactions directly into Neo4j as nodes.
     This is a FAST path that skips all incremental rule analysis.
@@ -450,6 +468,8 @@ def fast_ingest_batch(credentials, session_id, df, batch_number, node_label):
         clean["created_at"] = datetime.now(timezone.utc).isoformat()
         clean["batch_id"] = str(batch_id)
         clean["nodes_label"] = node_label
+        target_win = row.get("window_id") or window_id or ""
+        clean["window_id"] = str(target_win)
         clean_rows.append(clean)
 
     driver = create_neo4j_driver(credentials)
@@ -1140,6 +1160,7 @@ def consume_firehose():
         with driver.session() as session:
             session.run(f"CREATE INDEX idx_node_id IF NOT EXISTS FOR (n:`{node_label}`) ON (n.NodeId)")
             session.run(f"CREATE INDEX idx_batch_id IF NOT EXISTS FOR (n:`{node_label}`) ON (n.batch_id)")
+            session.run(f"CREATE INDEX idx_window_id IF NOT EXISTS FOR (n:`{node_label}`) ON (n.window_id)")
             session.run(f"CREATE INDEX idx_account_no IF NOT EXISTS FOR (n:`{node_label}`) ON (n.ACCOUNTNO)")
             session.run(f"CREATE INDEX idx_ben_account_no IF NOT EXISTS FOR (n:`{node_label}`) ON (n.BENACCOUNTNO)")
             session.run(f"CREATE INDEX idx_logical_acc IF NOT EXISTS FOR (n:`{node_label}`) ON (n.LOGICAL_ACCOUNTNO)")
@@ -1179,24 +1200,13 @@ def consume_firehose():
                             except Exception:
                                 msg_window_id = str(v)
 
-                # Stream Rewind Auto-Detection:
-                # If an incoming message belongs to an earlier window than what is currently in buffer,
-                # a clock rewind occurred. Discard stale in-memory buffer so old data doesn't mix with rewound data.
-                if buffer and current_buffer_window_id and msg_window_id and msg_window_id < current_buffer_window_id:
-                    print(
-                        f"[xVigilance-Consumer] ⚠️ Stream rewind detected ({current_buffer_window_id} -> {msg_window_id}). "
-                        f"Discarding {len(buffer)} stale in-memory records from abandoned window.",
-                        flush=True
-                    )
-                    buffer.clear()
-                    batch_number = 1
-
                 if msg_window_id:
                     current_buffer_window_id = msg_window_id
 
                 if is_watermark:
-                    wait_while_paused(c, f"watermark window {data.get('window_id')}")
-                    print(f"[xVigilance-Consumer] Received WATERMARK for window {data.get('window_id')}. Flushing buffer...", flush=True)
+                    watermark_win = data.get('window_id') or current_buffer_window_id
+                    wait_while_paused(c, f"watermark window {watermark_win}")
+                    print(f"[xVigilance-Consumer] Received WATERMARK for window {watermark_win}. Flushing buffer...", flush=True)
                     if buffer:
 
                         df = pd.DataFrame(buffer)
@@ -1206,7 +1216,7 @@ def consume_firehose():
                         # -------------------------------------
 
                         print(f"[xVigilance-Consumer] Fast-ingesting {len(df)} remaining records to Neo4j...", flush=True)
-                        fast_ingest_batch(credentials, session_id, df, batch_number, node_label)
+                        fast_ingest_batch(credentials, session_id, df, batch_number, node_label, window_id=watermark_win)
                         buffer.clear()
                         batch_number += 1
 
@@ -1252,21 +1262,30 @@ def consume_firehose():
                         # PROMOTE: Read anomaly relationships and save to PostgreSQL
                         promote_anomalies_to_postgres(credentials, session_id, data.get('window_id'), execution_meta={'total_records': data.get('total_records'), 'batch_id': data.get('batch_id'), 'elastic_endpoint': data.get('elastic_endpoint'), 'worker_node': data.get('worker_node')})
                     
-                    # EPHEMERAL GRAPH WIPE: Purge nodes for this window to protect RAM
-                    print(f"[xVigilance-Consumer] Executing Ephemeral Graph Wipe for window {data.get('window_id')}...", flush=True)
+                    # EPHEMERAL GRAPH WIPE: Purge nodes for this specific window to protect RAM
+                    target_window = data.get('window_id') or current_buffer_window_id
+                    print(f"[xVigilance-Consumer] Executing Ephemeral Graph Wipe for window {target_window}...", flush=True)
                     try:
                         safe_wipe_label = f"`{str(node_label).replace('`', '')}`"
                         driver = create_neo4j_driver(credentials)
                         deleted_total = 0
                         with driver.session() as session:
                             while True:
-                                result = session.run(f"MATCH (n:{safe_wipe_label}) WITH n LIMIT 10000 DETACH DELETE n RETURN count(n) AS deleted")
+                                if target_window:
+                                    result = session.run(
+                                        f"MATCH (n:{safe_wipe_label}) "
+                                        f"WHERE n.window_id = $target_window OR n.window_id IS NULL OR n.window_id = '' "
+                                        f"WITH n LIMIT 10000 DETACH DELETE n RETURN count(n) AS deleted",
+                                        target_window=str(target_window)
+                                    )
+                                else:
+                                    result = session.run(f"MATCH (n:{safe_wipe_label}) WITH n LIMIT 10000 DETACH DELETE n RETURN count(n) AS deleted")
                                 deleted_batch = result.single()["deleted"]
                                 deleted_total += deleted_batch
                                 if deleted_batch == 0:
                                     break
                         driver.close()
-                        print(f"[xVigilance-Consumer] Ephemeral Wipe complete: {deleted_total} nodes purged.", flush=True)
+                        print(f"[xVigilance-Consumer] Ephemeral Wipe complete: {deleted_total} nodes purged for window {target_window}.", flush=True)
                     except Exception as wipe_e:
                         print(f"[xVigilance-Consumer] Warning: Failed to execute graph wipe: {wipe_e}", flush=True)
                         
@@ -1290,6 +1309,13 @@ def consume_firehose():
                     current_buffer_window_id = None
                     continue
 
+                # Stamp window_id onto transaction dict if available
+                if isinstance(data, dict):
+                    if msg_window_id:
+                        data["window_id"] = msg_window_id
+                    elif current_buffer_window_id and "window_id" not in data:
+                        data["window_id"] = current_buffer_window_id
+
                 # It's a standard transaction — buffer it
                 buffer.append(data)
                 
@@ -1304,7 +1330,7 @@ def consume_firehose():
                     print(f"[xVigilance-Consumer] Fast-ingesting micro-batch {batch_number} ({len(df)} records) to Neo4j...", flush=True)
                     t0 = time.time()
                     try:
-                        fast_ingest_batch(credentials, session_id, df, batch_number, node_label)
+                        fast_ingest_batch(credentials, session_id, df, batch_number, node_label, window_id=current_buffer_window_id)
                         ingest_time = time.time() - t0
                         print(f"[xVigilance-Consumer] Micro-batch {batch_number} ingested in {ingest_time:.1f}s.", flush=True)
                     except Exception as e:
