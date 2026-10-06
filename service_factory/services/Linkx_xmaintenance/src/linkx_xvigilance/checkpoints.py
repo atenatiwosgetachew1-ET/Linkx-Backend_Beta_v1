@@ -99,7 +99,12 @@ def finish_slice_run(
     summary: dict = None,
     error_message: str = None,
 ):
-    status_str = "queued" if success else "failed"
+    if not success:
+        status_str = "failed"
+    elif records_count == 0:
+        status_str = "succeeded"
+    else:
+        status_str = "queued"
     summary_json = json.dumps(summary or {})
 
     with connect(application_name="xvigilance-slice-finish") as conn:

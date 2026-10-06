@@ -1225,6 +1225,8 @@ def consume_firehose():
                     # ============================================================
                     if SHUTTING_DOWN:
                         print("[xVigilance-Consumer] Shutdown requested — skipping analysis, proceeding to cleanup.", flush=True)
+                    elif not buffer and data.get('total_records', 0) == 0:
+                        print(f"[xVigilance-Consumer] Window {data.get('window_id')} has 0 records. Skipping graph analysis.", flush=True)
                     else:
                         print("[xVigilance-Consumer] Ingestion complete. Running FULL batch LA rules (Smurfing, Circular Flow, Hub&Spoke, etc.)...", flush=True)
                         t0 = time.time()

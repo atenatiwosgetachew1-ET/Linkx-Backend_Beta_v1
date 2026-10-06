@@ -255,11 +255,22 @@ def xvigilance_health():
                 cur.execute("""
                     SELECT id, window_start, window_end, status, records_count, duration_ms, error_message, finished_at
                     FROM xvigilance_slice_runs
+                    WHERE records_count > 0 OR status = 'running'
                     ORDER BY window_end DESC
                     LIMIT %s
                 """, (limit,))
+                run_rows = cur.fetchall()
+                if not run_rows:
+                    cur.execute("""
+                        SELECT id, window_start, window_end, status, records_count, duration_ms, error_message, finished_at
+                        FROM xvigilance_slice_runs
+                        ORDER BY window_end DESC
+                        LIMIT %s
+                    """, (limit,))
+                    run_rows = cur.fetchall()
+
                 runs = []
-                for r in cur.fetchall():
+                for r in run_rows:
                     runs.append({
                         "run_id": r[0],
                         "window_start": r[1],

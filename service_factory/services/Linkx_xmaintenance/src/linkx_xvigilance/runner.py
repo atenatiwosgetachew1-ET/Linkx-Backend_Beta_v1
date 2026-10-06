@@ -278,21 +278,24 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
 
                 if kafka_available and kafka_producer:
                     import json
-                    watermark = {
-                        "event": "WINDOW_COMPLETE",
-                        "window_id": window_start.isoformat(),
-                        "total_records": total_records,
-                        "batch_id": run_id,
-                        "elastic_endpoint": config.get('es_direct_index', 'mobile_banking_transactions'),
-                        "worker_node": "Linkx_xmaintenance"
-                    }
-                    kafka_producer.send(
-                        topic=kafka_topic,
-                        value=watermark,
-                        headers=[("source", b"xvigilance-daemon"), ("session_id", b"XVIGILANCE_FINDINGS"), ("type", b"watermark")]
-                    )
-                    kafka_producer.flush()
-                    print(f"[xvigilance] Watermark fired. 100% of {total_records} transactions securely routed to Kafka.", flush=True)
+                    if total_records > 0:
+                        watermark = {
+                            "event": "WINDOW_COMPLETE",
+                            "window_id": window_start.isoformat(),
+                            "total_records": total_records,
+                            "batch_id": run_id,
+                            "elastic_endpoint": config.get('es_direct_index', 'mobile_banking_transactions'),
+                            "worker_node": "Linkx_xmaintenance"
+                        }
+                        kafka_producer.send(
+                            topic=kafka_topic,
+                            value=watermark,
+                            headers=[("source", b"xvigilance-daemon"), ("session_id", b"XVIGILANCE_FINDINGS"), ("type", b"watermark")]
+                        )
+                        kafka_producer.flush()
+                        print(f"[xvigilance] Watermark fired. 100% of {total_records} transactions securely routed to Kafka.", flush=True)
+                    else:
+                        print(f"[xvigilance] Window [{start_str} -> {end_str}] has 0 records. Slice run completed immediately without queuing.", flush=True)
 
                 duration_ms = int((time.time() - t0) * 1000)
 
