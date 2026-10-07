@@ -1151,6 +1151,7 @@ def consume_firehose():
     batch_size = 10000
     batch_number = 1
     current_buffer_window_id = None
+    last_idle_log_time = time.time()
 
     credentials = _neo4j_credentials(session_id)
     node_label = rule_to_node_label("bank transactions", session_id)
@@ -1361,6 +1362,15 @@ def consume_firehose():
                         print(f"[xVigilance-Consumer] Error during Neo4j insertion: {e}", flush=True)
                     buffer.clear()
                     batch_number += 1
+
+            # When Kafka consumer times out (consumer_timeout_ms=1000) waiting for messages
+            now = time.time()
+            if (now - last_idle_log_time) >= 60.0:
+                if buffer:
+                    print(f"[xVigilance-Consumer] In-flight buffer active ({len(buffer)} records buffered for window {current_buffer_window_id}). Awaiting next records or watermark...", flush=True)
+                else:
+                    print("[xVigilance-Consumer] Standing by — Kafka topic idle, waiting for new window stream...", flush=True)
+                last_idle_log_time = now
 
         except Exception as e:
             print(f"[xVigilance-Consumer] FATAL KAFKA ERROR in consumer loop: {e}", flush=True)
