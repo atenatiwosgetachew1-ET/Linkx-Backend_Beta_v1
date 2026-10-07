@@ -1326,8 +1326,8 @@ def consume_firehose():
                                         cur.execute("UPDATE xvigilance_slice_runs SET status = 'succeeded', finished_at = NOW() WHERE id = %s", (int(batch_id),))
                                     except Exception:
                                         cur.execute("UPDATE xvigilance_slice_runs SET status = 'succeeded', finished_at = NOW() WHERE id = %s", (batch_id,))
-                                if win_id:
-                                    cur.execute("UPDATE xvigilance_slice_runs SET status = 'succeeded', finished_at = NOW() WHERE (id = %s OR window_start = %s OR window_end = %s OR window_end <= %s) AND status = 'queued'", (int(batch_id) if batch_id else -1, str(win_id), str(win_id), str(win_id)))
+                                elif win_id:
+                                    cur.execute("UPDATE xvigilance_slice_runs SET status = 'succeeded', finished_at = NOW() WHERE window_start = %s OR window_end = %s", (str(win_id), str(win_id)))
                             conn.commit()
                         print(f"[xVigilance-Consumer] Checkpoint total_graph_analyzed advanced by {data.get('total_records', 0)}.", flush=True)
                     except Exception as pg_e:
