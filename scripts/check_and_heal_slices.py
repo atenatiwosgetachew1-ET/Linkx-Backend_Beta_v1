@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 import os
-import psycopg
+try:
+    import psycopg
+except ImportError:
+    import psycopg2 as psycopg
 
 def main():
     dsn = os.getenv("LINKX_POSTGRES_DSN")
