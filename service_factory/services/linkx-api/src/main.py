@@ -837,6 +837,10 @@ _DEFAULT_RULE_THRESHOLDS = {
     "rapid_withdrawal_amount_tolerance": 0.1,
     "rapid_withdrawal_min_amount": 250.0,
     "abnormal_balance_min_change": 500.0,
+    "abnormal_balance_min_tx_amount": 1000.0,
+    "hub_spoke_min_single_amount": 500.0,
+    "just_below_threshold_min_count": 2,
+    "just_below_threshold_ratio": 0.90,
 }
 
 _RULE_THRESHOLD_GUARDRAILS = {
@@ -845,6 +849,8 @@ _RULE_THRESHOLD_GUARDRAILS = {
     "smurfing_min_tx_count":           {"type": (int,),       "min": 2,     "max": 100},
     "smurfing_cumulative_threshold":   {"type": (int, float), "min": 5000,  "max": 50000000},
     "reporting_threshold":             {"type": (int, float), "min": 1000,  "max": 10000000},
+    "just_below_threshold_min_count":  {"type": (int,),       "min": 1,     "max": 50},
+    "just_below_threshold_ratio":      {"type": (float, int), "min": 0.50,  "max": 0.99},
 
     # Global Anomaly Floor
     "global_min_anomaly_amount":       {"type": (int, float), "min": 0,     "max": 10000000},
@@ -867,6 +873,7 @@ _RULE_THRESHOLD_GUARDRAILS = {
     # Hub and Spoke
     "hub_spoke_min_counterparties":    {"type": (int,),       "min": 2,     "max": 50},
     "hub_spoke_min_amount":            {"type": (int, float), "min": 0,     "max": 10000000},
+    "hub_spoke_min_single_amount":     {"type": (int, float), "min": 0,     "max": 10000000},
 
     # Activity Spike
     "activity_spike_multiplier":       {"type": (int, float), "min": 1.5,   "max": 20},
@@ -879,6 +886,7 @@ _RULE_THRESHOLD_GUARDRAILS = {
 
     # Abnormal Balance Change
     "abnormal_balance_min_change":     {"type": (int, float), "min": 0,     "max": 10000000},
+    "abnormal_balance_min_tx_amount":  {"type": (int, float), "min": 0,     "max": 10000000},
 }
 
 
