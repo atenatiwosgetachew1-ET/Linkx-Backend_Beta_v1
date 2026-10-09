@@ -255,7 +255,7 @@ def xvigilance_health():
                 cur.execute("""
                     SELECT id, window_start, window_end, status, records_count, duration_ms, error_message, finished_at
                     FROM xvigilance_slice_runs
-                    WHERE records_count > 0 OR status = 'running'
+                    WHERE records_count > 0 OR status IN ('running', 'queued', 'analyzing')
                     ORDER BY window_end DESC
                     LIMIT %s
                 """, (limit,))

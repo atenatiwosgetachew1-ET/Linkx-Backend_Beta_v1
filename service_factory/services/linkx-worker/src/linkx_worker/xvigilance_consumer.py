@@ -62,6 +62,58 @@ def handle_shutdown(signum, frame):
         print(f"[xVigilance-Consumer] Received {sig_name} again. Already shutting down — please wait.", flush=True)
 
 
+_last_marked_analyzing_window = None
+
+def _mark_window_analyzing(window_id: str, batch_id: int = None):
+    """Transitions a slice run row in PostgreSQL from 'queued' to 'analyzing'."""
+    global _last_marked_analyzing_window
+    if not window_id or window_id == _last_marked_analyzing_window:
+        return
+    try:
+        pg_dsn = os.getenv('LINKX_POSTGRES_DSN')
+        if not pg_dsn:
+            try:
+                with open('/opt/linkx-worker/.env', 'r') as env_f:
+                    for env_l in env_f:
+                        if env_l.startswith('LINKX_POSTGRES_DSN='):
+                            pg_dsn = env_l.strip().split('=', 1)[1].strip(' "\'')
+            except Exception:
+                pass
+        if not pg_dsn:
+            return
+
+        with psycopg.connect(pg_dsn) as conn:
+            with conn.cursor() as cur:
+                updated = 0
+                if batch_id:
+                    try:
+                        cur.execute(
+                            "UPDATE xvigilance_slice_runs SET status = 'analyzing' WHERE id = %s AND status = 'queued'",
+                            (int(batch_id),)
+                        )
+                        updated = cur.rowcount
+                    except Exception:
+                        pass
+                if updated == 0:
+                    cur.execute(
+                        """
+                        UPDATE xvigilance_slice_runs 
+                        SET status = 'analyzing'
+                        WHERE (window_start = %s::timestamptz OR window_end = %s::timestamptz 
+                               OR (window_start <= %s::timestamptz AND window_end >= %s::timestamptz))
+                          AND status = 'queued'
+                        """,
+                        (str(window_id), str(window_id), str(window_id), str(window_id))
+                    )
+                    updated = cur.rowcount
+            conn.commit()
+            _last_marked_analyzing_window = window_id
+            if updated > 0:
+                print(f"[xVigilance-Audit] 🔬 Transitioned slice run {window_id} (batch_id={batch_id}) from 'queued' -> 'analyzing' ({updated} row updated).", flush=True)
+    except Exception as e:
+        print(f"[xVigilance-Audit] Warning: Failed to mark window {window_id} as 'analyzing': {e}", flush=True)
+
+
 
 def calculate_fraud_score(anomaly_type, nodes, edges, config=None, version_id="hardcoded"):
     # Fallback default configuration
@@ -1210,9 +1262,10 @@ def consume_firehose():
                 if not data:
                     continue
                     
-                # Check if it's the watermark and extract window_id
+                # Check if it's the watermark and extract window_id / batch_id
                 is_watermark = False
                 msg_window_id = None
+                msg_batch_id = None
                 if msg.headers:
                     for k, v in msg.headers:
                         if k == "type" and v == b"watermark":
@@ -1222,12 +1275,20 @@ def consume_firehose():
                                 msg_window_id = v.decode("utf-8")
                             except Exception:
                                 msg_window_id = str(v)
+                        elif k == "batch_id" and v:
+                            try:
+                                msg_batch_id = int(v.decode("utf-8"))
+                            except Exception:
+                                pass
 
                 if msg_window_id:
                     current_buffer_window_id = msg_window_id
+                    _mark_window_analyzing(msg_window_id, batch_id=msg_batch_id)
 
                 if is_watermark:
                     watermark_win = data.get('window_id') or current_buffer_window_id
+                    watermark_batch_id = data.get('batch_id') or msg_batch_id
+                    _mark_window_analyzing(watermark_win, batch_id=watermark_batch_id)
                     wait_while_paused(c, f"watermark window {watermark_win}")
                     print(f"[xVigilance-Consumer] Received WATERMARK for window {watermark_win}. Flushing buffer...", flush=True)
                     if buffer:
@@ -1360,6 +1421,7 @@ def consume_firehose():
                     print(f"[xVigilance-Consumer] Window {data.get('window_id')} finalized successfully.", flush=True)
                     batch_number = 1  # Reset batch counter for next window
                     current_buffer_window_id = None
+                    _last_marked_analyzing_window = None
                     continue
 
                 # Stamp window_id onto transaction dict if available

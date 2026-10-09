@@ -72,7 +72,7 @@ def clean_zombie_runs():
 
 
 def get_in_flight_slices_count(feed_name: str = "hourly_transaction_detective") -> int:
-    """Returns the count of slices currently waiting in Kafka (status = 'queued')."""
+    """Returns the count of slices currently in Kafka or being analyzed (status IN ('queued', 'analyzing'))."""
     try:
         with connect(application_name="xvigilance-backpressure") as conn:
             with conn.cursor() as cur:
@@ -80,7 +80,7 @@ def get_in_flight_slices_count(feed_name: str = "hourly_transaction_detective") 
                     """
                     SELECT count(*) 
                     FROM xvigilance_slice_runs 
-                    WHERE feed_name = %s AND status = 'queued';
+                    WHERE feed_name = %s AND status IN ('queued', 'analyzing');
                     """,
                     (feed_name,),
                 )
@@ -126,6 +126,7 @@ def finish_slice_run(
     else:
         status_str = "queued"
     summary_json = json.dumps(summary or {})
+    finished_at_val = datetime.now(timezone.utc) if status_str in ("succeeded", "failed", "aborted") else None
 
     with connect(application_name="xvigilance-slice-finish") as conn:
         with conn.cursor() as cur:
@@ -139,10 +140,10 @@ def finish_slice_run(
                     overrun_occurred = %s,
                     summary = %s::jsonb,
                     error_message = %s,
-                    finished_at = NOW()
+                    finished_at = %s
                 WHERE id = %s
                 """,
-                (status_str, records_count, duration_ms, overrun_occurred, summary_json, error_message, run_id),
+                (status_str, records_count, duration_ms, overrun_occurred, summary_json, error_message, finished_at_val, run_id),
             )
 
             # 2. Advance high-water mark if successful, ONLY if it hasn't been rewound manually!

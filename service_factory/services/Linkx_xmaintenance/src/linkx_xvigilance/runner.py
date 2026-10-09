@@ -236,11 +236,11 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
                 continue
 
             # 3.5 Backpressure Flow Control: Bounded in-flight queue to prevent storage overflow
-            max_in_flight = int(os.getenv("XVIGILANCE_MAX_IN_FLIGHT_SLICES", "1"))
+            max_in_flight = int(os.getenv("XVIGILANCE_MAX_IN_FLIGHT_SLICES", "3"))
             in_flight = get_in_flight_slices_count(feed_name=feed_name)
             if in_flight >= max_in_flight:
                 print(
-                    f"[xvigilance] ⏳ Backpressure throttle: {in_flight} slice(s) currently waiting in queue "
+                    f"[xvigilance] ⏳ Backpressure throttle: {in_flight} slice(s) currently in pipeline "
                     f"(limit: {max_in_flight}). Resting 15s for Node-21 consumer to finish before extracting next hour...",
                     flush=True,
                 )
@@ -274,7 +274,8 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
                             headers = [
                                 ("source", b"xvigilance-daemon"),
                                 ("session_id", b"XVIGILANCE_FINDINGS"),
-                                ("window_id", window_start.isoformat().encode('utf-8'))
+                                ("window_id", window_start.isoformat().encode('utf-8')),
+                                ("batch_id", str(run_id).encode('utf-8'))
                             ]
                             
                             # Fire to Kafka (internal buffer handles efficient batching)
