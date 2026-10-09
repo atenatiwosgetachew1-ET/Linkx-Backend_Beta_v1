@@ -26,6 +26,10 @@ def fetch_rule_thresholds():
         "rapid_withdrawal_amount_tolerance": 0.1,
         "rapid_withdrawal_min_amount": 250.0,
         "abnormal_balance_min_change": 500.0,
+        "hub_spoke_min_single_amount": 500.0,
+        "abnormal_balance_min_tx_amount": 1000.0,
+        "just_below_threshold_min_count": 2,
+        "just_below_threshold_ratio": 0.90,
     }
     try:
         dsn = os.getenv('DATABASE_URL') or os.getenv('LINKX_POSTGRES_DSN')
@@ -580,18 +584,20 @@ def get_abnormal_balance_query(label, scope_clause_t, is_provisional=False, incr
     WITH txns[i] AS current, txns[i-1] AS previous, txns[0..i] AS history
     WITH current, previous,
          abs(coalesce(toFloat(current.SENDERPREVIOUSBALANCE), 0.0) - coalesce(toFloat(previous.SENDERPREVIOUSBALANCE), 0.0)) AS current_change,
+         coalesce(toFloat(current.AMOUNTINBIRR), toFloat(current.AMOUNT), toFloat(current.amount), 0.0) AS current_amount,
          history
     WHERE current_change >= $abnormal_balance_min_change
-    WITH current, previous, current_change, history
-    WITH current, previous, current_change,
+      AND current_amount >= coalesce($abnormal_balance_min_tx_amount, 0.0)
+    WITH current, previous, current_change, current_amount, history
+    WITH current, previous, current_change, current_amount,
          [idx IN range(1, size(history)-1) | abs(coalesce(toFloat(history[idx].SENDERPREVIOUSBALANCE), 0.0) - coalesce(toFloat(history[idx-1].SENDERPREVIOUSBALANCE), 0.0))] AS history_changes
-    WITH current, previous, current_change,
+    WITH current, previous, current_change, current_amount,
          CASE WHEN size(history_changes) > 0 THEN reduce(s = 0.0, x IN history_changes | s + x) / size(history_changes) ELSE 0.0 END AS avg_change
     WHERE current_change > (avg_change * 3)
     MERGE (previous)-[r:ABNORMAL_BALANCE_CHANGE {_SID}]->(current)
     SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#196e08', r.textcolor = '#eeeeee', r.provisional = {prov_str},
         r.reason = 'balance change exceeds recent account baseline',
-        r.change = current_change, r.average_recent_change = avg_change, r.threshold_multiplier = 3,
+        r.change = current_change, r.amount = current_amount, r.average_recent_change = avg_change, r.threshold_multiplier = 3,
         r.edge_semantic = 'TEMPORAL_SEQUENCE', r.financial_flow = false, r.directed_display = true
     """
 
@@ -609,6 +615,7 @@ def get_hub_and_spoke_out_query(label, scope_clause_t, trusted_pair_clause, is_p
     WHERE ({scope_clause_t})
       AND coalesce(t.IGNORE_LOGICAL, false) = false
       AND t.LOGICAL_BENACCOUNTNO IS NOT NULL AND t.LOGICAL_BENACCOUNTNO <> ''
+      AND coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), 0.0) >= coalesce($hub_spoke_min_single_amount, 0.0)
       {match_filters if incremental_batch_id else "AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> ''"}
     WITH {"hub, tx_day," if incremental_batch_id else "t.LOGICAL_ACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day,"} collect(t) AS txns, count(DISTINCT t.LOGICAL_BENACCOUNTNO) AS spoke_count
     WITH hub, tx_day, txns, spoke_count,
@@ -643,6 +650,7 @@ def get_hub_and_spoke_in_query(label, scope_clause_t, trusted_pair_clause, is_pr
     WHERE ({scope_clause_t})
       AND coalesce(t.IGNORE_LOGICAL, false) = false
       AND t.LOGICAL_ACCOUNTNO IS NOT NULL AND t.LOGICAL_ACCOUNTNO <> ''
+      AND coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), 0.0) >= coalesce($hub_spoke_min_single_amount, 0.0)
       {match_filters if incremental_batch_id else "AND t.TRANSACTIONDATE IS NOT NULL AND t.TRANSACTIONDATE <> ''"}
     WITH {"hub, tx_day," if incremental_batch_id else "t.LOGICAL_BENACCOUNTNO AS hub, t.TRANSACTIONDATE AS tx_day,"} collect(t) AS txns, count(DISTINCT t.LOGICAL_ACCOUNTNO) AS spoke_count
     WITH hub, tx_day, txns, spoke_count,
@@ -707,6 +715,8 @@ def get_shared_identifier_query(label, scope_clause_t, is_provisional=False, inc
 
 def get_rapid_withdrawal_query(label, scope_clause_t, is_provisional=False, incremental_batch_id=None):
     prov_str = "true" if is_provisional else "false"
+    trusted_clause_t = _trusted_node_clause('t')
+    trusted_clause_pair = _trusted_pair_clause('t1', 't2')
     seed_block = ""
     match_filters = ""
     if incremental_batch_id:
@@ -721,12 +731,14 @@ def get_rapid_withdrawal_query(label, scope_clause_t, is_provisional=False, incr
     MATCH (t:{label})
     WHERE ({scope_clause_t})
       AND coalesce(t.IGNORE_LOGICAL, false) = false
+      AND {trusted_clause_t}
       {where_filter}
     WITH {with_acc} count(t) AS cnt
     WHERE cnt >= 1
     MATCH (t:{label})
     WHERE ({scope_clause_t})
       AND coalesce(t.IGNORE_LOGICAL, false) = false
+      AND {trusted_clause_t}
       AND (t.LOGICAL_ACCOUNTNO = acc OR t.LOGICAL_BENACCOUNTNO = acc)
       AND t.TRANSACTIONDATE = tx_day
     WITH acc, tx_day, collect(t) AS txns
@@ -743,6 +755,7 @@ def get_rapid_withdrawal_query(label, scope_clause_t, is_provisional=False, incr
       WHERE in_amt >= $rapid_withdrawal_min_amount AND out_amt >= $rapid_withdrawal_min_amount
         AND abs(in_amt - out_amt) <= (in_amt * $rapid_withdrawal_amount_tolerance)
         AND NOT toString(acc) IN $pt AND NOT acc IN $pt
+        AND {trusted_clause_pair}
       MERGE (t1)-[r:RAPID_WITHDRAWAL {_SID}]->(t2)
       SET r.is_evidence = true, r.anomaly_score = 0.4, r.bgcolor = '#e07624', r.textcolor = '#eeeeee', r.provisional = {prov_str},
           r.reason = 'funds rapidly withdrawn or passed through on same day',
@@ -886,14 +899,20 @@ def get_just_below_threshold_query(label, scope_clause_t, is_provisional=False, 
       {seed_filter}
       AND coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), 0.0) > 0
       AND {_trusted_node_clause('t')}
-    WITH t, coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), 0.0) AS amt
-    WHERE amt >= ($single_tx_threshold * 0.9) AND amt < $single_tx_threshold
+    WITH t, coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), 0.0) AS amt,
+         coalesce(t.LOGICAL_ACCOUNTNO, t.ACCOUNTNO) AS acc
+    WHERE acc IS NOT NULL AND acc <> '' AND NOT toString(acc) IN $pt AND NOT acc IN $pt
+      AND amt >= ($single_tx_threshold * coalesce($just_below_threshold_ratio, 0.90)) AND amt < $single_tx_threshold
+    WITH acc, collect(t) AS txns, count(t) AS tx_count
+    WHERE tx_count >= coalesce($just_below_threshold_min_count, 2)
+    UNWIND txns AS t
     MERGE (t)-[r:JUST_BELOW_THRESHOLD {_SID}]->(t)
     SET r.is_evidence = true, r.anomaly_score = 0.3, r.bgcolor = '#dba124',
         r.provisional = {prov_str},
-        r.reason = 'transaction amount is suspiciously close to reporting threshold',
-        r.amount = amt,
+        r.reason = 'repeated transactions suspiciously close to reporting threshold (' + toString(tx_count) + ' txns)',
+        r.amount = coalesce(toFloat(t.AMOUNTINBIRR), toFloat(t.AMOUNT), toFloat(t.amount), 0.0),
         r.threshold = $single_tx_threshold,
+        r.tx_count = tx_count,
         r.edge_semantic = 'NODE_FLAG', r.financial_flow = false, r.directed_display = false
     """
 
@@ -1578,7 +1597,8 @@ def batch_graph_analysis_transactions(
         # ----------------------------
         query = get_abnormal_balance_query(label=label, scope_clause_t=scope_full, is_provisional=False)
         session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, historical_baseline_days=30,
-                    abnormal_balance_min_change=thresholds.get("abnormal_balance_min_change", thresholds.get("global_min_anomaly_amount", 500.0)))
+                    abnormal_balance_min_change=thresholds.get("abnormal_balance_min_change", thresholds.get("global_min_anomaly_amount", 500.0)),
+                    abnormal_balance_min_tx_amount=thresholds.get("abnormal_balance_min_tx_amount", 1000.0))
 
         # ----------------------------
         # 6. HUB_AND_SPOKE (outgoing)
@@ -1586,7 +1606,8 @@ def batch_graph_analysis_transactions(
         query = get_hub_and_spoke_out_query(label=label, scope_clause_t=scope_full, trusted_pair_clause=_trusted_pair_clause('a', 'b'), is_provisional=False)
         session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts,
                     hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties", 3),
-                    hub_spoke_min_amount=thresholds.get("hub_spoke_min_amount", thresholds.get("global_min_anomaly_amount", 500.0)))
+                    hub_spoke_min_amount=thresholds.get("hub_spoke_min_amount", thresholds.get("global_min_anomaly_amount", 500.0)),
+                    hub_spoke_min_single_amount=thresholds.get("hub_spoke_min_single_amount", 500.0))
 
         # ----------------------------
         # 7. HUB_AND_SPOKE (incoming)
@@ -1594,7 +1615,8 @@ def batch_graph_analysis_transactions(
         query = get_hub_and_spoke_in_query(label=label, scope_clause_t=scope_full, trusted_pair_clause=_trusted_pair_clause('a', 'b'), is_provisional=False)
         session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts,
                     hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties", 3),
-                    hub_spoke_min_amount=thresholds.get("hub_spoke_min_amount", thresholds.get("global_min_anomaly_amount", 500.0)))
+                    hub_spoke_min_amount=thresholds.get("hub_spoke_min_amount", thresholds.get("global_min_anomaly_amount", 500.0)),
+                    hub_spoke_min_single_amount=thresholds.get("hub_spoke_min_single_amount", 500.0))
 
         # ----------------------------
         # 8. SHARED_IDENTIFIER
@@ -1614,7 +1636,10 @@ def batch_graph_analysis_transactions(
         # 10. JUST_BELOW_THRESHOLD
         # ----------------------------
         query = get_just_below_threshold_query(label=label, scope_clause_t=scope_full, is_provisional=False)
-        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, single_tx_threshold=thresholds.get("reporting_threshold", 300000))
+        session.run(query, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts,
+                    single_tx_threshold=thresholds.get("reporting_threshold", 300000),
+                    just_below_threshold_min_count=thresholds.get("just_below_threshold_min_count", 2),
+                    just_below_threshold_ratio=thresholds.get("just_below_threshold_ratio", 0.90))
 
         # ----------------------------
         # 11. RAPID_WITHDRAWAL
@@ -1760,19 +1785,22 @@ def incremental_graph_analysis_transactions(
         # 5. ABNORMAL_BALANCE_CHANGE
         query = get_abnormal_balance_query(label=label, scope_clause_t=scope_inc, is_provisional=True, incremental_batch_id="$batch_id")
         session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, historical_baseline_days=30, threshold=threshold_multiplier,
-                    abnormal_balance_min_change=thresholds.get("abnormal_balance_min_change", thresholds.get("global_min_anomaly_amount", 500.0)))
+                    abnormal_balance_min_change=thresholds.get("abnormal_balance_min_change", thresholds.get("global_min_anomaly_amount", 500.0)),
+                    abnormal_balance_min_tx_amount=thresholds.get("abnormal_balance_min_tx_amount", 1000.0))
 
         # 6. HUB_AND_SPOKE (outgoing)
         query = get_hub_and_spoke_out_query(label=label, scope_clause_t=scope_inc, trusted_pair_clause=_trusted_pair_clause('a', 'b'), is_provisional=True, incremental_batch_id="$batch_id")
         session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts,
                     hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties", 3),
-                    hub_spoke_min_amount=thresholds.get("hub_spoke_min_amount", thresholds.get("global_min_anomaly_amount", 500.0)))
+                    hub_spoke_min_amount=thresholds.get("hub_spoke_min_amount", thresholds.get("global_min_anomaly_amount", 500.0)),
+                    hub_spoke_min_single_amount=thresholds.get("hub_spoke_min_single_amount", 500.0))
 
         # 7. HUB_AND_SPOKE (incoming)
         query = get_hub_and_spoke_in_query(label=label, scope_clause_t=scope_inc, trusted_pair_clause=_trusted_pair_clause('a', 'b'), is_provisional=True, incremental_batch_id="$batch_id")
         session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts,
                     hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties", 3),
-                    hub_spoke_min_amount=thresholds.get("hub_spoke_min_amount", thresholds.get("global_min_anomaly_amount", 500.0)))
+                    hub_spoke_min_amount=thresholds.get("hub_spoke_min_amount", thresholds.get("global_min_anomaly_amount", 500.0)),
+                    hub_spoke_min_single_amount=thresholds.get("hub_spoke_min_single_amount", 500.0))
 
         # 8. SHARED_IDENTIFIER
         query = get_shared_identifier_query(label=label, scope_clause_t=scope_inc, is_provisional=True, incremental_batch_id="$batch_id")
@@ -1786,7 +1814,10 @@ def incremental_graph_analysis_transactions(
 
         # 10. JUST_BELOW_THRESHOLD
         query = get_just_below_threshold_query(label=label, scope_clause_t=scope_inc, is_provisional=True, incremental_batch_id="$batch_id")
-        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts, single_tx_threshold=thresholds.get("reporting_threshold", 300000))
+        session.run(query, batch_id=batch_id, session_id=session_param, trusted_entries=trusted_entries, pt=pass_through_accounts,
+                    single_tx_threshold=thresholds.get("reporting_threshold", 300000),
+                    just_below_threshold_min_count=thresholds.get("just_below_threshold_min_count", 2),
+                    just_below_threshold_ratio=thresholds.get("just_below_threshold_ratio", 0.90))
 
         # 11. RAPID_WITHDRAWAL
         query = get_rapid_withdrawal_query(label=label, scope_clause_t=scope_inc, is_provisional=True, incremental_batch_id="$batch_id")

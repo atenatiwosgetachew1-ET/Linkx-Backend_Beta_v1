@@ -575,6 +575,10 @@ def fetch_rule_thresholds():
         "rapid_withdrawal_amount_tolerance": 0.1,
         "rapid_withdrawal_min_amount": 250.0,
         "abnormal_balance_min_change": 500.0,
+        "hub_spoke_min_single_amount": 500.0,
+        "abnormal_balance_min_tx_amount": 1000.0,
+        "just_below_threshold_min_count": 2,
+        "just_below_threshold_ratio": 0.90,
     }
     try:
         with psycopg.connect(os.getenv('LINKX_POSTGRES_DSN')) as conn:
@@ -851,7 +855,8 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 )
                 s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts,
                       historical_baseline_days=thresholds.get("historical_baseline_days", 30),
-                      abnormal_balance_min_change=thresholds.get("abnormal_balance_min_change", thresholds.get("global_min_anomaly_amount", 500.0)))
+                      abnormal_balance_min_change=thresholds.get("abnormal_balance_min_change", thresholds.get("global_min_anomaly_amount", 500.0)),
+                      abnormal_balance_min_tx_amount=thresholds.get("abnormal_balance_min_tx_amount", 1000.0))
             rules_completed.append("ABNORMAL_BALANCE_CHANGE")
             print(f"  [Rule] ABNORMAL_BALANCE_CHANGE ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
         except Exception as e:
@@ -875,7 +880,8 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 )
                 s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts,
                       hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties", 3),
-                      hub_spoke_min_amount=thresholds.get("hub_spoke_min_amount", thresholds.get("global_min_anomaly_amount", 500.0)))
+                      hub_spoke_min_amount=thresholds.get("hub_spoke_min_amount", thresholds.get("global_min_anomaly_amount", 500.0)),
+                      hub_spoke_min_single_amount=thresholds.get("hub_spoke_min_single_amount", 500.0))
             rules_completed.append("HUB_AND_SPOKE_OUT")
             print(f"  [Rule] HUB_AND_SPOKE (outgoing) ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
         except Exception as e:
@@ -899,7 +905,8 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                 )
                 s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts,
                       hub_spoke_min_counterparties=thresholds.get("hub_spoke_min_counterparties", 3),
-                      hub_spoke_min_amount=thresholds.get("hub_spoke_min_amount", thresholds.get("global_min_anomaly_amount", 500.0)))
+                      hub_spoke_min_amount=thresholds.get("hub_spoke_min_amount", thresholds.get("global_min_anomaly_amount", 500.0)),
+                      hub_spoke_min_single_amount=thresholds.get("hub_spoke_min_single_amount", 500.0))
             rules_completed.append("HUB_AND_SPOKE_IN")
             print(f"  [Rule] HUB_AND_SPOKE (incoming) ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
         except Exception as e:
@@ -963,7 +970,9 @@ def run_full_graph_analysis(credentials, session_id, node_label, mock_global_con
                     is_provisional=False
                 )
                 s.run(query, session_id=sp, trusted_entries=trusted_entries, risk_entries=risk_entries, pt=pass_through_accounts,
-                      single_tx_threshold=thresholds.get("reporting_threshold", 300000))
+                      single_tx_threshold=thresholds.get("reporting_threshold", 300000),
+                      just_below_threshold_min_count=thresholds.get("just_below_threshold_min_count", 2),
+                      just_below_threshold_ratio=thresholds.get("just_below_threshold_ratio", 0.90))
             rules_completed.append("JUST_BELOW_THRESHOLD")
             print(f"  [Rule] JUST_BELOW_THRESHOLD ✓ ({(datetime.now() - start_time).total_seconds():.2f}s)", flush=True)
         except Exception as e:
