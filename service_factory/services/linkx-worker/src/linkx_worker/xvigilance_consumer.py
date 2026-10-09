@@ -1316,19 +1316,43 @@ def consume_firehose():
                         
                     # UPDATE POSTGRES CHECKPOINT FOR FRONTEND UI
                     try:
-                        with psycopg.connect(os.getenv('LINKX_POSTGRES_DSN')) as conn:
+                        pg_dsn = os.getenv('LINKX_POSTGRES_DSN')
+                        if not pg_dsn:
+                            try:
+                                with open('/opt/linkx-worker/.env', 'r') as env_f:
+                                    for env_l in env_f:
+                                        if env_l.startswith('LINKX_POSTGRES_DSN='):
+                                            pg_dsn = env_l.strip().split('=', 1)[1].strip(' "\'')
+                            except Exception:
+                                pass
+
+                        with psycopg.connect(pg_dsn) as conn:
                             with conn.cursor() as cur:
                                 cur.execute("UPDATE xvigilance_checkpoints SET total_graph_analyzed = COALESCE(total_graph_analyzed, 0) + %s", (data.get('total_records', 0),))
                                 batch_id = data.get('batch_id')
                                 win_id = data.get('window_id') or target_window
+                                updated_rows = 0
+
+                                # 1. Deterministic primary key update
                                 if batch_id:
                                     try:
                                         cur.execute("UPDATE xvigilance_slice_runs SET status = 'succeeded', finished_at = NOW() WHERE id = %s", (int(batch_id),))
+                                        updated_rows = cur.rowcount
                                     except Exception:
-                                        cur.execute("UPDATE xvigilance_slice_runs SET status = 'succeeded', finished_at = NOW() WHERE id = %s", (batch_id,))
-                                elif win_id:
-                                    cur.execute("UPDATE xvigilance_slice_runs SET status = 'succeeded', finished_at = NOW() WHERE window_start = %s OR window_end = %s", (str(win_id), str(win_id)))
+                                        pass
+
+                                # 2. Robust fallback to window timestamp if batch_id was deleted or mismatched
+                                if updated_rows == 0 and win_id:
+                                    cur.execute("""
+                                        UPDATE xvigilance_slice_runs 
+                                        SET status = 'succeeded', finished_at = NOW() 
+                                        WHERE (window_start = %s::timestamptz OR window_end = %s::timestamptz OR (window_start <= %s::timestamptz AND window_end >= %s::timestamptz))
+                                          AND status != 'succeeded'
+                                    """, (str(win_id), str(win_id), str(win_id), str(win_id)))
+                                    updated_rows = cur.rowcount
+
                             conn.commit()
+                        print(f"[xVigilance-Audit] Successfully marked {updated_rows} slice run row(s) as 'succeeded' (batch_id={batch_id}, win_id={win_id}).", flush=True)
                         print(f"[xVigilance-Consumer] Checkpoint total_graph_analyzed advanced by {data.get('total_records', 0)}.", flush=True)
                     except Exception as pg_e:
                         print(f"[xVigilance-Consumer] Failed to update PostgreSQL graph checkpoint: {pg_e}", flush=True)
