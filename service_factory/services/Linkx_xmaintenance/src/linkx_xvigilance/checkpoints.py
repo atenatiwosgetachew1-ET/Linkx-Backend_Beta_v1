@@ -71,6 +71,26 @@ def clean_zombie_runs():
         print(f"[xvigilance] Failed to clean zombie runs: {e}", flush=True)
 
 
+def get_in_flight_slices_count(feed_name: str = "hourly_transaction_detective") -> int:
+    """Returns the count of slices currently waiting in Kafka (status = 'queued')."""
+    try:
+        with connect(application_name="xvigilance-backpressure") as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT count(*) 
+                    FROM xvigilance_slice_runs 
+                    WHERE feed_name = %s AND status = 'queued';
+                    """,
+                    (feed_name,),
+                )
+                row = cur.fetchone()
+                return row[0] if row else 0
+    except Exception as e:
+        print(f"[xvigilance] Warning: Failed to check in-flight slices: {e}", flush=True)
+        return 0
+
+
 def log_slice_start(feed_name: str, window_start: datetime, window_end: datetime) -> int:
     with connect(application_name="xvigilance-slice-log") as conn:
         with conn.cursor() as cur:

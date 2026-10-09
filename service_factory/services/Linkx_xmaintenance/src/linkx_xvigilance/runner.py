@@ -12,6 +12,7 @@ from linkx_xvigilance.checkpoints import (
     get_or_init_checkpoint,
     log_slice_start,
     clean_zombie_runs,
+    get_in_flight_slices_count,
 )
 from linkx_xvigilance.config import get_xvigilance_config
 from linkx_xvigilance.db import connect
@@ -232,6 +233,18 @@ def run_daemon(feed_name: str = "hourly_transaction_detective", once: bool = Fal
                 if current_db_checkpoint["last_window_end"] < window_start:
                     print(f"[xvigilance] ⚠️ Clock rewind detected in database! Resetting internal clock to {current_db_checkpoint['last_window_end']}", flush=True)
                 
+                continue
+
+            # 3.5 Backpressure Flow Control: Bounded in-flight queue to prevent storage overflow
+            max_in_flight = int(os.getenv("XVIGILANCE_MAX_IN_FLIGHT_SLICES", "1"))
+            in_flight = get_in_flight_slices_count(feed_name=feed_name)
+            if in_flight >= max_in_flight:
+                print(
+                    f"[xvigilance] ⏳ Backpressure throttle: {in_flight} slice(s) currently waiting in queue "
+                    f"(limit: {max_in_flight}). Resting 15s for Node-21 consumer to finish before extracting next hour...",
+                    flush=True,
+                )
+                interruptible_sleep(15)
                 continue
 
             # 4. ACTIVE EXECUTION PHASE: Target window has elapsed
