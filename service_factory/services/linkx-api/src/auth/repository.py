@@ -173,8 +173,10 @@ def ensure_auth_schema():
             with conn.cursor() as cur:
                 # Cross-process lock: prevents multiple Gunicorn workers
                 # from running DDL simultaneously on startup
-                cur.execute("SELECT pg_advisory_lock(%s)", [_ADVISORY_LOCK_ID])
-                cur.execute("SET LOCAL statement_timeout = '30s'")
+                # Use transaction-level advisory lock: automatically released
+                # on COMMIT or ROLLBACK so crashes/timeouts never leak locks in pool
+                cur.execute("SET statement_timeout = '30s'")
+                cur.execute("SELECT pg_advisory_xact_lock(%s)", [_ADVISORY_LOCK_ID])
                 cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     id BIGSERIAL PRIMARY KEY,
@@ -292,7 +294,6 @@ def ensure_auth_schema():
                 _bootstrap_superuser(cur)
                 _bootstrap_admin(cur)
                 _bootstrap_service_accounts(cur)
-                cur.execute("SELECT pg_advisory_unlock(%s)", [_ADVISORY_LOCK_ID])
             conn.commit()
         _AUTH_SCHEMA_READY = True
 
@@ -325,29 +326,35 @@ def _migrate_analysis_sessions(cur):
 def _column_exists(cur, table_name, column_name):
     cur.execute("""
     SELECT 1
-    FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = %s
-      AND column_name = %s
+    FROM pg_catalog.pg_attribute a
+    JOIN pg_catalog.pg_class c ON a.attrelid = c.oid
+    JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
+    WHERE n.nspname = 'public'
+      AND c.relname = %s
+      AND a.attname = %s
+      AND NOT a.attisdropped
     """, (table_name, column_name))
     return cur.fetchone() is not None
 
 
 def _column_is_not_nullable(cur, table_name, column_name):
     cur.execute("""
-    SELECT is_nullable
-    FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = %s
-      AND column_name = %s
+    SELECT a.attnotnull
+    FROM pg_catalog.pg_attribute a
+    JOIN pg_catalog.pg_class c ON a.attrelid = c.oid
+    JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
+    WHERE n.nspname = 'public'
+      AND c.relname = %s
+      AND a.attname = %s
+      AND NOT a.attisdropped
     """, (table_name, column_name))
     row = cur.fetchone()
-    return bool(row and row[0] == "NO")
+    return bool(row and row[0])
 
 
 def _add_column_if_missing(cur, table_name, column_name, column_ddl):
     if not _column_exists(cur, table_name, column_name):
-        cur.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_ddl}")
+        cur.execute(f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {column_ddl}")
 
 
 def revoke_token_jti(jti, actor=None, reason=None, expires_at=None):
