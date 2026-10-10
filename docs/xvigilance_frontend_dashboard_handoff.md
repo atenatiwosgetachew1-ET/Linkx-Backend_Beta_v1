@@ -122,13 +122,23 @@ This handoff outlines all REST APIs exposed to the Admin Frontend for monitoring
     {"account": "1000284759", "volume": 54000.00},
     {"account": "1000984712", "volume": 12000.00}
   ],
+  "evidence_limit": 1000,
+  "evidence_truncated": false,
+  "total_nodes": 10,
+  "total_edges": 9,
   "graph": {
     "nodes": [
       {"id": "1000284759", "label": "Account", "degree": 45}
     ],
     "edges": [
       {"source": "1000284759", "target": "1000984712", "amount": 12000.00, "txn_date": "2026-08-24"}
-    ]
+    ],
+    "meta": {
+      "limit": 1000,
+      "truncated": false,
+      "total_nodes": 10,
+      "total_edges": 9
+    }
   }
 }
 ```
@@ -139,6 +149,11 @@ This handoff outlines all REST APIs exposed to the Admin Frontend for monitoring
 - `High`: 50–79 (Orange)
 - `Critical`: 80+ (Red)
 
-#### Graph Subgraph Rendering:
-- The backend automatically applies an **Edge-Centric Influence Filter** to anomalies with massive node counts (e.g. 50,000+ nodes), capping the `graph` payload to the top **1,000 most influential edges** (~2,000 nodes).
-- **Guaranteed Graph Integrity:** There are zero orphan nodes and zero dangling edges. Payloads render directly in Cytoscape.js or Vis.js without browser memory exhaustion.
+#### Graph Subgraph Rendering & Connected Component Evidence Expansion:
+- **Full Cluster Evidence (Truthful Anomaly Presentation):** For all detection rules (`HUB_AND_SPOKE`, `SMURFING`, `FUND_FLOW`, `CIRCULAR_FLOW`, etc.), the evidence extractor no longer slices off evidence at the 1-hour window boundary. Instead, it extracts the complete connected cluster of transactions that formed the anomaly (e.g. all 10 counterparties in a Hub & Spoke pattern), ensuring the visible evidence mathematically matches the flagged amount and counterparty counts.
+- **Safety Ceiling (Max 1,000 Evidence Nodes/Edges):** To safeguard browser memory and backend network performance from runaway low thresholds (e.g. 200k+ nodes), the evidence extractor strictly caps payloads to a maximum of **1,000 nodes and 1,000 edges**.
+- **Truncation Metadata & Frontend UI Action:**
+  - The payload returns `graph.meta.truncated` (`boolean`) and `graph.meta.total_nodes` (`integer`).
+  - **Frontend UI Guideline:** When `meta.truncated == true`, the graph viewer must display an alert banner:
+    > ⚠️ *"Evidence graph reached the maximum display limit of 1,000 nodes (out of {total_nodes} matched). Increase the rule threshold in settings to narrow down results to higher-confidence findings."*
+- **Guaranteed Graph Integrity:** There are zero orphan nodes and zero dangling edges. Every edge sent has both endpoints rendered.

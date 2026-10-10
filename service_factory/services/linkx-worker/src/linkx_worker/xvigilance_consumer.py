@@ -219,13 +219,39 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
         with driver.session() as session:
             if window_id:
                 result = session.run(
+                    f"MATCH (seed_n:{safe_label})-[seed_r]->(seed_m:{safe_label}) "
+                    f"WHERE seed_r.reason IS NOT NULL "
+                    f"  AND (seed_n.window_id = $window_id OR seed_m.window_id = $window_id "
+                    f"       OR seed_n.window_id IS NULL OR seed_n.window_id = '' "
+                    f"       OR seed_m.window_id IS NULL OR seed_m.window_id = '') "
+                    f"WITH collect(DISTINCT seed_r) AS seed_rels, "
+                    f"     collect(DISTINCT seed_n) + collect(DISTINCT seed_m) AS seed_nodes, "
+                    f"     [h IN collect(DISTINCT coalesce(seed_r.hub_account, '')) WHERE h <> ''] AS hub_accs, "
+                    f"     [a IN collect(DISTINCT coalesce(seed_r.account, '')) WHERE a <> ''] AS smurf_accs, "
+                    f"     [v IN collect(DISTINCT coalesce(seed_r.identifier_value, '')) WHERE v <> ''] AS id_vals, "
+                    f"     collect(DISTINCT type(seed_r)) AS seed_types "
+                    f"WHERE size(seed_rels) > 0 "
                     f"MATCH (n:{safe_label})-[r]->(m:{safe_label}) "
-                    f"WHERE r.reason IS NOT NULL AND (n.window_id = $window_id OR n.window_id IS NULL OR n.window_id = '') "
-                    f"RETURN n, r, m",
+                    f"WHERE r.reason IS NOT NULL AND type(r) IN seed_types "
+                    f"  AND ( "
+                    f"    r IN seed_rels "
+                    f"    OR (r.hub_account IS NOT NULL AND r.hub_account IN hub_accs) "
+                    f"    OR (r.account IS NOT NULL AND r.account IN smurf_accs) "
+                    f"    OR (r.identifier_value IS NOT NULL AND r.identifier_value IN id_vals) "
+                    f"    OR n IN seed_nodes "
+                    f"    OR m IN seed_nodes "
+                    f"  ) "
+                    f"RETURN DISTINCT n, r, m "
+                    f"LIMIT 1000",
                     window_id=str(window_id)
                 )
             else:
-                result = session.run(f"MATCH (n:{safe_label})-[r]->(m:{safe_label}) WHERE r.reason IS NOT NULL RETURN n, r, m")
+                result = session.run(
+                    f"MATCH (n:{safe_label})-[r]->(m:{safe_label}) "
+                    f"WHERE r.reason IS NOT NULL "
+                    f"RETURN DISTINCT n, r, m "
+                    f"LIMIT 1000"
+                )
             for record in result:
                 n = record["n"]
                 r = record["r"]
@@ -343,15 +369,16 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
                     top_node_str = ", ".join(top_5_nodes)
                     primary_account = top_5_nodes[0] if top_5_nodes else "UNKNOWN"
                     
-                    # --- EVIDENCE SUBGRAPH EXTRACTION (Edge-Centric) ---
+                    # --- EVIDENCE SUBGRAPH EXTRACTION (Edge-Centric with 1,000 Node/Edge Safety Ceiling) ---
                     # To prevent "orphan nodes" or "dangling edges" in the UI, we must ensure 
                     # that every edge we send has BOTH of its nodes included.
+                    MAX_EVIDENCE_LIMIT = 1000
+
                     # 1. Sort all edges by the combined degree of their endpoints (keeps the hub activity).
                     sorted_edges = sorted(edges_list, key=lambda e: node_degrees[e["from"]] + node_degrees[e["to"]], reverse=True)
                     
-                    # 2. Take the top N edges
-                    MAX_EDGES = 1000
-                    render_edges = sorted_edges[:MAX_EDGES]
+                    # 2. Strict capping: at most 1,000 edges
+                    render_edges = sorted_edges[:MAX_EVIDENCE_LIMIT]
                     
                     # 3. Extract the exact set of nodes used by these edges
                     rendered_node_ids = set()
@@ -364,6 +391,13 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
                         rendered_node_ids.add(top_acc)
                         
                     render_nodes = [n for n in nodes_list if n["id"] in rendered_node_ids]
+
+                    # 5. Strict safety cap: max 1,000 evidence nodes presented to frontend
+                    is_truncated = (len(nodes_list) > MAX_EVIDENCE_LIMIT or len(edges_list) > MAX_EVIDENCE_LIMIT or len(render_nodes) > MAX_EVIDENCE_LIMIT)
+                    if len(render_nodes) > MAX_EVIDENCE_LIMIT:
+                        render_nodes = render_nodes[:MAX_EVIDENCE_LIMIT]
+                        valid_node_ids = {n["id"] for n in render_nodes}
+                        render_edges = [e for e in render_edges if e["from"] in valid_node_ids and e["to"] in valid_node_ids]
                     # ------------------------------------
                     
                     linked_entities = []
@@ -398,9 +432,19 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
                             "score_band": band,
                             "score_evidence": score_evidence,
                             "top_5_accounts": [{"account": k, "volume": v} for k, v in account_volumes.items() if k in top_5_accounts],
+                            "evidence_limit": MAX_EVIDENCE_LIMIT,
+                            "evidence_truncated": is_truncated,
+                            "total_untruncated_nodes": len(nodes_list),
+                            "total_untruncated_edges": len(edges_list),
                             "graph": {
                                 "nodes": render_nodes,
-                                "edges": render_edges
+                                "edges": render_edges,
+                                "meta": {
+                                    "limit": MAX_EVIDENCE_LIMIT,
+                                    "truncated": is_truncated,
+                                    "total_nodes": len(nodes_list),
+                                    "total_edges": len(edges_list)
+                                }
                             }
                         },
                         "meta": {
@@ -466,7 +510,11 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
                         "run_id": execution_meta.get("batch_id") if execution_meta else None,
                         "fraud_score": score,
                         "score_band": band,
-                        "top_5_accounts": top_5_accounts
+                        "top_5_accounts": top_5_accounts,
+                        "evidence_limit": MAX_EVIDENCE_LIMIT,
+                        "evidence_truncated": is_truncated,
+                        "total_nodes": len(nodes_list),
+                        "total_edges": len(edges_list)
                     }
                     cur.execute("""
                         INSERT INTO linkx_reports (report_type, source_system, external_reference_id, payload, status)

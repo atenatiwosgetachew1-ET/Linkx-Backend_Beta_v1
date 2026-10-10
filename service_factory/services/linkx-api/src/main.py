@@ -2349,6 +2349,12 @@ def get_graph():
                     if row and row[0]:
                         payload = row[0] if isinstance(row[0], dict) else json.loads(row[0])
                         graph_data = payload.get("data", {}).get("graph", {"nodes": [], "edges": []})
+                        meta_info = graph_data.get("meta") or {
+                            "limit": payload.get("data", {}).get("evidence_limit", 1000),
+                            "truncated": payload.get("data", {}).get("evidence_truncated", False),
+                            "total_nodes": payload.get("data", {}).get("total_untruncated_nodes", len(graph_data.get("nodes", []))),
+                            "total_edges": payload.get("data", {}).get("total_untruncated_edges", len(graph_data.get("edges", [])))
+                        }
                         return jsonify({
                             "message": "success",
                             "results": {
@@ -2357,7 +2363,8 @@ def get_graph():
                                 "source_id": source_id,
                                 "graph_session_id": source_id,
                                 "relationship": "*",
-                                "graph": graph_data
+                                "graph": graph_data,
+                                "meta": meta_info
                             }
                         }), 200
             return jsonify({"message": "not_found", "detail": "evidence_not_found"}), 404

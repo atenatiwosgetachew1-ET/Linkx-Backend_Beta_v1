@@ -105,10 +105,11 @@ To prevent duplicate processes from racing against the same historical window (w
 2. Ingestion pauses, and the worker executes the batch AML graph algorithms against the assembled 1-hour graph in Neo4j:
    * **Circular Transaction Loops:** Multi-hop cycles where funds return to origin accounts.
    * **Fan-In / Fan-Out (Smurfing):** High-frequency rapid dispersal or consolidation.
-   * **Mule Account Rings:** Accounts with sudden spikes in counterparty degree.
+   * **Mule Account Rings & Hub-and-Spoke Networks:** Accounts with high counterparty degrees or rapid fund distributions.
 3. Detected anomalies are:
+   * **Full Connected Component Evidence Expansion:** Instead of only extracting transactions from the active slice boundary, the detective expands evidence along the flagged anomaly relationships to capture all connected transaction nodes (e.g. all counterparties in Hub & Spoke), capped strictly at **1,000 nodes/edges** to prevent memory exhaustion on runaway thresholds.
    * Exported to PostgreSQL `linkx_reports` with dynamic fraud scores and score bands.
-   * Saved into `link_analysis_evidence`.
+   * Saved into `link_analysis_evidence` with full metadata (`evidence_limit: 1000`, `evidence_truncated: boolean`, `total_nodes`, `total_edges`).
    * Dispatched asynchronously to the external Risk Scoring service API (`/api/risk_scoring/analysis_request`).
 
 ### Phase 4: Ephemeral Graph Purge & Clean Slate
