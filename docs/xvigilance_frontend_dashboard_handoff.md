@@ -151,9 +151,24 @@ This handoff outlines all REST APIs exposed to the Admin Frontend for monitoring
 
 #### Graph Subgraph Rendering & Connected Component Evidence Expansion:
 - **Full Cluster Evidence (Truthful Anomaly Presentation):** For all detection rules (`HUB_AND_SPOKE`, `SMURFING`, `FUND_FLOW`, `CIRCULAR_FLOW`, etc.), the evidence extractor no longer slices off evidence at the 1-hour window boundary. Instead, it extracts the complete connected cluster of transactions that formed the anomaly (e.g. all 10 counterparties in a Hub & Spoke pattern), ensuring the visible evidence mathematically matches the flagged amount and counterparty counts.
-- **Safety Ceiling (Max 1,000 Evidence Nodes/Edges):** To safeguard browser memory and backend network performance from runaway low thresholds (e.g. 200k+ nodes), the evidence extractor strictly caps payloads to a maximum of **1,000 nodes and 1,000 edges**.
+- **Sorted by Transaction Amount Descending:** In both Neo4j Cypher and the Python extraction engine, evidence is sorted by monetary transaction amount (`amount DESC`). Highest-value transactions and rings are always prioritized first.
+- **Component-Preserving Soft Safety Target (~1,000 Nodes):**
+  - Rather than a rigid cutoff that severs connected components in half and leaves nodes without their counterparties, the engine identifies all connected components (anomaly rings) and adds them **as whole units**.
+  - Components are added in descending order of financial volume until the total node count softly reaches **~1,000 nodes**.
+  - **Zero Severed Neighbors Guarantee:** Because components are preserved intact, **every selected node keeps 100% of its connected counterparties and edges**.
 - **Truncation Metadata & Frontend UI Action:**
-  - The payload returns `graph.meta.truncated` (`boolean`) and `graph.meta.total_nodes` (`integer`).
-  - **Frontend UI Guideline:** When `meta.truncated == true`, the graph viewer must display an alert banner:
-    > ⚠️ *"Evidence graph reached the maximum display limit of 1,000 nodes (out of {total_nodes} matched). Increase the rule threshold in settings to narrow down results to higher-confidence findings."*
-- **Guaranteed Graph Integrity:** There are zero orphan nodes and zero dangling edges. Every edge sent has both endpoints rendered.
+  - The payload returns `graph.meta`:
+    ```json
+    {
+      "limit": 1000,
+      "soft_limit": true,
+      "truncated": true,
+      "total_nodes": 4500,
+      "total_edges": 4200,
+      "total_components": 18,
+      "selected_components": 4
+    }
+    ```
+  - **Frontend UI Guideline:** When `meta.truncated == true`, the graph viewer displays an informational banner:
+    > ⚠️ *"Evidence graph contains ~1,000 prioritized nodes sorted by transaction amount (out of {total_nodes} matched across {total_components} rings). Complete connected rings and neighbor counterparties are preserved intact. Increase the rule threshold in settings to narrow down results to higher-confidence findings."*
+- **Guaranteed Graph Integrity:** Zero orphan nodes, zero dangling edges, and zero severed neighbors. Every edge sent has both endpoints rendered.

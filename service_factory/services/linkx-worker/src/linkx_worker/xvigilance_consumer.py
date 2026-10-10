@@ -242,7 +242,8 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
                     f"    OR m IN seed_nodes "
                     f"  ) "
                     f"RETURN DISTINCT n, r, m "
-                    f"LIMIT 1000",
+                    f"ORDER BY coalesce(toFloat(r.total_amount), toFloat(r.amount), toFloat(n.TRANSFERAMOUNT), toFloat(n.AMOUNT), toFloat(n.AMOUNTINBIRR), 0.0) DESC "
+                    f"LIMIT 5000",
                     window_id=str(window_id)
                 )
             else:
@@ -250,7 +251,8 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
                     f"MATCH (n:{safe_label})-[r]->(m:{safe_label}) "
                     f"WHERE r.reason IS NOT NULL "
                     f"RETURN DISTINCT n, r, m "
-                    f"LIMIT 1000"
+                    f"ORDER BY coalesce(toFloat(r.total_amount), toFloat(r.amount), toFloat(n.TRANSFERAMOUNT), toFloat(n.AMOUNT), toFloat(n.AMOUNTINBIRR), 0.0) DESC "
+                    f"LIMIT 5000"
                 )
             for record in result:
                 n = record["n"]
@@ -359,6 +361,32 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
                     # --------------------------------
                     
                     from collections import defaultdict
+
+                    def _extract_amount(val):
+                        if val is None:
+                            return 0.0
+                        try:
+                            a = float(val)
+                            return a if a > 0 else 0.0
+                        except (ValueError, TypeError):
+                            return 0.0
+
+                    def _node_amount(node):
+                        for k in ("TRANSFERAMOUNT", "AMOUNT", "AMOUNTINBIRR", "amount", "transferamount"):
+                            if k in node:
+                                amt = _extract_amount(node[k])
+                                if amt > 0:
+                                    return amt
+                        return 0.0
+
+                    def _edge_amount(edge):
+                        for k in ("total_amount", "amount", "TRANSFERAMOUNT", "AMOUNT", "AMOUNTINBIRR"):
+                            if k in edge:
+                                amt = _extract_amount(edge[k])
+                                if amt > 0:
+                                    return amt
+                        return 0.0
+
                     node_degrees = defaultdict(int)
                     for edge in edges_list:
                         node_degrees[edge["from"]] += 1
@@ -369,39 +397,117 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
                     top_node_str = ", ".join(top_5_nodes)
                     primary_account = top_5_nodes[0] if top_5_nodes else "UNKNOWN"
                     
-                    # --- EVIDENCE SUBGRAPH EXTRACTION (Edge-Centric with 1,000 Node/Edge Safety Ceiling) ---
-                    # To prevent "orphan nodes" or "dangling edges" in the UI, we must ensure 
-                    # that every edge we send has BOTH of its nodes included.
-                    MAX_EVIDENCE_LIMIT = 1000
+                    # --- EVIDENCE SUBGRAPH EXTRACTION (Component-Preserving Soft ~1,000 Node Target) ---
+                    # To avoid severing connected components or leaving nodes missing their connected
+                    # counterparties, we:
+                    # 1. Build connected components for all nodes and edges in this anomaly.
+                    # 2. Prioritize/sort components by total transaction volume and max amount descending.
+                    # 3. Softly accumulate complete components until reaching ~1,000 nodes.
+                    # 4. Guarantee that every selected node keeps 100% of its connected neighbors.
+                    SOFT_TARGET_NODES = 1000
 
-                    # 1. Sort all edges by the combined degree of their endpoints (keeps the hub activity).
-                    sorted_edges = sorted(edges_list, key=lambda e: node_degrees[e["from"]] + node_degrees[e["to"]], reverse=True)
-                    
-                    # 2. Strict capping: at most 1,000 edges
-                    render_edges = sorted_edges[:MAX_EVIDENCE_LIMIT]
-                    
-                    # 3. Extract the exact set of nodes used by these edges
-                    rendered_node_ids = set()
-                    for e in render_edges:
-                        rendered_node_ids.add(e["from"])
-                        rendered_node_ids.add(e["to"])
-                        
-                    # 4. Include those nodes, plus the absolute top 5 accounts just in case they were somehow missed
-                    for top_acc in top_5_nodes:
-                        rendered_node_ids.add(top_acc)
-                        
-                    render_nodes = [n for n in nodes_list if n["id"] in rendered_node_ids]
+                    # Build adjacency list
+                    adj = defaultdict(set)
+                    for edge in edges_list:
+                        adj[edge["from"]].add(edge["to"])
+                        adj[edge["to"]].add(edge["from"])
 
-                    # 5. Strict safety cap: max 1,000 evidence nodes presented to frontend
-                    is_truncated = (len(nodes_list) > MAX_EVIDENCE_LIMIT or len(edges_list) > MAX_EVIDENCE_LIMIT or len(render_nodes) > MAX_EVIDENCE_LIMIT)
-                    if len(render_nodes) > MAX_EVIDENCE_LIMIT:
-                        render_nodes = render_nodes[:MAX_EVIDENCE_LIMIT]
-                        valid_node_ids = {n["id"] for n in render_nodes}
-                        render_edges = [e for e in render_edges if e["from"] in valid_node_ids and e["to"] in valid_node_ids]
+                    node_map = graph_data["nodes"]
+                    all_node_ids = set(node_map.keys())
+                    visited = set()
+                    components = []
+
+                    for nid in all_node_ids:
+                        if nid not in visited:
+                            comp_nodes = set()
+                            queue = [nid]
+                            visited.add(nid)
+                            while queue:
+                                curr = queue.pop(0)
+                                comp_nodes.add(curr)
+                                for neighbor in adj[curr]:
+                                    if neighbor not in visited:
+                                        visited.add(neighbor)
+                                        queue.append(neighbor)
+
+                            comp_edges = [
+                                e for e in edges_list
+                                if e["from"] in comp_nodes and e["to"] in comp_nodes
+                            ]
+                            comp_node_objs = [node_map[i] for i in comp_nodes if i in node_map]
+
+                            comp_total_vol = sum(_node_amount(n) for n in comp_node_objs)
+                            comp_max_node_amt = max((_node_amount(n) for n in comp_node_objs), default=0.0)
+                            comp_max_edge_amt = max((_edge_amount(e) for e in comp_edges), default=0.0)
+                            comp_max_amt = max(comp_max_node_amt, comp_max_edge_amt)
+
+                            components.append({
+                                "node_ids": comp_nodes,
+                                "nodes": comp_node_objs,
+                                "edges": comp_edges,
+                                "node_count": len(comp_nodes),
+                                "edge_count": len(comp_edges),
+                                "total_volume": comp_total_vol,
+                                "max_amount": comp_max_amt
+                            })
+
+                    # Sort components by transaction amount / volume descending (highest financial risk first)
+                    components.sort(key=lambda c: (c["total_volume"], c["max_amount"], c["node_count"]), reverse=True)
+
+                    # Soft accumulation: include complete components until reaching ~1,000 nodes
+                    selected_components = []
+                    accumulated_nodes = 0
+
+                    for comp in components:
+                        if not selected_components:
+                            # Always include the highest-value component completely
+                            selected_components.append(comp)
+                            accumulated_nodes += comp["node_count"]
+                        else:
+                            # If accumulated nodes is still below the ~1,000 soft target, add the next full component
+                            if accumulated_nodes < SOFT_TARGET_NODES:
+                                selected_components.append(comp)
+                                accumulated_nodes += comp["node_count"]
+                            else:
+                                break
+
+                    # Assemble render nodes and edges from the selected complete components
+                    render_nodes = []
+                    render_edges = []
+                    for comp in selected_components:
+                        render_nodes.extend(comp["nodes"])
+                        render_edges.extend(comp["edges"])
+
+                    # If a single component alone exceeds 1,200 nodes (rare extreme anomaly),
+                    # protect memory while guaranteeing mutual neighbor connections:
+                    if len(render_nodes) > 1200 and len(selected_components) == 1:
+                        top_edges_sorted = sorted(render_edges, key=lambda e: _edge_amount(e), reverse=True)
+                        sub_node_ids = set()
+                        sub_edges = []
+                        for e in top_edges_sorted:
+                            sub_node_ids.add(e["from"])
+                            sub_node_ids.add(e["to"])
+                            sub_edges.append(e)
+                            if len(sub_node_ids) >= SOFT_TARGET_NODES:
+                                break
+                        # Include all mutual edges between selected nodes
+                        sub_edges_set = {e["id"] for e in sub_edges}
+                        for e in render_edges:
+                            if e["id"] not in sub_edges_set and e["from"] in sub_node_ids and e["to"] in sub_node_ids:
+                                sub_edges.append(e)
+                        render_nodes = [n for n in render_nodes if n["id"] in sub_node_ids]
+                        render_edges = sub_edges
+
+                    # Sort nodes and edges by amount descending so UI displays highest amounts first
+                    render_nodes.sort(key=lambda n: _node_amount(n), reverse=True)
+                    render_edges.sort(key=lambda e: _edge_amount(e), reverse=True)
+
+                    is_truncated = (len(components) > len(selected_components) or len(nodes_list) > len(render_nodes))
+                    MAX_EVIDENCE_LIMIT = SOFT_TARGET_NODES
                     # ------------------------------------
                     
                     linked_entities = []
-                    for edge in edges_list[:50]:
+                    for edge in render_edges[:50]:
                         linked_entities.append({
                             "accountno": edge["to"],
                             "relationship": edge["label"],
@@ -436,14 +542,19 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
                             "evidence_truncated": is_truncated,
                             "total_untruncated_nodes": len(nodes_list),
                             "total_untruncated_edges": len(edges_list),
+                            "total_components": len(components),
+                            "selected_components": len(selected_components),
                             "graph": {
                                 "nodes": render_nodes,
                                 "edges": render_edges,
                                 "meta": {
                                     "limit": MAX_EVIDENCE_LIMIT,
+                                    "soft_limit": True,
                                     "truncated": is_truncated,
                                     "total_nodes": len(nodes_list),
-                                    "total_edges": len(edges_list)
+                                    "total_edges": len(edges_list),
+                                    "total_components": len(components),
+                                    "selected_components": len(selected_components)
                                 }
                             }
                         },
@@ -514,7 +625,9 @@ def promote_anomalies_to_postgres(credentials, session_id, window_id, execution_
                         "evidence_limit": MAX_EVIDENCE_LIMIT,
                         "evidence_truncated": is_truncated,
                         "total_nodes": len(nodes_list),
-                        "total_edges": len(edges_list)
+                        "total_edges": len(edges_list),
+                        "total_components": len(components),
+                        "selected_components": len(selected_components)
                     }
                     cur.execute("""
                         INSERT INTO linkx_reports (report_type, source_system, external_reference_id, payload, status)

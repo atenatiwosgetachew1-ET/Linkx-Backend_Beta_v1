@@ -107,9 +107,9 @@ To prevent duplicate processes from racing against the same historical window (w
    * **Fan-In / Fan-Out (Smurfing):** High-frequency rapid dispersal or consolidation.
    * **Mule Account Rings & Hub-and-Spoke Networks:** Accounts with high counterparty degrees or rapid fund distributions.
 3. Detected anomalies are:
-   * **Full Connected Component Evidence Expansion:** Instead of only extracting transactions from the active slice boundary, the detective expands evidence along the flagged anomaly relationships to capture all connected transaction nodes (e.g. all counterparties in Hub & Spoke), capped strictly at **1,000 nodes/edges** to prevent memory exhaustion on runaway thresholds.
+   * **Full Connected Component Evidence Expansion:** Instead of only extracting transactions from the active slice boundary, the detective expands evidence along the flagged anomaly relationships to capture all connected transaction nodes (e.g. all counterparties in Hub & Spoke), sorted by transaction amount descending. Subgraphs are softly targeted at **~1,000 nodes** while preserving complete connected components intact so no node is severed from its counterparties.
    * Exported to PostgreSQL `linkx_reports` with dynamic fraud scores and score bands.
-   * Saved into `link_analysis_evidence` with full metadata (`evidence_limit: 1000`, `evidence_truncated: boolean`, `total_nodes`, `total_edges`).
+   * Saved into `link_analysis_evidence` with full metadata (`evidence_limit: 1000`, `evidence_truncated: boolean`, `total_nodes`, `total_edges`, `total_components`, `selected_components`).
    * Dispatched asynchronously to the external Risk Scoring service API (`/api/risk_scoring/analysis_request`).
 
 ### Phase 4: Ephemeral Graph Purge & Clean Slate
