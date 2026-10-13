@@ -542,5 +542,6 @@ All 4 nodes run Ubuntu 24.04.5 LTS on subnet `172.21.13.0/24`.
 * [x] **Neo4j Enterprise & GDS Upgrade (`node22`)**: Upgraded to `neo4j:5-enterprise` with 613 GDS and APOC procedures loaded and verified.
 * [x] **Cluster Interconnection Audit**: NFS cross-node sync verified; Redis inter-node communication validated.
 * [x] **Drift & Health Audits**: `verify-linkx-server.py` passed with 0 failures and 0 warnings across all nodes. Production certified.
+* [x] **Network Hardening (UFW)**: Configured and active on all 4 nodes (`node19`, `node20`, `node21`, `node22`) with SSH and cluster subnet whitelisted.
 
 
