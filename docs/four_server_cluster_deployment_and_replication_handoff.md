@@ -202,27 +202,75 @@ docker exec -i linkx-postgres psql -U linkx -d linkx < /opt/linkx-control-data/p
 
 ---
 
-### Step 4: Deploy Server 4 (Neo4j Graph Database & Maintenance)
+### Step 4: Deploy Server 4 (Neo4j Enterprise Graph Database & Maintenance)
 
-#### 1. Deploy Neo4j Docker Compose:
+#### 1. Deploy Neo4j Enterprise Docker Compose with GDS & APOC:
+Server 4 hosts the graph engine inside `/opt/Linkx_xmaintenance/docker-compose.yml`.
+
+Ensure directories exist and permissions allow Docker (uid 7474) to download plugins:
 ```bash
-sudo mkdir -p /opt/linkx-neo4j
-sudo chown -R $USER:$USER /opt/linkx-neo4j
+sudo mkdir -p /opt/Linkx_xmaintenance/neo4j/import /opt/Linkx_xmaintenance/neo4j/plugins
+sudo chmod -R 777 /opt/Linkx_xmaintenance/neo4j/import /opt/Linkx_xmaintenance/neo4j/plugins
 ```
-Create `/opt/linkx-neo4j/.env`:
+
+In `/opt/Linkx_xmaintenance/.env`, configure Neo4j Enterprise, license acceptance, memory, and plugins:
 ```ini
+# Neo4j Enterprise & Plugin Configuration
+NEO4J_IMAGE=neo4j:5-enterprise
 NEO4J_AUTH=neo4j/<STRONG_NEO4J_PASSWORD>
+NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
+NEO4J_PLUGINS=["apoc", "graph-data-science"]
+NEO4J_dbms_security_procedures_unrestricted=apoc.*,gds.*
+NEO4J_dbms_security_procedures_allowlist=apoc.*,gds.*
+
+# Memory Allocation (4G Heap, 3G PageCache)
 NEO4J_server_memory_heap_initial__size=4G
 NEO4J_server_memory_heap_max__size=4G
 NEO4J_server_memory_pagecache_size=3G
 ```
+
 Start Neo4j:
 ```bash
-cd /opt/linkx-neo4j
-docker compose up -d
+cd /opt/Linkx_xmaintenance
+sudo docker compose pull neo4j
+sudo docker compose up -d neo4j
 ```
 
-#### 2. Deploy Maintenance Services:
+#### 2. Accessing Neo4j Browser & Verifying Graph Data Science (GDS) / APOC:
+Neo4j exposes HTTP port `7474` and Bolt port `7687`:
+
+- **Option A: Direct Browser Access (Subnet / VPN)**
+  Open your web browser and navigate to:
+  ```text
+  http://<SERVER_4_IP>:7474/browser/
+  ```
+  *(e.g., `http://172.21.13.67:7474/browser/`)*
+  - **Connect URL**: `bolt://172.21.13.67:7687` (or `neo4j://172.21.13.67:7687`)
+  - **Authentication**: Username / Password
+  - **Username**: `neo4j`
+  - **Password**: `<STRONG_NEO4J_PASSWORD>`
+
+- **Option B: Secure SSH Tunnel (for remote analyst laptops)**
+  If your desktop is outside the cluster subnet, forward the ports via SSH:
+  ```bash
+  ssh -L 7474:localhost:7474 -L 7687:localhost:7687 node22@172.21.13.67
+  ```
+  Then navigate locally to: `http://localhost:7474/browser/` and connect to `bolt://localhost:7687`.
+
+- **Verification Cypher Queries**:
+  Run inside the Browser console:
+  ```cypher
+  // Check server edition and version
+  CALL dbms.components() YIELD name, versions, edition;
+
+  // Verify GDS algorithms (PageRank, Louvain, Betweenness, WCC)
+  SHOW PROCEDURES YIELD name WHERE name STARTS WITH 'gds' RETURN count(name);
+
+  // Verify APOC procedures
+  SHOW PROCEDURES YIELD name WHERE name STARTS WITH 'apoc' RETURN count(name);
+  ```
+
+#### 3. Deploy Maintenance Services:
 ```bash
 sudo mkdir -p /opt/Linkx_xmaintenance
 sudo chown -R $USER:$USER /opt/Linkx_xmaintenance
@@ -448,11 +496,12 @@ All 4 nodes run Ubuntu 24.04.5 LTS on subnet `172.21.13.0/24`.
 * [x] **Git Clones**: Cloned `/opt/linkx-backend-update` successfully on `node19`, `node20`, `node21`, `node22`.
 * [x] **NFS Storage Export (`node19`)**: `/mnt/linkx-artifacts` created and exported to `172.21.13.66` and `172.21.13.67`.
 * [x] **NFS Storage Mount (`node22`)**: Mounted at `/mnt/linkx-artifacts` and added to `/etc/fstab`.
-* [ ] **NFS Storage Mount (`node21`)**: Run mount command on `node21`.
+* [x] **NFS Storage Mount (`node21`)**: Mounted at `/mnt/linkx-artifacts` and persisted in `/etc/fstab`.
 * [x] **Server 2 Setup**: Postgres 16 & Redis 7 Docker launched, all 25 tables created, indexed & seeded.
-* [ ] **Server 4 Setup**: Neo4j Docker launch + maintenance services systemd launch.
-* [ ] **Server 3 Setup**: Worker service systemd launch.
-* [ ] **Server 1 Setup**: API service systemd launch + Nginx reverse proxy.
-* [ ] **Drift & Health Audits**: `verify-linkx-server.py` green on all 4 nodes.
+* [x] **Server 4 Setup**: Neo4j container running, xCleanup worker/scheduler and xVigilance daemon active. (GDS/APOC update script ready).
+* [x] **Server 3 Setup**: Python venv configured, `linkx-worker.service` active and consuming from Redis queue.
+* [x] **Server 1 Setup**: `linkx-api.service` active, Nginx reverse proxy operational, `/db/health` 200 OK, auto-login JWT generation verified.
+* [ ] **Neo4j Enterprise & GDS Upgrade (`node22`)**: Run updated `scripts/cluster_setup_node22.sh` to load GDS & APOC plugins.
+* [ ] **Drift & Health Audits**: Run `verify-linkx-server.py` across nodes.
 
 
