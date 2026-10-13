@@ -44,6 +44,8 @@ public/temp_rules/
 *.jsonl
 *.dump
 *.sql
+!service_factory/deploy/security/*.sql
+!service_factory/services/linkx-control-data/postgres/migrations/*.sql
 
 # Editors
 *.swp
