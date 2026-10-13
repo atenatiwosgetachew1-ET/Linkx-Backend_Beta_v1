@@ -69,13 +69,51 @@ All 4 servers must share an isolated internal subnet (e.g., `172.21.13.0/24` or 
 
 | Source | Destination | Port | Protocol | Purpose | UFW / Firewall Rule |
 | :--- | :--- | :---: | :---: | :--- | :--- |
-| Client / Frontend | Server 1 | `80` / `443` | TCP | Web UI & API traffic | Public / Customer Corporate Network |
-| Frontend | Server 1 | `8000` | TCP | Direct API / Socket.IO | Restricted to frontend host or localhost |
-| Server 1, 3, 4 | Server 2 | `5432` | TCP | PostgreSQL control connections | Allow strictly from Server 1, 3, 4 |
-| Server 1, 3, 4 | Server 2 | `6379` | TCP | Redis queues & coordination | Allow strictly from Server 1, 3, 4 (Require Password) |
-| Server 1, 3 | Server 4 | `7687` | TCP | Neo4j Bolt graph queries | Allow strictly from Server 1, 3 |
-| Admin Host | Server 4 | `7474` | TCP | Neo4j Browser admin console | Restricted to Admin Workstation IP |
-| Server 3, 4 | Server 1 | `2049` | TCP | NFS mount (`/mnt/linkx-artifacts`) | Allow strictly from Server 3, 4 |
+| Client / Frontend | Server 1 | `80` / `443` | TCP | Web UI & API traffic | Public / Corporate Network |
+| Frontend | Server 1 | `8000` | TCP | Direct API / Socket.IO | Allow from Client Network / VPN |
+| Server 1, 3, 4 | Server 2 | `5432` | TCP | PostgreSQL control connections | Allow strictly from `172.21.13.0/24` |
+| Server 1, 3, 4 | Server 2 | `6379` | TCP | Redis queues & coordination | Allow strictly from `172.21.13.0/24` |
+| Server 1, 3 | Server 4 | `7687` | TCP | Neo4j Bolt graph queries | Allow strictly from `172.21.13.0/24` |
+| Admin / Analyst | Server 4 | `7474` | TCP | Neo4j Browser admin console | Allow from Client Network / VPN |
+| Server 3, 4 | Server 1 | `2049` | TCP | NFS mount (`/mnt/linkx-artifacts`) | Allow strictly from `172.21.13.0/24` |
+
+### Turnkey UFW Firewall Hardening Commands
+
+- **On Server 1 (`node19`)**:
+  ```bash
+  sudo ufw default deny incoming && sudo ufw default allow outgoing && \
+  sudo ufw allow 22/tcp comment 'SSH' && \
+  sudo ufw allow 80/tcp comment 'HTTP Nginx' && \
+  sudo ufw allow 443/tcp comment 'HTTPS Nginx' && \
+  sudo ufw allow 8000/tcp comment 'LinkX API' && \
+  sudo ufw allow from 172.21.13.0/24 comment 'Cluster Subnet' && \
+  sudo ufw --force enable && sudo ufw status verbose
+  ```
+
+- **On Server 2 (`node20`)**:
+  ```bash
+  sudo ufw default deny incoming && sudo ufw default allow outgoing && \
+  sudo ufw allow 22/tcp comment 'SSH' && \
+  sudo ufw allow from 172.21.13.0/24 comment 'Cluster Subnet' && \
+  sudo ufw --force enable && sudo ufw status verbose
+  ```
+
+- **On Server 3 (`node21`)**:
+  ```bash
+  sudo ufw default deny incoming && sudo ufw default allow outgoing && \
+  sudo ufw allow 22/tcp comment 'SSH' && \
+  sudo ufw allow from 172.21.13.0/24 comment 'Cluster Subnet' && \
+  sudo ufw --force enable && sudo ufw status verbose
+  ```
+
+- **On Server 4 (`node22`)**:
+  ```bash
+  sudo ufw default deny incoming && sudo ufw default allow outgoing && \
+  sudo ufw allow 22/tcp comment 'SSH' && \
+  sudo ufw allow 7474/tcp comment 'Neo4j Browser' && \
+  sudo ufw allow from 172.21.13.0/24 comment 'Cluster Subnet' && \
+  sudo ufw --force enable && sudo ufw status verbose
+  ```
 
 ---
 
