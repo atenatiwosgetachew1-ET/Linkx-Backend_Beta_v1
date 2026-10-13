@@ -190,20 +190,15 @@ docker compose ps
 
 #### 4. Execute Full Schema Migrations:
 ```bash
-# Run SQL initial migrations in order:
+# Run SQL migrations 001 through 006 in order:
 docker exec -i linkx-postgres psql -U linkx -d linkx < /opt/linkx-control-data/postgres/initdb/001_core_schema.sql
 docker exec -i linkx-postgres psql -U linkx -d linkx < /opt/linkx-control-data/postgres/initdb/002_seed_rbac.sql
 docker exec -i linkx-postgres psql -U linkx -d linkx < /opt/linkx-control-data/postgres/migrations/003_cancellation_contract.sql
 docker exec -i linkx-postgres psql -U linkx -d linkx < /opt/linkx-control-data/postgres/migrations/004_session_config_store.sql
 docker exec -i linkx-postgres psql -U linkx -d linkx < /opt/linkx-control-data/postgres/migrations/005_report_pipeline.sql
-
-# Seed additional tables via Python bootstrap scripts:
-export LINKX_POSTGRES_DSN="postgresql://linkx:<STRONG_POSTGRES_PASSWORD>@127.0.0.1:5432/linkx"
-python3 /opt/linkx-control-data/scripts/create_evidence_table.py
-python3 /opt/linkx-control-data/scripts/bootstrap_rule_thresholds.py
-python3 /opt/linkx-control-data/scripts/bootstrap_entity_classification.py
-python3 /opt/linkx-control-data/scripts/bootstrap_score_lineage.py
+docker exec -i linkx-postgres psql -U linkx -d linkx < /opt/linkx-control-data/postgres/migrations/006_cluster_bootstrap.sql
 ```
+*(006_cluster_bootstrap.sql automatically seeds global_rule_thresholds, global_entity_classification, global_score_lineage, managed_secrets, security_audit_events, link_analysis_evidence, and xvigilance checkpoints without requiring host Python libraries).*
 
 ---
 
@@ -419,7 +414,7 @@ All 4 nodes run Ubuntu 24.04.5 LTS on subnet `172.21.13.0/24`.
 
 ## 8. Live Cluster Execution Tracker (Active Rollout)
 
-### Cluster Cryptographic Secrets (Generated for this Deployment)
+### Cluster Cryptographic Secrets & Passwords (Generated for this Deployment)
 * **Master Encryption Key (`LINKX_SECRET_ENCRYPTION_KEY`)**:
   ```text
   VrJVoT3RQ3Qvf1wgg0_Y_PX1sMGOufoMLeS8ZLS0Ebg=
@@ -430,6 +425,18 @@ All 4 nodes run Ubuntu 24.04.5 LTS on subnet `172.21.13.0/24`.
   a6b6e536f073f984e1f1889312bb7de3f8faf5aab0bf18033c1a2424a0721160
   ```
   *(Used on Server 1 for signing sessions).*
+* **PostgreSQL Password (`POSTGRES_PASSWORD`)**:
+  ```text
+  tqvyTlaM_Dhl0mB6vrme9g
+  ```
+* **Redis Password (`REDIS_PASSWORD`)**:
+  ```text
+  Yp8R5KULTolW7wkllybkag
+  ```
+* **Neo4j Password (`NEO4J_PASSWORD`)**:
+  ```text
+  kMea_0CMcoWRIJEWKh-eyQ
+  ```
 
 ### Live Progress Checklist
 * [x] **Pre-flight Audit**: Completed across `node19`, `node20`, `node21`, `node22`. Subnet `172.21.13.0/24` verified.
@@ -437,12 +444,15 @@ All 4 nodes run Ubuntu 24.04.5 LTS on subnet `172.21.13.0/24`.
 * [x] **Base Packages (`node19`)**: `nfs-kernel-server`, `nginx`, `python3-venv`, `python3-pip`, `git` installed.
 * [x] **Base Packages (`node20`)**: `docker.io`, `docker-compose-v2`, `git` installed.
 * [x] **Base Packages (`node21`)**: `nfs-common`, `python3-venv`, `python3-pip`, `git` installed.
-* [ ] **Base Packages (`node22`)**: `docker.io` & `docker-compose-v2` pending install (Neo4j requires Docker).
-* [ ] **Git Clones**: Pull `/opt/linkx-backend-update` on all 4 nodes.
-* [ ] **NFS Storage Export & Mount**: Export on `node19` -> Mount on `node21` & `node22`.
-* [ ] **Server 2 Setup**: Postgres 16 & Redis 7 Docker launch + SQL/Python schema initialization.
+* [x] **Base Packages (`node22`)**: `docker.io`, `docker-compose-v2`, `nfs-common`, `python3-venv`, `python3-pip` installed.
+* [x] **Git Clones**: Cloned `/opt/linkx-backend-update` successfully on `node19`, `node20`, `node21`, `node22`.
+* [x] **NFS Storage Export (`node19`)**: `/mnt/linkx-artifacts` created and exported to `172.21.13.66` and `172.21.13.67`.
+* [x] **NFS Storage Mount (`node22`)**: Mounted at `/mnt/linkx-artifacts` and added to `/etc/fstab`.
+* [ ] **NFS Storage Mount (`node21`)**: Run mount command on `node21`.
+* [ ] **Server 2 Setup**: Postgres 16 & Redis 7 Docker launch + SQL migrations 001-006.
 * [ ] **Server 4 Setup**: Neo4j Docker launch + maintenance services systemd launch.
 * [ ] **Server 3 Setup**: Worker service systemd launch.
 * [ ] **Server 1 Setup**: API service systemd launch + Nginx reverse proxy.
 * [ ] **Drift & Health Audits**: `verify-linkx-server.py` green on all 4 nodes.
+
 
