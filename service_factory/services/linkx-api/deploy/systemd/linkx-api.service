@@ -4,9 +4,9 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/linkx-api/src
-EnvironmentFile=/opt/linkx-api/.env
-ExecStart=/opt/linkx-api/.venv/bin/python -u main.py
+WorkingDirectory=/opt/linkx-backend-api/src
+EnvironmentFile=/opt/linkx-backend-api/.env
+ExecStart=/opt/linkx-backend-api/.venv/bin/python -u main.py
 Restart=always
 RestartSec=3
 
