@@ -414,3 +414,35 @@ For the active deployment:
 * **Server 4 (`node22`)**: `172.21.13.67` (Neo4j & Maintenance)
 
 All 4 nodes run Ubuntu 24.04.5 LTS on subnet `172.21.13.0/24`.
+
+---
+
+## 8. Live Cluster Execution Tracker (Active Rollout)
+
+### Cluster Cryptographic Secrets (Generated for this Deployment)
+* **Master Encryption Key (`LINKX_SECRET_ENCRYPTION_KEY`)**:
+  ```text
+  VrJVoT3RQ3Qvf1wgg0_Y_PX1sMGOufoMLeS8ZLS0Ebg=
+  ```
+  *(Used across Server 1, Server 3, and Server 4 to encrypt/decrypt managed credentials in PostgreSQL).*
+* **Flask Secret Key (`LINKX_FLASK_SECRET_KEY`)**:
+  ```text
+  a6b6e536f073f984e1f1889312bb7de3f8faf5aab0bf18033c1a2424a0721160
+  ```
+  *(Used on Server 1 for signing sessions).*
+
+### Live Progress Checklist
+* [x] **Pre-flight Audit**: Completed across `node19`, `node20`, `node21`, `node22`. Subnet `172.21.13.0/24` verified.
+* [x] **Git Repository Synced**: Pushed latest code & handoff documentation to `https://github.com/atenatiwosgetachew1-ET/Linkx-Backend_Beta_v1.git`.
+* [x] **Base Packages (`node19`)**: `nfs-kernel-server`, `nginx`, `python3-venv`, `python3-pip`, `git` installed.
+* [x] **Base Packages (`node20`)**: `docker.io`, `docker-compose-v2`, `git` installed.
+* [x] **Base Packages (`node21`)**: `nfs-common`, `python3-venv`, `python3-pip`, `git` installed.
+* [ ] **Base Packages (`node22`)**: `docker.io` & `docker-compose-v2` pending install (Neo4j requires Docker).
+* [ ] **Git Clones**: Pull `/opt/linkx-backend-update` on all 4 nodes.
+* [ ] **NFS Storage Export & Mount**: Export on `node19` -> Mount on `node21` & `node22`.
+* [ ] **Server 2 Setup**: Postgres 16 & Redis 7 Docker launch + SQL/Python schema initialization.
+* [ ] **Server 4 Setup**: Neo4j Docker launch + maintenance services systemd launch.
+* [ ] **Server 3 Setup**: Worker service systemd launch.
+* [ ] **Server 1 Setup**: API service systemd launch + Nginx reverse proxy.
+* [ ] **Drift & Health Audits**: `verify-linkx-server.py` green on all 4 nodes.
+
