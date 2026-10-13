@@ -1,6 +1,6 @@
 services:
   neo4j:
-    image: ${NEO4J_IMAGE:-neo4j:5-enterprise}
+    image: ${LINKX_NEO4J_IMAGE:-neo4j:5-enterprise}
     container_name: linkx-neo4j
     env_file:
       - .env

@@ -216,7 +216,7 @@ sudo chmod -R 777 /opt/Linkx_xmaintenance/neo4j/import /opt/Linkx_xmaintenance/n
 In `/opt/Linkx_xmaintenance/.env`, configure Neo4j Enterprise, license acceptance, memory, and plugins:
 ```ini
 # Neo4j Enterprise & Plugin Configuration
-NEO4J_IMAGE=neo4j:5-enterprise
+LINKX_NEO4J_IMAGE=neo4j:5-enterprise
 NEO4J_AUTH=neo4j/<STRONG_NEO4J_PASSWORD>
 NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
 NEO4J_PLUGINS=["apoc", "graph-data-science"]

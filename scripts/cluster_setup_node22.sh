@@ -29,7 +29,7 @@ LINKX_CLEANUP_NEO4J_PASSWORD=kMea_0CMcoWRIJEWKh-eyQ
 LINKX_SECRET_ENCRYPTION_KEY=VrJVoT3RQ3Qvf1wgg0_Y_PX1sMGOufoMLeS8ZLS0Ebg=
 
 # Neo4j Enterprise / GDS / APOC Configuration
-NEO4J_IMAGE=neo4j:5-enterprise
+LINKX_NEO4J_IMAGE=neo4j:5-enterprise
 NEO4J_AUTH=neo4j/kMea_0CMcoWRIJEWKh-eyQ
 NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
 NEO4J_PLUGINS=["apoc", "graph-data-science"]
@@ -58,6 +58,8 @@ echo "[+] Wrote /opt/Linkx_xmaintenance/.env successfully."
 # 3. Pull image and restart Neo4j
 cd /opt/Linkx_xmaintenance
 docker compose pull neo4j
+docker compose stop neo4j || true
+docker compose rm -f neo4j || true
 docker compose up -d neo4j
 
 # 4. Wait for Neo4j to be healthy
