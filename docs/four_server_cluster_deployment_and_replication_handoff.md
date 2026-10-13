@@ -449,7 +449,7 @@ All 4 nodes run Ubuntu 24.04.5 LTS on subnet `172.21.13.0/24`.
 * [x] **NFS Storage Export (`node19`)**: `/mnt/linkx-artifacts` created and exported to `172.21.13.66` and `172.21.13.67`.
 * [x] **NFS Storage Mount (`node22`)**: Mounted at `/mnt/linkx-artifacts` and added to `/etc/fstab`.
 * [ ] **NFS Storage Mount (`node21`)**: Run mount command on `node21`.
-* [ ] **Server 2 Setup**: Postgres 16 & Redis 7 Docker launch + SQL migrations 001-006.
+* [x] **Server 2 Setup**: Postgres 16 & Redis 7 Docker launched, all 25 tables created, indexed & seeded.
 * [ ] **Server 4 Setup**: Neo4j Docker launch + maintenance services systemd launch.
 * [ ] **Server 3 Setup**: Worker service systemd launch.
 * [ ] **Server 1 Setup**: API service systemd launch + Nginx reverse proxy.
