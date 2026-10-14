@@ -543,7 +543,9 @@ All 4 nodes run Ubuntu 24.04.5 LTS on subnet `172.21.13.0/24`.
 * [x] **Cluster Interconnection Audit**: NFS cross-node sync verified; Redis inter-node communication validated.
 * [x] **Drift & Health Audits**: `verify-linkx-server.py` passed with 0 failures and 0 warnings across all nodes. Production certified.
 * [x] **Network Hardening (UFW)**: Configured and active on all 4 nodes (`node19`, `node20`, `node21`, `node22`) with SSH and cluster subnet whitelisted.
-* [x] **CDR Session Config Reset Utility**: Added `seed-cdr-session-config.sql` and `apply-cdr-session-config.sh` to initialize fresh telecom schema defaults and eliminate BTD exposure.
+* [x] **CDR Session Config Reset Utility**: Applied on `node20` via `apply-cdr-session-config.sh`. `session_configs` purged and `user_configs` seeded with clean CDR defaults (`active_rule = ["call data records"]`, `CALLING_NO` -> `CALLED_NO`).
+* [x] **Turnkey Deploy Helpers**: Created root scripts `deploy-api.sh`, `deploy-worker.sh`, and `deploy-maintenance.sh` to prevent terminal line-wrapping breaks during deployment.
+* [x] **Final Post-Reset Cluster Audit**: Re-verified all 4 nodes live with `verify-linkx-server.py`. 0 failures across the entire cluster.
 
 ---
 
@@ -551,21 +553,43 @@ All 4 nodes run Ubuntu 24.04.5 LTS on subnet `172.21.13.0/24`.
 
 To ensure that Call Data Records (CDR) sessions on the cluster start with native telecom schemas (`CALLING_NO`, `CALLED_NO`, `DURATION`, `START_TIME`, `cdrdb`) and zero exposure to banking schemas (`AMOUNTINBIRR`, `bankdb`, `accountno`):
 
-### Running the Database Reset on Server 2 (`node20`):
+### 1. Database Reset Execution (Completed on Server 2 - `node20`):
 
 ```bash
-cd /opt/linkx-backend-update
-git pull origin main
-sudo bash /opt/linkx-backend-update/service_factory/deploy/security/apply-cdr-session-config.sh
+cd /opt/linkx-backend-update && git pull origin main
+sudo bash service_factory/deploy/security/apply-cdr-session-config.sh
 ```
 
-### Verification Query:
-The script verifies that `user_configs` holds:
-* `active_rule`: `["call data records"]`
-* `default_source_col`: `CALLING_NO`
-* `default_target_col`: `CALLED_NO`
-* `default_relationship`: `CALLED_TO`
-* `storage_databases`: `["cdrdb", "cdr_db"]`
+### 2. Verified Live Database Record:
+The verification query confirmed `user_configs` stores:
+```text
+ user_id |      active_rule      |    source    |   target
+---------+-----------------------+--------------+-------------
+       1 | ["call data records"] | "CALLING_NO" | "CALLED_NO"
+```
+* **Storage Path**: `user/cdr/cleaned_partitioned`
+* **Databases & Tables**: `cdrdb`, `["call_records", "sms_records"]`
+* **Graph Traversal**: `CALLING_NO` $\to$ `CALLED_NO` with `CALLED_TO`
+* **Timestamp & Duration**: `START_TIME`, `DURATION`
+* **Banking Leaks**: 0 instances of `amountinbirr`, `accountno`, `benaccountno`, `bankdb`, or `balanceheld`.
+
+---
+
+## 10. Turnkey Cluster Certification & Scorecard
+
+| Node | Hostname | Internal IP | Deployed Role | Status | Audit Score | Key Ports Open |
+| :--- | :--- | :--- | :--- | :---: | :---: | :--- |
+| **Server 1** | `node19` | `172.21.13.70` | Ingress API Gateway | **ONLINE** | `failures=0 warnings=0` | `22`, `80`, `443`, `8000`, `8889` |
+| **Server 2** | `node20` | `172.21.13.68` | Control Data Plane | **ONLINE** | `failures=0 warnings=1` *(OTel Note)* | `22`, `5432`, `6379` *(Cluster Subnet only)* |
+| **Server 3** | `node21` | `172.21.13.66` | Worker Execution Engine | **ONLINE** | `failures=0 warnings=0` | `22`, `8889` |
+| **Server 4** | `node22` | `172.21.13.67` | Neo4j Enterprise 5 & Cleanup | **ONLINE** | `failures=0 warnings=0` | `22`, `7474`, `7687` *(Cluster Subnet only)* |
+
+### Standard Update Helpers:
+To pull updates and restart services without path wrapping issues:
+- **Server 1**: `cd /opt/linkx-backend-update && git pull origin main && sudo bash deploy-api.sh`
+- **Server 3**: `cd /opt/linkx-backend-update && git pull origin main && sudo bash deploy-worker.sh`
+- **Server 4**: `cd /opt/linkx-backend-update && git pull origin main && sudo bash deploy-maintenance.sh`
+
 
 
 
