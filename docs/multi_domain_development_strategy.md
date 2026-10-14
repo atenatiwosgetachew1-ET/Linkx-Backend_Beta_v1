@@ -275,63 +275,184 @@ jobs:
 
 ---
 
-## Phase 4: Rule Engine Modularization (Week 8–16)
+## Phase 4: Rule Engine Library (MUST — Week 8–16)
 
-**Goal**: Transform the monolithic `LA_rules_script.py` (2400+ lines) into a pluggable, domain-driven rule engine.
+**Goal**: Architect `LA_rules_script.py` (2,418 lines) into a professional **rule engine library** with a formal contract, auto-discovery registry, and first-class support for both built-in and operator-uploaded rule modules.
 
-### 4.1 Current State Analysis
+> [!IMPORTANT]
+> This is not an optional refactoring. LinkX is a professional product designed for national-scale deployment with **uploadable rules** — the rule engine is a **library**. It must have a clean public API, a standard contract, and the ability to accept new domains by dropping a single file.
 
-`LA_rules_script.py` contains:
-- `TRANSACTION_RELATIONSHIPS` — 8 banking typologies (smurfing, circular flow, fund flow, etc.)
-- `CDR_RELATIONSHIPS` — 14 telecom typologies (call sequence, callback pattern, frequent contact, etc.)
-- Shared utility functions for graph traversal, timestamp parsing, and batch processing.
+### 4.1 Current State — Why It Must Change
 
-Both relationship lists are always present in memory regardless of which domain is active. The `active_rule` field in `user_configs` determines which rules execute.
+`LA_rules_script.py` is a single 2,418-line file containing **3 domain sections** stacked vertically:
 
-### 4.2 Modular Rule Architecture
+| Line Range | Content | Lines |
+| :--- | :--- | :---: |
+| 1–200 | Shared utilities (thresholds, scope clauses, trusted entities, label sanitization) | ~200 |
+| 202–1918 | **Banking**: `TRANSACTION_RELATIONSHIPS` (14 typologies) + all generators & executors | ~1,700 |
+| 1922–2086 | **Social Media**: `POST_RELATIONSHIPS` (6 typologies) + executors | ~165 |
+| 2091–2418 | **CDR**: `CDR_RELATIONSHIPS` (14 typologies) + executors | ~330 |
+
+**Problems**:
+1. Importing ONE function loads ALL 2,418 lines and ALL domain rules into memory.
+2. Every domain's code is in the same file — no isolation, no independent testing.
+3. Adding a new domain means appending 200–500 lines to an already massive file.
+4. The `public/temp_rules/` uploadable modules follow a `main()` / `incremental()` contract, but the built-in rules don't follow any formal contract.
+5. The file is imported by name (`from batch_manager.analyzing.LA_rules_script import X`) across **26+ locations** in all 4 service packages.
+
+### 4.2 Target Architecture — Rule Engine as Library
 
 ```
 batch_manager/analyzing/
-├── __init__.py
-├── analyzer.py               # Orchestrator (unchanged)
-├── LA_graphs_script.py        # Graph construction (unchanged)
-├── rule_engine/
-│   ├── __init__.py            # Registry: discovers and loads rule modules
-│   ├── base.py                # Abstract base class for rule definitions
-│   ├── banking.py             # TRANSACTION_RELATIONSHIPS (extracted from LA_rules_script.py)
-│   ├── cdr.py                 # CDR_RELATIONSHIPS (extracted from LA_rules_script.py)
-│   ├── social_media.py        # Social media rules
-│   └── _shared.py             # Shared Cypher utilities, timestamp helpers
-└── LA_rules_script.py         # PRESERVED as compatibility shim — imports from rule_engine/
+├── rule_engine/                          ← THE LIBRARY
+│   ├── __init__.py                       ← Public API surface + auto-discovery
+│   ├── base.py                           ← RuleDomain contract (formal interface)
+│   ├── registry.py                       ← Discovery: built-in + uploaded rule modules
+│   ├── shared.py                         ← Scope clauses, trusted entities, label sanitizer
+│   ├── gds.py                            ← GDS metrics writer (PageRank, WCC, betweenness)
+│   ├── thresholds.py                     ← fetch_rule_thresholds() + dynamic config
+│   └── domains/                          ← BUILT-IN DOMAINS
+│       ├── __init__.py
+│       ├── banking.py                    ← TRANSACTION_RELATIONSHIPS + generators + executors
+│       ├── cdr.py                        ← CDR_RELATIONSHIPS + generators + executors
+│       └── social_media.py               ← POST_RELATIONSHIPS + generators + executors
+│
+├── LA_rules_script.py                    ← BACKWARD COMPAT SHIM (re-exports everything)
+├── analyzer.py                           ← Orchestrator (minimal changes — uses registry)
+└── LA_graphs_script.py                   ← Unchanged
+```
+
+### 4.3 The RuleDomain Contract (`base.py`)
+
+Every domain — built-in or uploaded — must satisfy one standard interface:
+
+```python
+from abc import ABC, abstractmethod
+from typing import List, Optional
+
+class RuleDomain(ABC):
+    """Contract that every LinkX rule domain must implement.
+
+    Built-in domains (banking, CDR, social media) and operator-uploaded
+    rule modules both follow this interface. The registry discovers and
+    loads them uniformly.
+    """
+
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Human-readable domain name, e.g. 'bank transactions'."""
+
+    @property
+    @abstractmethod
+    def relationships(self) -> List[str]:
+        """List of Neo4j relationship types this domain creates."""
+
+    @abstractmethod
+    def create_indexes(self, session, label: str) -> None:
+        """Create Neo4j indexes required for this domain's queries."""
+
+    @abstractmethod
+    def clear_relationships(self, session, session_id: str) -> None:
+        """Remove all relationships created by this domain for a session."""
+
+    @abstractmethod
+    def count_relationships(self, session, session_id: str) -> dict:
+        """Return {relationship_type: count} for this session."""
+
+    @abstractmethod
+    def batch_analysis(self, driver, log_file, session_id, nodes_label, **kwargs):
+        """Execute full batch analysis for this domain."""
+
+    @abstractmethod
+    def incremental_analysis(self, driver, session_id, nodes_label, batch_id, log_file, **kwargs):
+        """Execute incremental analysis on a single batch."""
+```
+
+### 4.4 Import Dependency Map (26+ Consumers)
+
+The following files import from `LA_rules_script.py` — ALL must continue to work after modularization:
+
+| Consumer | Imports | Package |
+| :--- | :--- | :--- |
+| `analyzer.py` | `batch_graph_analysis_transactions`, `incremental_graph_analysis_transactions`, `batch_graph_analysis_posts`, `incremental_graph_analysis_posts`, `batch_graph_analysis_cdr`, `incremental_graph_analysis_cdr` | All 4 |
+| `STR_link_analysis.py` | `TRANSACTION_RELATIONSHIPS` | API |
+| `ML_link_analysis.py` | `TRANSACTION_RELATIONSHIPS` | API, Worker |
+| `rule_engine_analysis.py` | `TRANSACTION_RELATIONSHIPS` | API, Worker |
+| `risk_scoring_kafka_service.py` | `TRANSACTION_RELATIONSHIPS` | Worker |
+| `xvigilance_consumer.py` | Multiple function imports | Worker |
+| `public/temp_rules/bank_transactions_rules.py` | `batch_graph_analysis_transactions`, `incremental_graph_analysis_transactions` | Runtime |
+| `public/temp_rules/call_data_records_rules.py` | `batch_graph_analysis_cdr`, `incremental_graph_analysis_cdr` | Runtime |
+| `public/temp_rules/social_media_(tweeter)_rules.py` | `batch_graph_analysis_posts`, `incremental_graph_analysis_posts` | Runtime |
+
+### 4.5 Backward Compatibility Shim
+
+`LA_rules_script.py` is **preserved** as a thin shim that re-exports every public symbol:
+
+```python
+"""Backward compatibility shim.
+
+All existing imports (e.g. `from batch_manager.analyzing.LA_rules_script import X`)
+continue to work unchanged. The actual implementations now live in the
+rule_engine/ package.
+"""
+
+# Shared utilities
+from batch_manager.analyzing.rule_engine.shared import *
+from batch_manager.analyzing.rule_engine.thresholds import *
+from batch_manager.analyzing.rule_engine.gds import *
+
+# Domain implementations
+from batch_manager.analyzing.rule_engine.domains.banking import *
+from batch_manager.analyzing.rule_engine.domains.cdr import *
+from batch_manager.analyzing.rule_engine.domains.social_media import *
 ```
 
 > [!WARNING]
-> **`LA_rules_script.py` must NOT be deleted or renamed.** It is imported by name across all 4 service packages. The refactored version becomes a thin shim that re-exports from `rule_engine/`, maintaining full backward compatibility.
+> **`LA_rules_script.py` must NEVER be deleted or renamed.** It is the public import surface for 26+ consumers across all 4 service packages. The shim ensures zero-breakage deployment.
 
-### 4.3 Rule Discovery Pattern
+### 4.6 Registry — Auto-Discovery of Built-In + Uploaded Rules
 
 ```python
-# rule_engine/__init__.py
-import importlib, pkgutil
-
-_RULE_REGISTRY = {}
-
-def discover_rules():
-    """Auto-discover all rule modules in this package."""
-    for importer, modname, ispkg in pkgutil.iter_modules(__path__):
-        if modname.startswith('_') or modname == 'base':
-            continue
-        mod = importlib.import_module(f'.{modname}', __package__)
-        if hasattr(mod, 'RELATIONSHIPS'):
-            _RULE_REGISTRY[modname] = mod.RELATIONSHIPS
-    return _RULE_REGISTRY
+# registry.py — discovers domains from two sources:
+#
+# 1. Built-in:  rule_engine/domains/*.py  (ship with the codebase)
+# 2. Uploaded:  public/temp_rules/*.py    (operator-uploaded via frontend)
+#
+# Uploaded rules OVERRIDE built-in rules when they share the same name.
+# This allows operators to customize banking rules without touching library code.
 ```
 
-This means adding a new domain's rules is as simple as dropping a `.py` file into `rule_engine/` with a `RELATIONSHIPS` list.
+The registry provides:
+- `get_domain(name)` → Returns the `RuleDomain` instance for a given domain name.
+- `list_domains()` → Returns all discovered domains (built-in + uploaded).
+- `get_relationships(name)` → Returns the relationship list for a domain.
 
-### 4.4 `public/temp_rules/` Integration
+### 4.7 What Adding a New Domain Looks Like (After Phase 4)
 
-The existing `public/temp_rules/` directory (where operators upload custom `.py` rule files via the frontend) remains unchanged. The `uploaded_rule_engine.py` already dynamically imports from this path. The new `rule_engine/` package handles **built-in** rules only.
+To add an "insurance fraud" domain, a developer:
+
+1. Creates `rule_engine/domains/insurance.py`:
+   - Defines `INSURANCE_RELATIONSHIPS = ["CLAIM_CHAIN", "PROVIDER_RING", ...]`
+   - Implements `create_indexes()`, `batch_analysis()`, `incremental_analysis()`
+   - Optionally extends `RuleDomain` base class
+2. The registry auto-discovers it on next import.
+3. Creates `domains/insurance/profile.json` + `seed.sql` (Phase 1 structure).
+4. Deploys to a fresh cluster.
+
+**No other files are modified. No 2,400-line file is touched.**
+
+### 4.8 What Operators Get with Uploaded Rules
+
+An analyst uploads `custom_terrorism_rules.py` via the frontend into `public/temp_rules/`. The file exports `main()` and `incremental()` following the same contract. The registry discovers it and the analyzer can invoke it — identical to built-in domains.
+
+### 4.9 Execution Safety
+
+Phase 4 execution is **gated behind Phase 3** (Testing & CI). Before extracting any code:
+1. Unit tests must verify all 26+ import paths resolve correctly.
+2. Domain-level tests must verify each domain's `batch_analysis()` and `incremental_analysis()` produce the expected relationship types.
+3. A sync-check script must confirm all 4 service package copies are identical.
+4. Only then is extraction performed, with the test suite catching any broken imports immediately.
 
 ---
 
@@ -496,7 +617,7 @@ flowchart LR
 | **1** | Domain Profile Formalization | 2 weeks | New domains require ad-hoc manual configuration, error-prone |
 | **2** | Deployment Automation & Integrity | 4 weeks | Human error during `cp`/`restart` cycles, no rollback capability |
 | **3** | Testing & Quality Gate | 6 weeks | Regressions in one domain silently break another |
-| **4** | Rule Engine Modularization | 8 weeks | 2400-line monolith becomes unmaintainable as rules multiply |
+| **4** | **Rule Engine Library** | 8 weeks | **MUST** — 2,400-line monolith prevents professional rule management; blocks uploadable rule parity |
 | **5** | Observability & Disaster Recovery | 12 weeks | Blind to failures, no recovery path for national-scale data loss |
 | **6** | Multi-Domain Governance | Ongoing | Uncontrolled domain proliferation, no institutional accountability |
 
