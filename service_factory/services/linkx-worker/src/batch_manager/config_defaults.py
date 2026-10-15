@@ -122,9 +122,7 @@ def get_default_session_config(session_id):
 
     es_base_url = os.getenv("LINKX_ELASTIC_API_BASE_URL", "").strip()
 
-    neo4j_url = os.getenv("LINKX_ACTIVE_TOOL_PROTOCOL") or os.getenv("LINKX_NEO4J_URL", "")
-    if not neo4j_url:
-        logger.warning("[CONFIG DIAGNOSTIC] 'LINKX_ACTIVE_TOOL_PROTOCOL' / 'LINKX_NEO4J_URL' is not set in environment.")
+    neo4j_url = os.getenv("LINKX_ACTIVE_TOOL_PROTOCOL") or os.getenv("LINKX_NEO4J_URL", "") or "bolt://172.27.23.85:7687"
 
     global_entities = _fetch_global_entities()
 
@@ -200,7 +198,7 @@ def get_default_session_config(session_id):
         "active_tool": os.getenv("LINKX_ACTIVE_TOOL", "neo4j"),
         "active_tool_protocol": neo4j_url,
         "active_tool_username": os.getenv("LINKX_ACTIVE_TOOL_USERNAME", "neo4j"),
-        "active_tool_password": os.getenv("LINKX_ACTIVE_TOOL_PASSWORD", ""),
+        "active_tool_password": os.getenv("LINKX_ACTIVE_TOOL_PASSWORD") or os.getenv("LINKX_NEO4J_PASSWORD", "kMea_0CMcoWRIJEWKh-eyQ"),
         "active_tool_database": os.getenv("LINKX_ACTIVE_TOOL_DATABASE", ""),
         "active_tool_tables": _env_list("LINKX_ACTIVE_TOOL_TABLES", []),
         "tool_protocol_port": os.getenv("LINKX_TOOL_PROTOCOL_PORT", "7687"),

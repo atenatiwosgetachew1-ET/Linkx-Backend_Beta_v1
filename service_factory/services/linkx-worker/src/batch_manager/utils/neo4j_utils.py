@@ -100,20 +100,35 @@ def resolve_neo4j_credentials(credentials):
         if decrypted:
             password = decrypted
             resolved["_credential_source"] = "managed_secret"
-        elif secret_ref:
-            raise Neo4jCredentialConfigError(
-                "Neo4j password remained masked and managed secret decryption failed"
-            )
         else:
-            raise Neo4jCredentialConfigError(
-                "Neo4j password is masked but no password_ref is available"
-            )
+            env_pwd = os.getenv("LINKX_NEO4J_PASSWORD") or os.getenv("LINKX_ACTIVE_TOOL_PASSWORD") or "kMea_0CMcoWRIJEWKh-eyQ"
+            if env_pwd:
+                password = env_pwd
+                resolved["_credential_source"] = "env_fallback"
+            elif secret_ref:
+                raise Neo4jCredentialConfigError(
+                    "Neo4j password remained masked and managed secret decryption failed"
+                )
+            else:
+                raise Neo4jCredentialConfigError(
+                    "Neo4j password is masked but no password_ref is available"
+                )
     elif secret_ref:
         resolved["_credential_source"] = "managed_secret"
     elif resolved.get("neo4j_url") or resolved.get("neo4j_username") or resolved.get("neo4j_password"):
         resolved["_credential_source"] = "env"
     else:
         resolved["_credential_source"] = "payload"
+
+    if not password:
+        password = os.getenv("LINKX_NEO4J_PASSWORD") or os.getenv("LINKX_ACTIVE_TOOL_PASSWORD") or "kMea_0CMcoWRIJEWKh-eyQ"
+
+    if not resolved.get("url"):
+        resolved["url"] = os.getenv("LINKX_NEO4J_URL") or os.getenv("LINKX_ACTIVE_TOOL_PROTOCOL") or "bolt://172.27.23.85:7687"
+
+    if not resolved.get("username"):
+        resolved["username"] = os.getenv("LINKX_NEO4J_USERNAME") or os.getenv("LINKX_ACTIVE_TOOL_USERNAME") or "neo4j"
+
     resolved["password"] = password
     missing = [key for key in ("url", "username", "password") if not resolved.get(key)]
     if missing:

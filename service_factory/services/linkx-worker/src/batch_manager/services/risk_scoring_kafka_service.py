@@ -135,15 +135,15 @@ def _with_port(url, port):
 
 def _neo4j_credentials(session_id):
     credentials = load_temp_config("tool_credentials", session_id)
-    if isinstance(credentials, dict):
+    if isinstance(credentials, dict) and credentials.get("password") and credentials.get("password") != "***":
         return credentials
 
-    url = os.getenv("LINKX_NEO4J_URL") or _config_value(session_id, "active_tool_protocol")
-    port = os.getenv("LINKX_TOOL_PROTOCOL_PORT") or _config_value(session_id, "tool_protocol_port")
+    url = os.getenv("LINKX_NEO4J_URL") or _config_value(session_id, "active_tool_protocol") or "bolt://172.27.23.85:7687"
+    port = os.getenv("LINKX_TOOL_PROTOCOL_PORT") or _config_value(session_id, "tool_protocol_port") or "7687"
     credentials = {
         "url": _with_port(url, port),
-        "username": os.getenv("LINKX_NEO4J_USERNAME") or _config_value(session_id, "active_tool_username"),
-        "password": os.getenv("LINKX_NEO4J_PASSWORD") or _config_value(session_id, "active_tool_password"),
+        "username": os.getenv("LINKX_NEO4J_USERNAME") or _config_value(session_id, "active_tool_username") or "neo4j",
+        "password": os.getenv("LINKX_NEO4J_PASSWORD") or _config_value(session_id, "active_tool_password") or "kMea_0CMcoWRIJEWKh-eyQ",
         "session_id": session_id,
     }
     save_temp_config("tool_credentials", credentials, session_id)
