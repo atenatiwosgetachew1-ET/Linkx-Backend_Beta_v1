@@ -455,6 +455,15 @@ def sanitize_risk_scoring_request(raw_event):
         except (ValueError, TypeError):
             max_linked_entities = None
 
+    # 7. Extract optional time_window (start_date, end_date)
+    raw_time_window = data.get("time_window") or raw_event.get("time_window")
+    time_window = None
+    if isinstance(raw_time_window, dict):
+        start_date = raw_time_window.get("start_date")
+        end_date = raw_time_window.get("end_date")
+        if start_date and end_date:
+            time_window = {"start_date": str(start_date).strip(), "end_date": str(end_date).strip()}
+
     sanitized = {
         "event_type": str(raw_event.get("event_type") or "score.calculated"),
         "data": {
@@ -484,6 +493,8 @@ def sanitize_risk_scoring_request(raw_event):
         sanitized["data"]["relationship"] = custom_rel
     if max_linked_entities is not None:
         sanitized["data"]["max_linked_entities"] = max_linked_entities
+    if time_window:
+        sanitized["data"]["time_window"] = time_window
 
     return sanitized
 
