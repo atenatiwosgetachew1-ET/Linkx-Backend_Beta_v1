@@ -53,6 +53,7 @@ def process_sync_job(payload):
         print(f"[RiskScoringSync] Cache read error: {e}")
     # ----------------------------
 
+    time_window = payload.get("time_window")
     analysis_payload = {
         "meta": {
             "trace_id": trace_id,
@@ -65,6 +66,7 @@ def process_sync_job(payload):
         "data": {
             "entity_id": entity_id,
             "analysis_type": "transaction_graph",
+            "time_window": time_window
         },
     }
 

@@ -82,6 +82,13 @@ def sync_analysis():
     # --- Validate input ---
     data = request.get_json() or {}
     response_type = data.pop("response_type", "flagged")
+    time_window_raw = data.pop("time_window", None)
+    time_window = None
+    if isinstance(time_window_raw, dict):
+        s = time_window_raw.get("start_date")
+        e = time_window_raw.get("end_date")
+        if s and e:
+            time_window = {"start_date": str(s).strip(), "end_date": str(e).strip()}
     
     # Try explicit entity_id/entity_type first
     entity_id = data.get("entity_id")
@@ -90,7 +97,7 @@ def sync_analysis():
     # Fallback: Treat any remaining key as the dynamic entity_type (e.g. {"transactionID": "123"})
     if not entity_id:
         for k, v in data.items():
-            if k not in {"entity_id", "entity_type", "response_type"}:
+            if k not in {"entity_id", "entity_type", "response_type", "time_window"}:
                 entity_type = k
                 entity_id = str(v)
                 break
@@ -149,7 +156,8 @@ def sync_analysis():
             payload={
                 "entity_id": entity_id, 
                 "entity_type": entity_type, 
-                "response_type": response_type
+                "response_type": response_type,
+                "time_window": time_window
             },
         )
         internal_job_id = job_result["job_id"]
