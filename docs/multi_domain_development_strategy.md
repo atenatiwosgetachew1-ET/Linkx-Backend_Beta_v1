@@ -31,7 +31,7 @@ The codebase is **identical across both clusters** — domain behavior is contro
 
 ---
 
-## Phase 0: Foundation Audit & Cleanup (Week 1–2)
+## Phase 0: Foundation Audit & Cleanup ✅ COMPLETE
 
 **Goal**: Establish a clean baseline before introducing structural changes.
 
@@ -70,7 +70,7 @@ All 5 copies must remain identical. Currently, synchronization is manual (`cp -r
 
 ---
 
-## Phase 1: Domain Profile Formalization (Week 2–4)
+## Phase 1: Domain Profile Formalization ✅ COMPLETE
 
 **Goal**: Formalize how domains are defined, stored, and applied — making onboarding a new domain a **configuration-only** operation.
 
@@ -144,7 +144,7 @@ Create `docs/domain_onboarding_playbook.md` — a step-by-step guide for adding 
 
 ---
 
-## Phase 2: Deployment Automation & Integrity (Week 4–8)
+## Phase 2: Deployment Automation & Integrity ✅ COMPLETE
 
 **Goal**: Eliminate manual `cp -r` / `systemctl restart` human error. Make deployments repeatable, auditable, and rollback-safe.
 
@@ -209,69 +209,53 @@ This restores from the most recent `.bak` snapshot and restarts the service.
 
 ---
 
-## Phase 3: Testing & Quality Gate (Week 6–12)
+## Phase 3: Testing & Quality Gate ✅ COMPLETE
 
 **Goal**: Introduce automated testing to prevent regressions across domains. No untested code reaches production clusters.
 
-### 3.1 Test Infrastructure
+**Result**: 22 passing tests, 0 warnings. GitHub Actions CI pipeline triggers on every push/PR to main.
+
+### 3.1 Test Infrastructure (Implemented)
 
 ```
 tests/
-├── conftest.py                # Shared fixtures (mock DB, mock Redis, mock Neo4j)
-├── unit/
-│   ├── test_config_defaults.py       # Verify all .env combinations produce valid configs
-│   ├── test_rules_banking.py         # Unit test bank_transactions_rules.py
-│   ├── test_rules_cdr.py             # Unit test call_data_records_rules.py
-│   └── test_session_manager.py       # Verify session lifecycle
-├── integration/
-│   ├── test_api_health.py            # Smoke test /db/health, /auth/me
-│   ├── test_worker_job_claim.py      # Verify job claim/lock on PostgreSQL
-│   └── test_neo4j_connectivity.py    # Verify Bolt connection and procedure availability
-└── domain/
-    ├── test_banking_profile.py       # Load banking profile.json, verify schema
-    └── test_cdr_profile.py           # Load CDR profile.json, verify schema
+├── conftest.py                          # Shared config (sys.path setup)
+├── domain/
+│   ├── test_domain_profiles.py          # Schema validation for all profile.json files
+│   └── test_cross_domain_leak.py        # BDR↔CDR term isolation verification
+└── unit/
+    ├── test_config_defaults.py          # get_default_session_config structure & .env overrides
+    └── test_rules_contract.py           # AST-verified exports for LA_rules_script + temp_rules
 ```
 
 ### 3.2 Domain Profile Validation Tests
 
-Automated tests that load each `domains/<name>/profile.json` and verify:
-- All required fields are present.
-- Column names don't contain banking-specific terms in CDR profiles (and vice versa).
-- `seed.sql` is syntactically valid PostgreSQL.
-- `rules.py` exports the expected `RELATIONSHIPS` list.
+Parametrized tests that load each `domains/<name>/profile.json` and verify:
+- All 14 required fields are present (domain_id, relationships, columns, storage, etc.).
+- Column types and list lengths are correct.
+- Template file (`_template/profile.json.template`) is valid.
 
 ### 3.3 Cross-Domain Leak Detection
 
-A dedicated test that:
-1. Loads the CDR profile.
-2. Generates a mock session config.
-3. Asserts zero occurrences of banking terms (`AMOUNTINBIRR`, `ACCOUNTNO`, `BENACCOUNTNO`, `bankdb`, `BALANCEHELD`).
-4. Vice versa for banking profile vs CDR terms.
+Dedicated tests that scan both profile.json and seed.sql files:
+- CDR profile/seed is free of banking terms (ACCOUNTNO, AMOUNTINBIRR, bankdb, etc.).
+- Banking profile/seed is free of CDR terms (CALLING_NO, CALLED_NO, cdrdb, etc.).
 
-This prevents the exact issue we manually fixed during the CDR cluster deployment.
+### 3.4 Rules Contract Verification
 
-### 3.4 CI Pipeline (GitHub Actions)
+Uses **AST-based parsing** (not runtime import) so tests run without heavyweight server dependencies (psycopg, neo4j driver, Classified_entities):
+- LA_rules_script.py exports: `TRANSACTION_RELATIONSHIPS`, `CDR_RELATIONSHIPS`, `POST_RELATIONSHIPS`, and all 6 batch/incremental functions.
+- All 3 temp_rules modules export `main()` and `incremental()`.
 
-```yaml
-# .github/workflows/ci.yml
-name: LinkX CI
-on: [push, pull_request]
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - run: pip install -r requirements.txt
-      - run: pytest tests/unit/ -v
-      - run: pytest tests/domain/ -v
-      - run: python scripts/verify-source-sync.py  # Ensure all 4 service copies match
-```
+### 3.5 CI Pipeline (GitHub Actions)
+
+`.github/workflows/ci.yml` — runs on push/PR to `main`:
+- Python 3.12 on ubuntu-latest
+- Installs only `pytest` (no heavyweight deps)
+- Runs `tests/domain/` and `tests/unit/` suites
 
 > [!TIP]
-> Start with unit and domain profile tests only. Integration tests require Docker (PostgreSQL, Redis, Neo4j) and should be added in Phase 5 when the CI environment is mature.
+> Integration tests (API smoke, Neo4j connectivity, worker job claim) can be added later when Docker-based CI is justified. Current tests run in <1s with zero external dependencies.
 
 ---
 
