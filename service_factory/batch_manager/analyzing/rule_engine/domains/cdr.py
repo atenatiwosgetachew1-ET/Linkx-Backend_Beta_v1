@@ -16,6 +16,7 @@ from batch_manager.analyzing.rule_engine.shared import (
     _safe_label, _session_scope_clause, _safe_index_name,
     _SID, _OPEN, _CLOSE,
 )
+from batch_manager.analyzing.rule_engine.thresholds import fetch_rule_thresholds
 from batch_manager.analyzing.rule_engine.gds import _write_gds_metrics
 
 

@@ -4,6 +4,7 @@ Contains TRANSACTION_RELATIONSHIPS (15 typologies), all Cypher query generators,
 execution functions, and batch/incremental entry points for banking/BDR analysis.
 """
 
+from collections import defaultdict
 from datetime import datetime, timedelta
 
 try:
