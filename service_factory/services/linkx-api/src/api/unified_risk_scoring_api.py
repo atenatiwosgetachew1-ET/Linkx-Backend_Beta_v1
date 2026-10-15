@@ -123,6 +123,7 @@ def analyze():
                 job_type="unified_link_analysis",
                 payload={
                     "job_id": job_id,
+                    "external_job_id": job_id,
                     "account_no": acc,
                     "time_window": time_window
                 }
@@ -139,6 +140,7 @@ def analyze():
                 job_type="unified_link_analysis_webhook_only",
                 payload={
                     "job_id": job_id,
+                    "external_job_id": job_id,
                     "account_no": acc,
                     "cached_payload": cached_payloads[acc]
                 }

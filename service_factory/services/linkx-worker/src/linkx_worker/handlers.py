@@ -22,7 +22,7 @@ def run_job(job_type, payload):
     payload = _normalize_payload(payload)
     job_type = str(job_type or payload.get("job_type") or payload.get("id") or "")
     session_id = payload.get("session_id")
-    job_id = payload.get("job_id")
+    job_id = payload.get("db_job_id") or payload.get("job_id")
 
     if session_id and "stop_event" not in payload:
         payload["stop_event"] = DatabaseCancellationEvent(

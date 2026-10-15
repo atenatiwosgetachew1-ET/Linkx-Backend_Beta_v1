@@ -87,7 +87,10 @@ def claim_job(conn, queues, worker_name):
             "attempts": row[6],
             "max_attempts": row[7],
         }
-        job["payload"]["job_id"] = job["id"]
+        if "job_id" in job["payload"]:
+            job["payload"]["external_job_id"] = job["payload"]["job_id"]
+        job["payload"]["db_job_id"] = job["id"]
+        job["payload"].setdefault("job_id", job["id"])
         job["payload"].setdefault("session_id", job.get("session_id"))
         job["payload"].setdefault("run_id", job.get("run_id"))
         emit_event(cur, job, "job_started", f"Job claimed by {worker_name}")

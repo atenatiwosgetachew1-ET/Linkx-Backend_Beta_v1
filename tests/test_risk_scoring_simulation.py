@@ -11,9 +11,11 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 worker_src = os.path.join(BASE_DIR, "service_factory", "services", "linkx-worker", "src")
 api_src = os.path.join(BASE_DIR, "service_factory", "services", "linkx-api", "src")
 
-# 1. Setup worker path for risk_scoring_kafka_service and unified_risk_scoring_service
+# 1. Setup worker path and api path for risk_scoring services
 if worker_src not in sys.path:
     sys.path.insert(0, worker_src)
+if api_src not in sys.path:
+    sys.path.append(api_src)
 
 from batch_manager.services.risk_scoring_kafka_service import execute_formal_link_analysis
 from batch_manager.services.unified_risk_scoring_service import process_unified_job
@@ -442,6 +444,124 @@ class TestRiskScoringSimulation(unittest.TestCase):
             self.assertEqual(unscoped_result["status"], "success")
             call_payload2 = mock_exec.call_args[0][0]
             self.assertIsNone(call_payload2["data"]["time_window"])
+
+    def test_claim_job_preserves_external_job_id(self):
+        """
+        Verifies that runner.py claim_job preserves the caller's external job_id
+        and sets db_job_id to the database UUID rather than overwriting the caller's ID.
+        """
+        from linkx_worker.runner import claim_job
+
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cur
+
+        caller_job_id = "job-ec80db27-d908-463f-a3a0-11b94a53a244"
+        db_uuid = "76fed3b7-162e-496b-bdd6-a857a871c49b"
+
+        # Mock DB returning row: (id, session_id, run_id, job_type, queue_name, payload, attempts, max_attempts)
+        mock_cur.fetchone.return_value = (
+            db_uuid,
+            None,
+            None,
+            "unified_link_analysis",
+            "analysis",
+            {"job_id": caller_job_id, "account_no": "1000698739723", "time_window": None},
+            0,
+            3,
+        )
+
+        with patch("linkx_worker.runner.emit_event"):
+            claimed = claim_job(mock_conn, ["analysis"], "test-worker-1")
+
+        self.assertIsNotNone(claimed)
+        payload = claimed["payload"]
+        self.assertEqual(payload["job_id"], caller_job_id)
+        self.assertEqual(payload["external_job_id"], caller_job_id)
+        self.assertEqual(payload["db_job_id"], db_uuid)
+
+    def test_process_unified_job_webhook_preserves_caller_job_id(self):
+        """
+        Verifies that process_unified_job dispatches the webhook using the caller's
+        external_job_id so the external Risk Scoring Aggregator can match the callback.
+        """
+        caller_job_id = "job-ec80db27-d908-463f-a3a0-11b94a53a244"
+        job_payload = {
+            "job_id": caller_job_id,
+            "external_job_id": caller_job_id,
+            "db_job_id": "76fed3b7-162e-496b-bdd6-a857a871c49b",
+            "account_no": "1000698739723",
+            "time_window": None
+        }
+
+        mock_event = {
+            "meta": {"session_id": "session-123"},
+            "data": {
+                "flagged_count": 0,
+                "linked_count": 4,
+                "network_centrality_score": 0.22,
+                "max_path_length": 2
+            }
+        }
+
+        mock_send = MagicMock(return_value={"success": True, "status_code": 200})
+
+        with patch("batch_manager.services.risk_scoring_kafka_service.execute_formal_link_analysis", return_value=(mock_event, "success")), \
+             patch("batch_manager.services.unified_risk_scoring_service._send_webhook", mock_send), \
+             patch("batch_manager.services.unified_risk_scoring_service.get_postgres_connection"):
+
+            res = process_unified_job(job_payload)
+
+            self.assertEqual(res["status"], "success")
+            self.assertEqual(res["webhook"]["status_code"], 200)
+
+            # Webhook must receive caller_job_id as the correlation and payload job_id
+            mock_send.assert_called_once()
+            args = mock_send.call_args[0]
+            self.assertEqual(args[1], caller_job_id)
+            self.assertEqual(args[2]["job_id"], caller_job_id)
+
+    def test_send_webhook_https_pool_and_fallback(self):
+        """
+        Verifies _send_webhook uses direct HTTPSConnectionPool with SNI server_hostname,
+        and falls back to requests.post on pool exception.
+        """
+        from batch_manager.services.unified_risk_scoring_service import _send_webhook
+
+        payload = {"job_id": "test-job-999", "account_no": "1000698739723"}
+
+        # Case 1: Pool succeeds
+        mock_pool_cls = MagicMock()
+        mock_pool = MagicMock()
+        mock_res = MagicMock(status=200, data=b'{"status":"received"}')
+        mock_pool.urlopen.return_value = mock_res
+        mock_pool_cls.return_value = mock_pool
+
+        with patch("urllib3.connectionpool.HTTPSConnectionPool", mock_pool_cls):
+            out = _send_webhook("1000698739723", "test-job-999", payload)
+            self.assertTrue(out["success"])
+            self.assertEqual(out["status_code"], 200)
+            mock_pool_cls.assert_called_once_with(
+                host="172.27.23.46",
+                port=443,
+                server_hostname="risk-platform.local",
+                cert_reqs="CERT_NONE",
+                assert_hostname=False,
+                timeout=10.0
+            )
+
+        # Case 2: Pool raises, falls back to requests.post
+        mock_pool_fail = MagicMock(side_effect=Exception("Pool connection reset"))
+        mock_req_post = MagicMock()
+        mock_req_post.return_value.ok = True
+        mock_req_post.return_value.status_code = 200
+
+        with patch("urllib3.connectionpool.HTTPSConnectionPool", mock_pool_fail), \
+             patch("requests.post", mock_req_post):
+            out2 = _send_webhook("1000698739723", "test-job-999", payload)
+            self.assertTrue(out2["success"])
+            self.assertEqual(out2["status_code"], 200)
+            mock_req_post.assert_called_once()
 
 
 if __name__ == "__main__":

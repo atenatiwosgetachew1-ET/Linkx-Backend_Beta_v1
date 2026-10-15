@@ -5,29 +5,58 @@ import os
 from batch_manager.utils.postgres_utils import get_postgres_connection
 
 def _send_webhook(account_no, job_id, payload):
-    """Phase 4: Webhook Delivery"""
-    callback_url = "https://risk-platform.local/api/v1/aggregate/callback"
+    """Phase 4: Webhook Delivery with SNI-forced connection pool and requests fallback"""
+    aggregator_ip = os.getenv("RISK_PLATFORM_IP", "172.27.23.46")
+    aggregator_host = os.getenv("RISK_PLATFORM_HOST", "risk-platform.local")
     api_key = os.getenv("RISK_SCORING_API_KEY")
-    
+
     headers = {
-        "Host": "risk-platform.local",
+        "Host": aggregator_host,
         "Content-Type": "application/json",
-        "X-API-Key": api_key,
         "X-Correlation-ID": str(job_id)
     }
-    
+    if api_key:
+        headers["X-API-Key"] = api_key
+
+    # Attempt 1: Direct HTTPSConnectionPool with forced SNI server_hostname
+    # This bypasses /etc/hosts & DNS resolution while satisfying the Aggregator's strict SNI
     try:
+        import urllib3.connectionpool
+        pool = urllib3.connectionpool.HTTPSConnectionPool(
+            host=aggregator_ip,
+            port=443,
+            server_hostname=aggregator_host,
+            cert_reqs="CERT_NONE",
+            assert_hostname=False,
+            timeout=10.0
+        )
+        res = pool.urlopen(
+            "POST",
+            "/api/v1/aggregate/callback",
+            headers=headers,
+            body=json.dumps(payload)
+        )
+        print(f"[UnifiedRiskScoring] Webhook delivered for {account_no} (job_id={job_id}) via HTTPS pool. Status: {res.status}")
+        return {"success": 200 <= res.status < 300, "status_code": res.status}
+    except Exception as pool_err:
+        print(f"[UnifiedRiskScoring] HTTPS pool webhook attempt failed for {account_no}: {pool_err}")
+
+    # Attempt 2: Fallback to standard requests (if /etc/hosts is configured)
+    try:
+        callback_url = f"https://{aggregator_host}/api/v1/aggregate/callback"
         response = requests.post(callback_url, json=payload, headers=headers, verify=False, timeout=10)
-        print(f"[UnifiedRiskScoring] Webhook delivered for {account_no}. Status: {response.status_code}")
+        print(f"[UnifiedRiskScoring] Webhook delivered for {account_no} (job_id={job_id}) via requests fallback. Status: {response.status_code}")
+        return {"success": response.ok, "status_code": response.status_code}
     except Exception as e:
-        print(f"[UnifiedRiskScoring] Webhook failed for {account_no}: {e}")
+        print(f"[UnifiedRiskScoring] Webhook failed completely for {account_no}: {e}")
+        return {"success": False, "error": str(e)}
 
 def process_unified_job(payload):
     """
     Worker handler for 'unified_link_analysis'.
     Executes formal link analysis, maps to v2 schema, caches it, and sends the webhook.
     """
-    job_id = payload.get("job_id")
+    job_id = payload.get("external_job_id") or payload.get("job_id")
     account_no = payload.get("account_no")
     time_window = payload.get("time_window")
     
@@ -106,6 +135,13 @@ def process_unified_job(payload):
         try:
             with get_postgres_connection() as conn:
                 with conn.cursor() as cur:
+                    session_id_val = ""
+                    if response_event and isinstance(response_event, dict):
+                        session_id_val = response_event.get("meta", {}).get("session_id", "")
+
+                    data_obj = v2_payload.get("data") or {}
+                    is_flagged = bool(data_obj.get("risk_score", 0) > 0)
+
                     cur.execute("""
                     INSERT INTO link_analysis_evidence (
                         trace_id, correlation_id, entity_id, entity_type,
@@ -117,20 +153,19 @@ def process_unified_job(payload):
                         %s::jsonb, %s::jsonb, %s, NOW()
                     )
                     """, (
-                        analysis_payload["meta"]["trace_id"], job_id, account_no, "accountno",
-                        response_event.get("meta", {}).get("session_id", ""), "unified_link_analysis",
-                        bool(v2_payload["data"].get("risk_score", 0) > 0), v2_payload["data"].get("linked_accounts_count", 0),
+                        analysis_payload["meta"]["trace_id"], str(job_id), str(account_no), "accountno",
+                        session_id_val, "unified_link_analysis",
+                        is_flagged, data_obj.get("linked_accounts_count", 0),
                         json.dumps({"time_window": time_window}), json.dumps(v2_payload), duration_ms
                     ))
                     
                     # Inject into the unified linkx_reports pipeline as SERVICE_EVIDENCE for the UI
-                    is_flagged = bool(v2_payload["data"].get("risk_score", 0) > 0)
                     report_payload = {
                         "trace_id": analysis_payload["meta"]["trace_id"],
                         "entity_id": str(account_no),
                         "is_flagged": is_flagged,
-                        "network_centrality_score": v2_payload["data"].get("network_centrality_score", 0),
-                        "max_path_length": v2_payload["data"].get("max_path_length", 0)
+                        "network_centrality_score": data_obj.get("network_centrality_score", 0),
+                        "max_path_length": data_obj.get("max_path_length", 0)
                     }
                     cur.execute("""
                         INSERT INTO linkx_reports (report_type, source_system, external_reference_id, payload, status)
@@ -142,9 +177,9 @@ def process_unified_job(payload):
             print(f"[UnifiedRiskScoring] Cache write error: {e}")
             
         # --- Send Webhook (Phase 4.3) ---
-        _send_webhook(account_no, job_id, v2_payload)
+        webhook_res = _send_webhook(account_no, job_id, v2_payload)
         
-        return {"status": "success", "account_no": account_no}
+        return {"status": "success", "account_no": account_no, "webhook": webhook_res}
         
     except Exception as e:
         print(f"[UnifiedRiskScoring] Fatal Error: {e}")
@@ -161,15 +196,15 @@ def process_unified_job(payload):
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "error": {"code": "INTERNAL_ERROR", "message": str(e)}
         }
-        _send_webhook(account_no, job_id, v2_payload)
-        return {"status": "failed", "error": str(e)}
+        webhook_res = _send_webhook(account_no, job_id, v2_payload)
+        return {"status": "failed", "error": str(e), "webhook": webhook_res}
 
 def process_unified_webhook_only_job(payload):
     """
     Worker handler for 'unified_link_analysis_webhook_only'.
     Used by the Fast-Lane cache bypass.
     """
-    job_id = payload.get("job_id")
+    job_id = payload.get("external_job_id") or payload.get("job_id")
     account_no = payload.get("account_no")
     cached_payload = payload.get("cached_payload")
     
@@ -177,5 +212,5 @@ def process_unified_webhook_only_job(payload):
     cached_payload["job_id"] = job_id
     cached_payload["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     
-    _send_webhook(account_no, job_id, cached_payload)
-    return {"status": "success", "account_no": account_no}
+    webhook_res = _send_webhook(account_no, job_id, cached_payload)
+    return {"status": "success", "account_no": account_no, "webhook": webhook_res}
