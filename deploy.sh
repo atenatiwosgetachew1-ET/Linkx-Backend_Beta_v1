@@ -27,6 +27,7 @@ BOOT_WAIT=4
 ROLE=""
 ROLLBACK=false
 AUTO_YES=false
+INSTALL_DEPS=false
 
 # --- Parse Arguments ---
 while [[ $# -gt 0 ]]; do
@@ -34,6 +35,7 @@ while [[ $# -gt 0 ]]; do
         --role)   ROLE="$2"; shift 2 ;;
         --rollback) ROLLBACK=true; shift ;;
         --yes|-y) AUTO_YES=true; shift ;;
+        --install-deps) INSTALL_DEPS=true; shift ;;
         *) echo "Unknown argument: $1"; exit 1 ;;
     esac
 done
@@ -198,8 +200,8 @@ else
     cp -r "${SRC}/." "${DEST}/"
 fi
 
-# --- Deploy: Install New Dependencies ---
-if [[ -n "${VENV}" && -f "${DEST}/requirements.txt" ]]; then
+# --- Deploy: Install New Dependencies (only when --install-deps is passed) ---
+if [[ "${INSTALL_DEPS}" == true && -n "${VENV}" && -f "${DEST}/requirements.txt" ]]; then
     log_deploy "Checking pip dependencies..."
     "${VENV}/bin/python" -m pip install -q -r "${DEST}/requirements.txt" 2>/dev/null || true
 fi
