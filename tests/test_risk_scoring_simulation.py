@@ -23,6 +23,7 @@ api_file = os.path.join(api_src, "api", "unified_risk_scoring_api.py")
 mock_orch = types.ModuleType("service_orchestration")
 mock_orch.connect = MagicMock()
 mock_orch.enqueue_worker_job = MagicMock()
+mock_orch.get_worker_job = MagicMock()
 old_orch = sys.modules.get("service_orchestration")
 sys.modules["service_orchestration"] = mock_orch
 
@@ -338,6 +339,109 @@ class TestRiskScoringSimulation(unittest.TestCase):
             self.assertIsNone(delivered_payload["error"])
             self.assertEqual(delivered_payload["data"]["linked_accounts_count"], 5)
             self.assertEqual(delivered_payload["data"]["network_centrality_score"], 0.42)
+
+    def test_sync_analysis_endpoint_time_window_flow(self):
+        """
+        Simulation Case 5: Direct HTTP call to POST /api/risk_scoring/sync_analysis.
+        Verifies that time_window (provided vs omitted) is cleanly parsed and forwarded
+        to the worker job queue, returning 200 OK.
+        """
+        from flask import Flask
+        # Dynamically load risk_scoring_sync_api
+        sync_api_file = os.path.join(api_src, "api", "risk_scoring_sync_api.py")
+        spec_sync = importlib.util.spec_from_file_location("risk_scoring_sync_api_mod", sync_api_file)
+        sync_mod = importlib.util.module_from_spec(spec_sync)
+        spec_sync.loader.exec_module(sync_mod)
+
+        app = Flask(__name__)
+        app.register_blueprint(sync_mod.risk_scoring_sync_api, url_prefix="/api/risk_scoring")
+        client = app.test_client()
+
+        os.environ["LINKX_RISK_SCORING_API_KEY"] = "test-secret-key"
+
+        mock_sync_conn = MagicMock()
+        mock_sync_conn.__enter__.return_value = mock_sync_conn
+        mock_sync_cur = MagicMock()
+        mock_sync_cur.fetchone.return_value = None
+        mock_sync_conn.cursor.return_value.__enter__.return_value = mock_sync_cur
+        mock_orch.connect.return_value = mock_sync_conn
+
+        # Case A: Scoped window provided
+        with patch.object(sync_mod, "enqueue_worker_job", return_value={"job_id": "job-scoped-1"}) as mock_enq, \
+             patch.object(sync_mod, "get_worker_job", return_value={"status": "succeeded", "result": {"source": "link", "data": {"network_centrality_score": 0.25}}}):
+            
+            resp = client.post(
+                "/api/risk_scoring/sync_analysis",
+                headers={"X-API-Key": "test-secret-key"},
+                json={
+                    "account_no": "1000698739723",
+                    "time_window": {"start_date": "2025-10-15", "end_date": "2026-10-15"}
+                }
+            )
+            self.assertEqual(resp.status_code, 200)
+            json_data = resp.get_json()
+            self.assertTrue(json_data["success"])
+            self.assertEqual(json_data["account_no"], "1000698739723")
+            enq_payload = mock_enq.call_args[1]["payload"]
+            self.assertEqual(enq_payload["time_window"], {"start_date": "2025-10-15", "end_date": "2026-10-15"})
+
+        # Case B: Full history (time_window omitted)
+        with patch.object(sync_mod, "enqueue_worker_job", return_value={"job_id": "job-unscoped-2"}) as mock_enq2, \
+             patch.object(sync_mod, "get_worker_job", return_value={"status": "succeeded", "result": {"source": "link", "data": {"network_centrality_score": 0.10}}}):
+            
+            resp2 = client.post(
+                "/api/risk_scoring/sync_analysis",
+                headers={"X-API-Key": "test-secret-key"},
+                json={"account_no": "1000698739723"}
+            )
+            self.assertEqual(resp2.status_code, 200)
+            json_data2 = resp2.get_json()
+            self.assertTrue(json_data2["success"])
+            enq_payload2 = mock_enq2.call_args[1]["payload"]
+            self.assertIsNone(enq_payload2["time_window"])
+
+    def test_sync_worker_job_execution_with_time_window(self):
+        """
+        Simulation Case 6: Worker processing of risk_scoring_sync job.
+        Verifies that process_sync_job forwards time_window down to execute_formal_link_analysis.
+        """
+        from batch_manager.services.risk_scoring_sync_service import process_sync_job
+
+        mock_conn = MagicMock()
+        mock_conn.__enter__.return_value = mock_conn
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cur
+        mock_cur.fetchone.return_value = None
+
+        with patch("batch_manager.services.risk_scoring_kafka_service.execute_formal_link_analysis") as mock_exec, \
+             patch("batch_manager.services.risk_scoring_sync_service.get_postgres_connection", return_value=mock_conn), \
+             patch("batch_manager.analyzing.LA_graphs_script.fetch_graph", return_value={"nodes": [], "edges": []}):
+
+            mock_exec.return_value = ({
+                "meta": {"session_id": "sync-session-999"},
+                "data": {"network_centrality_score": 0.35, "max_path_length": 3, "linked_count": 8, "flagged_count": 0}
+            }, "success")
+
+            # 1. Scoped
+            scoped_result = process_sync_job({
+                "entity_id": "1000698739723",
+                "entity_type": "accountno",
+                "time_window": {"start_date": "2025-10-15", "end_date": "2026-10-15"}
+            })
+            self.assertEqual(scoped_result["status"], "success")
+            self.assertEqual(scoped_result["data"]["network_centrality_score"], 0.35)
+            call_payload = mock_exec.call_args[0][0]
+            self.assertEqual(call_payload["data"]["time_window"], {"start_date": "2025-10-15", "end_date": "2026-10-15"})
+
+            # 2. Unscoped / Full History
+            unscoped_result = process_sync_job({
+                "entity_id": "1000698739723",
+                "entity_type": "accountno",
+                "time_window": None
+            })
+            self.assertEqual(unscoped_result["status"], "success")
+            call_payload2 = mock_exec.call_args[0][0]
+            self.assertIsNone(call_payload2["data"]["time_window"])
 
 
 if __name__ == "__main__":
