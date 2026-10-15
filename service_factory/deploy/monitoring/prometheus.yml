@@ -1,0 +1,63 @@
+# LinkX Multi-Cluster Prometheus Scrape Configuration
+# Scrapes both NBE/BDR and CDR 4-Server Clusters
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'linkx-central-monitor'
+
+rule_files:
+  - 'alerts.yml'
+
+scrape_configs:
+  # =========================================================================
+  # NBE / Bank Data Records (BDR) Cluster (Subnet: 172.27.23.0/24)
+  # =========================================================================
+  - job_name: 'nbe-hosts'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets:
+          - '172.27.23.95:8889'    # node-19: API Gateway & Frontend
+          - '172.27.23.106:8889'   # node-20: PostgreSQL & Redis Control Plane
+          - '172.27.23.18:8889'    # node-21: Distributed Worker Engine
+          - '172.27.23.85:8889'    # node-22: Neo4j & Graph Maintenance
+        labels:
+          cluster: 'nbe-banking'
+          domain: 'banking'
+
+  # =========================================================================
+  # CDR / Telecom Call Data Records Cluster (Subnet: 172.21.13.0/24)
+  # =========================================================================
+  - job_name: 'cdr-hosts'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets:
+          - '172.21.13.70:8889'    # node19: API Gateway & Frontend
+          - '172.21.13.68:8889'    # node20: PostgreSQL & Redis Control Plane
+          - '172.21.13.66:8889'    # node21: Distributed Worker Engine
+          - '172.21.13.67:8889'    # node22: Neo4j & Graph Maintenance
+        labels:
+          cluster: 'cdr-telecom'
+          domain: 'cdr'
+
+  # =========================================================================
+  # Application Specific Metrics
+  # =========================================================================
+  - job_name: 'linkx-api-app'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets:
+          - '172.27.23.95:5000'
+          - '172.21.13.70:5000'
+        labels:
+          service: 'linkx-api'
+
+  - job_name: 'linkx-neo4j-metrics'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets:
+          - '172.27.23.85:2004'
+          - '172.21.13.67:2004'
+        labels:
+          service: 'neo4j-metrics'

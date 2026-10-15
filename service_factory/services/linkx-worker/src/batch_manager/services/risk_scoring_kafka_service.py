@@ -596,7 +596,7 @@ def execute_formal_link_analysis(event_data):
         duration_ms = (time.time() - t0) * 1000.0
         return None, "dataframe_creation_failed"
 
-    # NEW: Phase 3.1 & 3.2 Pandas Date Filtering
+    # Phase 3.1 & 3.2 Dynamic Scoped Analysis (Optional Pandas Date Filtering)
     time_window = data_section.get("time_window")
     if time_window and time_window.get("start_date") and time_window.get("end_date"):
         try:
@@ -608,18 +608,55 @@ def execute_formal_link_analysis(event_data):
             files = glob.glob(os.path.join(dataframe_dir, "*.parquet"))
             if not files:
                 files = glob.glob(os.path.join(dataframe_dir, "*.csv"))
+
+            total_filtered_rows = 0
             for f in files:
                 _df = pd.read_parquet(f) if f.endswith(".parquet") else pd.read_csv(f, dtype=str)
                 date_cols = [c for c in _df.columns if "date" in c.lower()]
                 if date_cols:
                     target_col = "transactiondate" if "transactiondate" in date_cols else date_cols[0]
-                    _df[target_col] = pd.to_datetime(_df[target_col], errors="coerce")
-                    _df = _df.dropna(subset=[target_col])
-                    _df = _df[(_df[target_col] >= start_dt) & (_df[target_col] <= end_dt)]
+                    series = _df[target_col]
+                    num_dates = pd.to_numeric(series, errors='coerce')
+                    is_epoch = num_dates.notna() & (num_dates > 1e11)
+
+                    parsed_series = pd.Series(index=_df.index, dtype='datetime64[ns]')
+                    if is_epoch.any():
+                        parsed_series[is_epoch] = pd.to_datetime(num_dates[is_epoch], unit='ms', errors='coerce')
+                    if (~is_epoch).any():
+                        parsed_series[~is_epoch] = pd.to_datetime(series[~is_epoch], errors='coerce')
+
+                    mask = parsed_series.notna() & (parsed_series >= start_dt) & (parsed_series <= end_dt)
+                    _df = _df[mask]
+
+                    if mask.any() and target_col in _df.columns:
+                        _df[target_col] = parsed_series[mask].dt.strftime("%Y-%m-%d")
+
                     if f.endswith(".parquet"):
                         _df.to_parquet(f, index=False)
                     else:
                         _df.to_csv(f, index=False)
+                total_filtered_rows += len(_df)
+
+            # Synchronize active_dataframe_rows so analyzer.py integrity checks succeed
+            save_temp_config("active_dataframe_rows", total_filtered_rows, session_id)
+
+            # Phase 3.2: Zero-Activity handling for date windows
+            if total_filtered_rows == 0:
+                print(f"[RiskScoring] Zero transactions found for {account_no} in window {time_window}. Returning clean 0-score.")
+                duration_ms = (time.time() - t0) * 1000.0
+                return build_link_response(
+                    event_data=event_data,
+                    account_no=account_no,
+                    is_flagged=False,
+                    linked_entities=[],
+                    linked_count=0,
+                    flagged_count=0,
+                    centrality_score=0.0,
+                    max_path_length=0,
+                    duration_ms=duration_ms,
+                    session_id=session_id,
+                ), "success"
+
         except Exception as e:
             print(f"[RiskScoring] Pandas Date Filter failed: {e}")
 

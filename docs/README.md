@@ -69,6 +69,7 @@ All operational, architectural, and handoff documentation for the LinkX distribu
 | [report_pipeline_implementation_plan.md](report_pipeline_implementation_plan.md) | Report pipeline implementation details |
 | [iso_backend_metrics_assessment.md](iso_backend_metrics_assessment.md) | ISO metrics compliance assessment |
 | [otel_agent_installation_handoff.md](otel_agent_installation_handoff.md) | OpenTelemetry agent installation |
+| [disaster_recovery_playbook.md](disaster_recovery_playbook.md) | Enterprise Disaster Recovery Playbook, RTO/RPO targets, & restore procedures |
 | [linkx_aggregator_integration_guide.md](linkx_aggregator_integration_guide.md) | Aggregator integration guide |
 
 ## 📋 Operational

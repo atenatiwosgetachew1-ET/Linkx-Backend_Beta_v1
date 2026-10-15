@@ -7,42 +7,52 @@ from service_orchestration import connect, enqueue_worker_job
 unified_risk_scoring_api = Blueprint("unified_risk_scoring_api", __name__)
 
 def _get_time_window(payload_time_window):
-    """Phase 1.1: Calculate 1-Year Fallback Logic"""
+    """
+    Extract time window if provided by caller; return None if omitted for full-history analysis.
+    """
     if isinstance(payload_time_window, dict):
         start = payload_time_window.get("start_date")
         end = payload_time_window.get("end_date")
         if start and end:
-            return {"start_date": str(start), "end_date": str(end)}
-    
-    # Fallback to exactly [today - 1 year, today]
-    now = datetime.utcnow()
-    one_year_ago = now - timedelta(days=365)
-    return {
-        "start_date": one_year_ago.strftime("%Y-%m-%d"),
-        "end_date": now.strftime("%Y-%m-%d")
-    }
+            return {"start_date": str(start).strip(), "end_date": str(end).strip()}
+    return None
 
 def _check_unified_cache(account_no, time_window):
     """Phase 1.2: Upgrade the Cache Query (Time Range Locking)"""
     try:
         with connect() as conn:
             with conn.cursor() as cur:
-                # We check request_payload JSONB for exact matching dates
-                cur.execute("""
-                SELECT response_payload
-                FROM link_analysis_evidence
-                WHERE entity_id = %s 
-                  AND event_type = 'unified_link_analysis'
-                  AND request_payload->'time_window'->>'start_date' = %s
-                  AND request_payload->'time_window'->>'end_date' = %s
-                  AND analyzed_at >= NOW() - INTERVAL '2 hours'
-                ORDER BY analyzed_at DESC
-                LIMIT 1
-                """, (
-                    str(account_no),
-                    time_window["start_date"],
-                    time_window["end_date"]
-                ))
+                if time_window:
+                    # Match exact start_date and end_date
+                    cur.execute("""
+                    SELECT response_payload
+                    FROM link_analysis_evidence
+                    WHERE entity_id = %s 
+                      AND event_type = 'unified_link_analysis'
+                      AND request_payload->'time_window'->>'start_date' = %s
+                      AND request_payload->'time_window'->>'end_date' = %s
+                      AND analyzed_at >= NOW() - INTERVAL '2 hours'
+                    ORDER BY analyzed_at DESC
+                    LIMIT 1
+                    """, (
+                        str(account_no),
+                        time_window["start_date"],
+                        time_window["end_date"]
+                    ))
+                else:
+                    # Match unscoped / full history cache entry
+                    cur.execute("""
+                    SELECT response_payload
+                    FROM link_analysis_evidence
+                    WHERE entity_id = %s 
+                      AND event_type = 'unified_link_analysis'
+                      AND (request_payload->'time_window' IS NULL 
+                           OR request_payload->'time_window' = 'null'::jsonb
+                           OR request_payload->'time_window'->>'start_date' IS NULL)
+                      AND analyzed_at >= NOW() - INTERVAL '2 hours'
+                    ORDER BY analyzed_at DESC
+                    LIMIT 1
+                    """, (str(account_no),))
                 row = cur.fetchone()
                 if row and row[0]:
                     return row[0]

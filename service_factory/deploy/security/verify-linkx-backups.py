@@ -14,7 +14,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-REPO_ROOT = Path("/opt/linkx-backend-update")
+REPO_ROOT = (
+    Path("/opt/linkx-backend-update")
+    if Path("/opt/linkx-backend-update").exists()
+    else Path(__file__).resolve().parents[3]
+)
 
 BACKUP_ROLES = {
     "postgres": {
@@ -61,6 +65,7 @@ BACKUP_ROLES = {
         "checksum_patterns": ["*/SHA256SUMS", "SHA256SUMS"],
         "scripts": [
             "service_factory/services/Linkx_xmaintenance/scripts/backup-neo4j-offline.sh",
+            "service_factory/services/Linkx_xmaintenance/scripts/restore-neo4j.sh",
             "service_factory/scripts/sync-backups-offhost.sh",
         ],
         "units": [
