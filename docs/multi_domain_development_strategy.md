@@ -259,9 +259,11 @@ Uses **AST-based parsing** (not runtime import) so tests run without heavyweight
 
 ---
 
-## Phase 4: Rule Engine Library (MUST — Week 8–16)
+## Phase 4: Rule Engine Library (MUST) ✅ COMPLETE
 
 **Goal**: Architect `LA_rules_script.py` (2,418 lines) into a professional **rule engine library** with a formal contract, auto-discovery registry, and first-class support for both built-in and operator-uploaded rule modules.
+
+**Result**: Extracted into modular package `batch_manager/analyzing/rule_engine/` (`base.py`, `registry.py`, `thresholds.py`, `shared.py`, `gds.py`, and `domains/`). Preserved `LA_rules_script.py` as a backward compatibility shim. All 21 external consumer symbols verified, synced across all 4 service packages, 38/38 tests passing.
 
 > [!IMPORTANT]
 > This is not an optional refactoring. LinkX is a professional product designed for national-scale deployment with **uploadable rules** — the rule engine is a **library**. It must have a clean public API, a standard contract, and the ability to accept new domains by dropping a single file.
