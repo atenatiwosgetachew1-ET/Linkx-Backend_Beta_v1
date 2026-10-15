@@ -584,12 +584,49 @@ The verification query confirmed `user_configs` stores:
 | **Server 3** | `node21` | `172.21.13.66` | Worker Execution Engine | **ONLINE** | `failures=0 warnings=0` | `22`, `8889` |
 | **Server 4** | `node22` | `172.21.13.67` | Neo4j Enterprise 5 & Cleanup | **ONLINE** | `failures=0 warnings=0` | `22`, `7474`, `7687` *(Cluster Subnet only)* |
 
-### Standard Update Helpers:
-To pull updates and restart services without path wrapping issues:
+### Standard Update Commands:
+
+**Unified deploy script** (preferred — includes diff preview, backup, rollback, and audit logging):
+```bash
+cd /opt/linkx-backend-update && git pull origin main
+sudo bash deploy.sh --role api                # Server 1
+sudo bash deploy.sh --role worker             # Server 3
+sudo bash deploy.sh --role graph-maintenance  # Server 4
+sudo bash deploy.sh --role control-data       # Server 2
+```
+
+**Legacy deploy helpers** (still functional):
 - **Server 1**: `cd /opt/linkx-backend-update && git pull origin main && sudo bash deploy-api.sh`
 - **Server 3**: `cd /opt/linkx-backend-update && git pull origin main && sudo bash deploy-worker.sh`
 - **Server 4**: `cd /opt/linkx-backend-update && git pull origin main && sudo bash deploy-maintenance.sh`
 
+**Rollback** (restores most recent backup):
+```bash
+sudo bash deploy.sh --role api --rollback
+```
 
+---
+
+## 11. Deployment Audit Log
+
+Every deployment via `deploy.sh` is recorded in PostgreSQL for institutional traceability.
+
+### Setup (run once on Server 2):
+```bash
+docker exec -i linkx-postgres psql -U linkx -d linkx < \
+  /opt/linkx-backend-update/service_factory/services/linkx-control-data/postgres/migrations/007_deployment_audit_log.sql
+```
+
+### Query Examples:
+```sql
+-- Latest deployment per server:
+SELECT DISTINCT ON (hostname) * FROM deployment_audit_log ORDER BY hostname, deployed_at DESC;
+
+-- What was running on node22 on a specific date:
+SELECT * FROM deployment_audit_log WHERE hostname = 'node22' AND deployed_at < '2026-10-15' ORDER BY deployed_at DESC LIMIT 1;
+
+-- Failed deployments in the last 7 days:
+SELECT * FROM deployment_audit_log WHERE verify_result = 'FAIL' AND deployed_at > NOW() - INTERVAL '7 days';
+```
 
 

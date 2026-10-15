@@ -129,6 +129,14 @@ When instructing the user to pull code updates and restart services on remote se
 
 ## 4. Standard Server Update Templates
 
+> [!TIP]
+> A **unified deploy script** is now available that handles all roles, adds backup/rollback, diff preview, and audit logging:
+> ```bash
+> cd /opt/linkx-backend-update && git pull origin main
+> sudo bash deploy.sh --role <api|worker|graph-maintenance|control-data>
+> ```
+> The per-server templates below remain valid but `deploy.sh` is the preferred method.
+
 Agents must provide updates formatted according to the following template:
 
 ### Server 1 (`node-19` - API Host)
