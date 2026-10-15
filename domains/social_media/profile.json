@@ -1,0 +1,54 @@
+{
+  "domain_id": "social_media",
+  "display_name": "Social Media (Twitter/X)",
+  "description": "Social media post analysis — sentiment, engagement anomalies, influencer detection, suspicious content patterns.",
+
+  "active_rule": ["social media (tweeter)"],
+  "rule_names": ["social media (tweeter)", "bank transactions", "call data records"],
+  "rule_file_names": ["social_media_(tweeter)_rules", "bank_transactions_rules", "call_data_records_rules"],
+
+  "default_source_col": "USERNAME",
+  "default_target_col": "MENTIONED_USER",
+  "default_relationship": "POSTED",
+  "date_column": "POST_DATE",
+
+  "storage_path": "user/social_media/cleaned_partitioned",
+  "storage_databases": ["socialdb"],
+  "storage_tables": ["tweets", "posts"],
+  "active_storage_database": "socialdb",
+  "active_storage_tables": ["tweets", "posts"],
+
+  "search_columns_strict": [
+    "post_id",
+    "username",
+    "mentioned_user"
+  ],
+  "search_columns_fuzzy": [
+    "content",
+    "hashtags",
+    "sentiment",
+    "location"
+  ],
+  "fetch_columns": [
+    "POST_ID",
+    "USERNAME",
+    "CONTENT",
+    "LIKES",
+    "RETWEETS",
+    "POST_DATE",
+    "POLARITY",
+    "SENTIMENT"
+  ],
+
+  "column_mapping": {},
+
+  "neo4j_node_label": "Tweet",
+  "relationships": [
+    "CREATED",
+    "LOW_ENGAGEMENT",
+    "INFLUENCER_POST",
+    "NEGATIVE_CONTENT",
+    "SUSPICIOUS_PATTERN",
+    "SHARED_NEG_NET"
+  ]
+}

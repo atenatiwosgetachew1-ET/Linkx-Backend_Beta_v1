@@ -1,0 +1,55 @@
+"""CHANGE_ME domain rules — template.
+
+Copy this file to domains/<your_domain>/rules.py and implement
+the main() and incremental() functions with your domain's
+Cypher rule queries.
+
+Contract:
+    main(driver, session_id, nodes_label, log_file, **kwargs)
+        → Execute full batch analysis for this domain.
+
+    incremental(driver, session_id, nodes_label, batch_id, log_file, **kwargs)
+        → Execute incremental analysis on a single batch.
+"""
+
+from datetime import datetime
+from logger import log_writer
+
+
+# Define your relationship types here
+RELATIONSHIPS = [
+    # "EXAMPLE_RELATIONSHIP_1",
+    # "EXAMPLE_RELATIONSHIP_2",
+]
+
+
+def main(driver, session_id, nodes_label, log_file, **kwargs):
+    """Full batch analysis — create all relationships for the session."""
+    label = f"`{nodes_label}`"
+    log_writer(log_file, f"[{datetime.now()}] [Info] Starting CHANGE_ME analysis")
+
+    with driver.session() as session:
+        # Add your Cypher rule queries here, following the pattern:
+        #
+        # session.run(f"""
+        #     MATCH (a:{label}), (b:{label})
+        #     WHERE <your_conditions>
+        #     MERGE (a)-[r:EXAMPLE_RELATIONSHIP_1 {{session_id:$session_id}}]->(b)
+        #     SET r.bgcolor = '#hexcolor'
+        # """, session_id=session_id)
+        pass
+
+    log_writer(log_file, f"[{datetime.now()}] [Success] CHANGE_ME analysis completed")
+
+
+def incremental(driver, session_id, nodes_label, batch_id, log_file, **kwargs):
+    """Incremental analysis — process a single batch within the session."""
+    label = f"`{nodes_label}`"
+    log_writer(log_file, f"[{datetime.now()}] [Info] Starting incremental CHANGE_ME analysis batch={batch_id}")
+
+    with driver.session() as session:
+        # Same rule queries as main() but scoped to batch_id:
+        #   WHERE a.batch_id = $batch_id
+        pass
+
+    log_writer(log_file, f"[{datetime.now()}] [Success] Incremental CHANGE_ME analysis completed batch={batch_id}")

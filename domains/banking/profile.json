@@ -1,0 +1,93 @@
+{
+  "domain_id": "banking",
+  "display_name": "Bank Transactions",
+  "description": "National Bank of Ethiopia (NBE) — AML transaction monitoring, smurfing, circular flow, fund flow, pass-through hub detection.",
+
+  "active_rule": ["bank transactions"],
+  "rule_names": ["bank transactions", "social media (tweeter)", "call data records"],
+  "rule_file_names": ["bank_transactions_rules", "social_media_(tweeter)_rules", "call_data_records_rules"],
+
+  "default_source_col": "ACCOUNTNO",
+  "default_target_col": "BENACCOUNTNO",
+  "default_relationship": "TRANSACTS_TO",
+  "date_column": "TRANSACTIONDATE",
+
+  "storage_path": "user/bank/cleaned_partitioned",
+  "storage_databases": ["bankdb", "bank_db"],
+  "storage_tables": ["individual_transactions", "entity_transactions"],
+  "active_storage_database": "bankdb",
+  "active_storage_tables": ["individual_transactions", "entity_transactions"],
+
+  "search_columns_strict": [
+    "transactionid",
+    "businessmobileno",
+    "accountno",
+    "benaccountno",
+    "bentelno",
+    "transactiondate",
+    "transactiontime"
+  ],
+  "search_columns_fuzzy": [
+    "entity_name",
+    "involver_name",
+    "othername",
+    "accownername",
+    "benfullname",
+    "branchname",
+    "benbranchname",
+    "city",
+    "bencity",
+    "country",
+    "bencountry",
+    "transactiontype",
+    "amountinbirr",
+    "balanceheld"
+  ],
+  "fetch_columns": [
+    "TRANSACTIONID",
+    "BRANCHNAME",
+    "TRANSACTIONDATE",
+    "TRANSACTIONTIME",
+    "TRANSACTIONTYPE",
+    "AMOUNTINBIRR",
+    "ACCOWNERNAME",
+    "BUSINESSMOBILENO",
+    "ACCOUNTNO",
+    "BALANCEHELD",
+    "BENFULLNAME",
+    "BENACCOUNTNO",
+    "BENTELNO"
+  ],
+
+  "column_mapping": {
+    "ACCOUNT_NO": "ACCOUNTNO",
+    "BENEFICIARY_ACCOUNT": "BENACCOUNTNO",
+    "AMOUNT": "AMOUNTINBIRR",
+    "AMOUNT_IN_BIRR": "AMOUNTINBIRR",
+    "TX_DATE": "TRANSACTIONDATE",
+    "TX_TIME": "TRANSACTIONTIME",
+    "TX_TYPE": "TRANSACTIONTYPE",
+    "BALANCE": "BALANCEHELD",
+    "OWNER_NAME": "ACCOWNERNAME",
+    "BEN_NAME": "BENFULLNAME"
+  },
+
+  "neo4j_node_label": "BankTransaction",
+  "relationships": [
+    "EFFECTIVE_FLOW",
+    "SMURFING",
+    "CIRCULAR_FLOW",
+    "FUND_FLOW",
+    "DORMANT_TO_ACTIVE",
+    "HIGH_RISK_LINK",
+    "ABNORMAL_BALANCE_CHANGE",
+    "HUB_AND_SPOKE",
+    "SHARED_IDENTIFIER",
+    "PEP_INVOLVED",
+    "SANCTIONED_ENTITY_MATCH",
+    "LATE_NIGHT_TX",
+    "JUST_BELOW_THRESHOLD",
+    "RAPID_WITHDRAWAL",
+    "ACCOUNT_ACTIVITY_SPIKE"
+  ]
+}

@@ -11,6 +11,7 @@ All operational, architectural, and handoff documentation for the LinkX distribu
 | [four_server_cluster_deployment_and_replication_handoff.md](four_server_cluster_deployment_and_replication_handoff.md) | **Master handoff** — end-to-end 4-server cluster deployment guide, secrets, verification |
 | [server_communication_and_update_protocol.md](server_communication_and_update_protocol.md) | Network topology, port matrix, golden rules for command delivery |
 | [multi_domain_development_strategy.md](multi_domain_development_strategy.md) | Phased roadmap for multi-domain (BDR/CDR) architecture and governance |
+| [domain_onboarding_playbook.md](domain_onboarding_playbook.md) | Step-by-step guide for adding new analytical domains |
 | [nbe_two_tier_hybrid_architecture_plan.md](nbe_two_tier_hybrid_architecture_plan.md) | NBE two-tier hybrid architecture design |
 | [workspace_plan.md](workspace_plan.md) | Initial workspace and project structure plan |
 | [service_split_handoff_and_load_audit.md](service_split_handoff_and_load_audit.md) | Service split from monolith to 4-server distributed architecture |

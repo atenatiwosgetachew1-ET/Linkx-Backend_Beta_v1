@@ -1,0 +1,44 @@
+-- ==============================================================================
+-- LinkX Domain Session Configuration Seed — TEMPLATE
+-- Copy this file to domains/<your_domain>/seed.sql and replace all
+-- CHANGE_ME placeholders with your domain's actual values.
+-- ==============================================================================
+
+-- 1. Wipe existing session configs to clear any previous session state
+TRUNCATE session_configs CASCADE;
+
+-- 2. Seed domain defaults into user_configs for all existing users
+INSERT INTO user_configs (user_id, config, version, updated_at)
+SELECT id, '{
+  "active_rule": ["CHANGE_ME"],
+  "rule_names": ["CHANGE_ME"],
+  "rule_file_names": ["CHANGE_ME_rules"],
+  "default_source_col": "SOURCE_COLUMN",
+  "default_target_col": "TARGET_COLUMN",
+  "default_relationship": "RELATES_TO",
+  "date_column": "DATE_COLUMN",
+  "storage_path": "user/CHANGE_ME/cleaned_partitioned",
+  "storage_databases": ["CHANGE_ME_db"],
+  "storage_tables": ["CHANGE_ME_table"],
+  "active_storage_database": "CHANGE_ME_db",
+  "active_storage_tables": ["CHANGE_ME_table"],
+  "search_columns_strict": [],
+  "search_columns_fuzzy": [],
+  "fetch_columns": [],
+  "column_mapping": {},
+  "tools": ["neo4j"],
+  "active_tool": "neo4j",
+  "active_tool_database": "",
+  "active_tool_tables": [],
+  "tool_protocol_port": "7687",
+  "tool_web_port": "7474",
+  "automation": "true",
+  "remote": "false",
+  "dataframes_limit": 1000000
+}'::jsonb, 1, NOW()
+FROM users
+ON CONFLICT (user_id) DO UPDATE
+SET config = EXCLUDED.config, version = user_configs.version + 1, updated_at = NOW();
+
+-- 3. Verification query
+SELECT user_id, config->'active_rule' AS active_rule, config->'default_source_col' AS source, config->'default_target_col' AS target FROM user_configs;
