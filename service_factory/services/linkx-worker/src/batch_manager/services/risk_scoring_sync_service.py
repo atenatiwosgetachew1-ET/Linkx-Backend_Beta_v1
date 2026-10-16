@@ -66,7 +66,8 @@ def process_sync_job(payload):
         "data": {
             "entity_id": entity_id,
             "analysis_type": "transaction_graph",
-            "time_window": time_window
+            "time_window": time_window,
+            "storage_config": payload.get("storage_config") or {},
         },
     }
 

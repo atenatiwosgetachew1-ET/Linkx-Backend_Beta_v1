@@ -555,6 +555,12 @@ def execute_formal_link_analysis(event_data):
         if storage_config.get("auth_token"):
             save_temp_config("elastic_api_authorization", storage_config["auth_token"], session_id)
 
+        domain = str(storage_config.get("domain") or "").lower()
+        port_str = str(storage_config.get("storage_port") or "")
+        if domain == "microfinance" or port_str == "5007":
+            save_temp_config("date_column", "CREATEDDATE", session_id)
+            date_column = "CREATEDDATE"
+
     storage_address = _config_value(session_id, "active_storage_host") or _config_value(session_id, "active_storage_address")
     if storage_address and ":" in storage_address:
         storage_address = storage_address.split(":", 1)[0]
