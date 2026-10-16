@@ -614,8 +614,10 @@ def execute_formal_link_analysis(event_data):
             import glob
             import pandas as pd
             dataframe_dir = load_temp_config("active_dataframe_dir", session_id) or os.path.join(ensure_artifact_dir("dfparts"), f"merged_dfpart_{session_id}")
-            start_dt = pd.to_datetime(time_window["start_date"])
-            end_dt = pd.to_datetime(time_window["end_date"])
+            start_parsed = pd.to_datetime(time_window["start_date"])
+            start_dt = start_parsed.tz_localize(None) if getattr(start_parsed, "tzinfo", None) else start_parsed
+            end_parsed = pd.to_datetime(time_window["end_date"])
+            end_dt = end_parsed.tz_localize(None) if getattr(end_parsed, "tzinfo", None) else end_parsed
             files = glob.glob(os.path.join(dataframe_dir, "*.parquet"))
             if not files:
                 files = glob.glob(os.path.join(dataframe_dir, "*.csv"))
@@ -630,11 +632,10 @@ def execute_formal_link_analysis(event_data):
                     num_dates = pd.to_numeric(series, errors='coerce')
                     is_epoch = num_dates.notna() & (num_dates > 1e11)
 
-                    parsed_series = pd.Series(index=_df.index, dtype='datetime64[ns]')
+                    parsed_series = pd.to_datetime(series, errors='coerce', utc=True)
                     if is_epoch.any():
-                        parsed_series[is_epoch] = pd.to_datetime(num_dates[is_epoch], unit='ms', errors='coerce')
-                    if (~is_epoch).any():
-                        parsed_series[~is_epoch] = pd.to_datetime(series[~is_epoch], errors='coerce')
+                        parsed_series[is_epoch] = pd.to_datetime(num_dates[is_epoch], unit='ms', errors='coerce', utc=True)
+                    parsed_series = parsed_series.dt.tz_localize(None)
 
                     mask = parsed_series.notna() & (parsed_series >= start_dt) & (parsed_series <= end_dt)
                     _df = _df[mask]

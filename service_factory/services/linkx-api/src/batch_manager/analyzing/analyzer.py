@@ -628,22 +628,22 @@ def neo4j_row_data_injector(payload, batch_size=500):
                                     node_identity: 'Target Node',
                                     session_id: row.session_id,
                                     run_id: row.run_id,
-                                    parent_session_id: row.parent_session_id,
-                                    created_by: 'linkx',
-                                    linkx_managed: true,
                                     rel_type: $relationship_type
                                 }})
-                                SET b += row.props
+                                SET b += row.props,
+                                    b.created_by = 'linkx',
+                                    b.linkx_managed = true,
+                                    b.parent_session_id = row.parent_session_id
                                 CREATE (a)-[rel:{relationship_type} {{
                                     session_id: row.session_id,
                                     run_id: row.run_id,
-                                    parent_session_id: row.parent_session_id,
                                     created_by: 'linkx',
                                     linkx_managed: true,
                                     weight: row.weight
                                 }}]->(b)
                                 SET rel.bgcolor = '#750b8c',
-                                    rel.textcolor = '#ffffff'
+                                    rel.textcolor = '#ffffff',
+                                    rel.parent_session_id = row.parent_session_id
                         """,
                         source=source_value,
                         source_props=batch_source_props,
