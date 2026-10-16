@@ -143,7 +143,7 @@ def _neo4j_credentials(session_id):
     credentials = {
         "url": _with_port(url, port),
         "username": os.getenv("LINKX_NEO4J_USERNAME") or _config_value(session_id, "active_tool_username") or "neo4j",
-        "password": os.getenv("LINKX_NEO4J_PASSWORD") or _config_value(session_id, "active_tool_password") or "kMea_0CMcoWRIJEWKh-eyQ",
+        "password": os.getenv("LINKX_NEO4J_PASSWORD") or _config_value(session_id, "active_tool_password") or "",
         "session_id": session_id,
     }
     save_temp_config("tool_credentials", credentials, session_id)

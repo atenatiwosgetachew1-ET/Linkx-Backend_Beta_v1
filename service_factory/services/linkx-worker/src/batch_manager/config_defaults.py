@@ -198,7 +198,7 @@ def get_default_session_config(session_id):
         "active_tool": os.getenv("LINKX_ACTIVE_TOOL", "neo4j"),
         "active_tool_protocol": neo4j_url,
         "active_tool_username": os.getenv("LINKX_ACTIVE_TOOL_USERNAME", "neo4j"),
-        "active_tool_password": os.getenv("LINKX_ACTIVE_TOOL_PASSWORD") or os.getenv("LINKX_NEO4J_PASSWORD", "kMea_0CMcoWRIJEWKh-eyQ"),
+        "active_tool_password": os.getenv("LINKX_ACTIVE_TOOL_PASSWORD") or os.getenv("LINKX_NEO4J_PASSWORD", ""),
         "active_tool_database": os.getenv("LINKX_ACTIVE_TOOL_DATABASE", ""),
         "active_tool_tables": _env_list("LINKX_ACTIVE_TOOL_TABLES", []),
         "tool_protocol_port": os.getenv("LINKX_TOOL_PROTOCOL_PORT", "7687"),

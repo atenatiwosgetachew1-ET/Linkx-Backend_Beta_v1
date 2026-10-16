@@ -101,7 +101,7 @@ def resolve_neo4j_credentials(credentials):
             password = decrypted
             resolved["_credential_source"] = "managed_secret"
         else:
-            env_pwd = os.getenv("LINKX_NEO4J_PASSWORD") or os.getenv("LINKX_ACTIVE_TOOL_PASSWORD") or "kMea_0CMcoWRIJEWKh-eyQ"
+            env_pwd = os.getenv("LINKX_NEO4J_PASSWORD") or os.getenv("LINKX_ACTIVE_TOOL_PASSWORD")
             if env_pwd:
                 password = env_pwd
                 resolved["_credential_source"] = "env_fallback"
@@ -121,7 +121,7 @@ def resolve_neo4j_credentials(credentials):
         resolved["_credential_source"] = "payload"
 
     if not password:
-        password = os.getenv("LINKX_NEO4J_PASSWORD") or os.getenv("LINKX_ACTIVE_TOOL_PASSWORD") or "kMea_0CMcoWRIJEWKh-eyQ"
+        password = os.getenv("LINKX_NEO4J_PASSWORD") or os.getenv("LINKX_ACTIVE_TOOL_PASSWORD") or ""
 
     if not resolved.get("url"):
         resolved["url"] = os.getenv("LINKX_NEO4J_URL") or os.getenv("LINKX_ACTIVE_TOOL_PROTOCOL") or "bolt://172.27.23.85:7687"
