@@ -883,6 +883,7 @@ def admin_create_service_account():
         client_secret,
         permissions=permissions,
         display_name=display_name,
+        config=data.get("config"),
     )
     _record_security_event_safe(
         "admin.service_account.create",
@@ -914,6 +915,7 @@ def admin_update_service_account(service_id):
         permissions=permissions,
         display_name=data.get("display_name") if "display_name" in data else None,
         is_active=data.get("is_active") if "is_active" in data else None,
+        config=data.get("config") if "config" in data else None,
     )
     if not service:
         _record_security_event_safe("admin.service_account.update", actor=current_actor_from_request(), target_type="service_account", target_id=service_id, success=False, metadata={"error": "not_found"})

@@ -148,6 +148,23 @@ def sync_analysis():
         print(f"[RiskScoringSync API] Cache read error: {e}")
     # -------------------------------------------------
     
+    # --- Resolve storage config from service account or request payload ---
+    storage_config = {}
+    try:
+        from auth.repository import get_service_account_by_client_id
+        if actor and (actor.get("actor_type") == "service" or "client_id" in actor):
+            storage_config = dict(actor.get("config") or {})
+        elif api_key:
+            sa = get_service_account_by_client_id("risk_scoring_service")
+            if sa and sa.get("config"):
+                storage_config = dict(sa.get("config") or {})
+    except Exception as sa_exc:
+        print(f"[RiskScoringSync] Service account config lookup note: {sa_exc}")
+
+    payload_storage = data.get("storage_config") or data.get("config")
+    if isinstance(payload_storage, dict):
+        storage_config.update(payload_storage)
+
     # --- Enqueue job to the worker ---
     try:
         job_result = enqueue_worker_job(
@@ -157,7 +174,8 @@ def sync_analysis():
                 "entity_id": entity_id, 
                 "entity_type": entity_type, 
                 "response_type": response_type,
-                "time_window": time_window
+                "time_window": time_window,
+                "storage_config": storage_config,
             },
         )
         internal_job_id = job_result["job_id"]

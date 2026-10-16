@@ -222,9 +222,11 @@ def ensure_auth_schema():
                     secret_hash TEXT NOT NULL,
                     display_name TEXT,
                     is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    config JSONB NOT NULL DEFAULT '{}'::jsonb,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
                 """)
+                cur.execute("ALTER TABLE service_accounts ADD COLUMN IF NOT EXISTS config JSONB NOT NULL DEFAULT '{}'::jsonb;")
                 cur.execute("""
                 CREATE TABLE IF NOT EXISTS service_account_permissions (
                     service_account_id BIGINT NOT NULL REFERENCES service_accounts(id) ON DELETE CASCADE,
@@ -519,12 +521,12 @@ def _bootstrap_service_accounts(cur):
             _upsert_service_account(cur, client_id, client_secret, permissions, display_name)
 
 
-def create_or_update_service_account(client_id, client_secret, permissions=None, display_name=None):
+def create_or_update_service_account(client_id, client_secret, permissions=None, display_name=None, config=None):
     ensure_auth_schema()
     permissions = permissions or DEFAULT_SERVICE_PERMISSIONS.get(client_id, [])
     with get_postgres_connection() as conn:
         with conn.cursor() as cur:
-            service_id = _upsert_service_account(cur, client_id, client_secret, permissions, display_name or client_id)
+            service_id = _upsert_service_account(cur, client_id, client_secret, permissions, display_name or client_id, config=config)
         conn.commit()
     return get_service_account_by_id(service_id)
 
@@ -534,7 +536,7 @@ def list_service_accounts():
     with get_postgres_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-            SELECT id, client_id, secret_hash, display_name, is_active
+            SELECT id, client_id, secret_hash, display_name, is_active, config
             FROM service_accounts
             ORDER BY client_id
             """)
@@ -542,12 +544,12 @@ def list_service_accounts():
     return [hydrate_service_account(_service_from_row(row)) for row in rows]
 
 
-def update_service_account(service_id, client_secret=None, permissions=None, display_name=None, is_active=None):
+def update_service_account(service_id, client_secret=None, permissions=None, display_name=None, is_active=None, config=None):
     ensure_auth_schema()
     with get_postgres_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-            SELECT id, client_id, secret_hash, display_name, is_active
+            SELECT id, client_id, secret_hash, display_name, is_active, config
             FROM service_accounts
             WHERE id = %s
             """, (service_id,))
@@ -566,6 +568,9 @@ def update_service_account(service_id, client_secret=None, permissions=None, dis
             if is_active is not None:
                 updates.append("is_active = %s")
                 params.append(bool(is_active))
+            if config is not None:
+                updates.append("config = %s::jsonb")
+                params.append(json.dumps(config) if isinstance(config, dict) else config)
             if updates:
                 params.append(service_id)
                 cur.execute(
@@ -599,16 +604,24 @@ def delete_service_account(service_id):
     return deleted is not None
 
 
-def _upsert_service_account(cur, client_id, client_secret, permissions, display_name):
+def _upsert_service_account(cur, client_id, client_secret, permissions, display_name, config=None):
     cur.execute("""
-    INSERT INTO service_accounts (client_id, secret_hash, display_name, is_active)
-    VALUES (%s, %s, %s, TRUE)
+    INSERT INTO service_accounts (client_id, secret_hash, display_name, is_active, config)
+    VALUES (%s, %s, %s, TRUE, COALESCE(%s::jsonb, '{}'::jsonb))
     ON CONFLICT (client_id) DO UPDATE
     SET secret_hash = EXCLUDED.secret_hash,
         display_name = EXCLUDED.display_name,
+        config = CASE WHEN %s::jsonb IS NOT NULL THEN %s::jsonb ELSE service_accounts.config END,
         is_active = TRUE
     RETURNING id
-    """, (client_id, generate_password_hash(client_secret), display_name))
+    """, (
+        client_id,
+        generate_password_hash(client_secret),
+        display_name,
+        json.dumps(config) if isinstance(config, dict) else config,
+        json.dumps(config) if isinstance(config, dict) else config,
+        json.dumps(config) if isinstance(config, dict) else config,
+    ))
     service_id = cur.fetchone()[0]
 
     cur.execute("DELETE FROM service_account_permissions WHERE service_account_id = %s", (service_id,))
@@ -913,7 +926,7 @@ def get_service_account_by_client_id(client_id):
     with get_postgres_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-            SELECT id, client_id, secret_hash, display_name, is_active
+            SELECT id, client_id, secret_hash, display_name, is_active, config
             FROM service_accounts
             WHERE client_id = %s
             """, (client_id,))
@@ -926,7 +939,7 @@ def get_service_account_by_id(service_id):
     with get_postgres_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-            SELECT id, client_id, secret_hash, display_name, is_active
+            SELECT id, client_id, secret_hash, display_name, is_active, config
             FROM service_accounts
             WHERE id = %s
             """, (service_id,))
@@ -1007,8 +1020,10 @@ def public_service_account(service):
         "actor_type": "service",
         "client_id": service["client_id"],
         "display_name": service.get("display_name") or service["client_id"],
+        "is_active": service.get("is_active", True),
         "roles": service.get("roles", ["service_account"]),
         "permissions": service.get("permissions", []),
+        "config": service.get("config", {}),
     }
 
 
@@ -1140,13 +1155,18 @@ def _user_from_row(row):
 def _service_from_row(row):
     if not row:
         return None
-    return {
+    service = {
         "id": row[0],
         "client_id": row[1],
         "secret_hash": row[2],
         "display_name": row[3],
         "is_active": row[4],
     }
+    if len(row) > 5 and row[5] is not None:
+        service["config"] = row[5] if isinstance(row[5], dict) else json.loads(row[5])
+    else:
+        service["config"] = {}
+    return service
 
 
 def record_security_event(

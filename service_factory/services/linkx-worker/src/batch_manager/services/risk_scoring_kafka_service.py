@@ -542,6 +542,19 @@ def execute_formal_link_analysis(event_data):
     strict_mood = True
     date_column = _config_value(session_id, "date_column")
 
+    # Apply assigned service account storage target if provided
+    storage_config = data_section.get("storage_config") or {}
+    if isinstance(storage_config, dict) and storage_config:
+        if storage_config.get("storage_host"):
+            save_temp_config("active_storage_address", storage_config["storage_host"], session_id)
+            save_temp_config("active_storage_host", storage_config["storage_host"], session_id)
+        if storage_config.get("storage_port"):
+            save_temp_config("api_port", str(storage_config["storage_port"]), session_id)
+        if storage_config.get("storage_endpoint"):
+            save_temp_config("search_api_endpoint_es_strict", str(storage_config["storage_endpoint"]).strip("/"), session_id)
+        if storage_config.get("auth_token"):
+            save_temp_config("elastic_api_authorization", storage_config["auth_token"], session_id)
+
     storage_address = _config_value(session_id, "active_storage_host") or _config_value(session_id, "active_storage_address")
     if storage_address and ":" in storage_address:
         storage_address = storage_address.split(":", 1)[0]

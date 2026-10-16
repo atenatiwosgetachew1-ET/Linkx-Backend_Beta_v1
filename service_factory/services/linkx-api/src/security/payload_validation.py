@@ -292,6 +292,7 @@ COMMON_SCHEMAS = {
             "client_secret": {"type": "string", "minLength": 1, "maxLength": 2048},
             "display_name": {"type": "string", "maxLength": 255},
             "permissions": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z]+:[a-z_]+$"}},
+            "config": {"type": "object"},
         },
     },
     "service_account_update": {
@@ -303,6 +304,7 @@ COMMON_SCHEMAS = {
             "display_name": {"type": ["string", "null"], "maxLength": 255},
             "permissions": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z]+:[a-z_]+$"}},
             "is_active": {"type": "boolean"},
+            "config": {"type": "object"},
         },
     },
     "user_create": {
