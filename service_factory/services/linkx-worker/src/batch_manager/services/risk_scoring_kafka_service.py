@@ -2,6 +2,7 @@ import json
 import os
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 from batch_manager.analyzing.analyzer import analyzer, rule_to_node_label
 from batch_manager.analyzing.LA_rules_script import TRANSACTION_RELATIONSHIPS
@@ -112,6 +113,134 @@ def _config_value(session_id, key):
     if value not in (None, ""):
         return value
     return get_default_session_config(session_id).get(key)
+
+
+DOMAIN_SCHEMAS = {
+    "microfinance": {
+        "date_column": "CREATEDDATE",
+        "fetch_columns": [
+            "TRANSFERID",
+            "CREATEDDATE",
+            "TRANSFERAMOUNT",
+            "SENDERACCOUNTID",
+            "RECEIVERACCOUNTID",
+            "SENDER_FULL_NAME",
+            "RECEIVER_FULL_NAME",
+            "NAME",
+            "SENDERPREVIOUSBALANCE",
+            "RECEIVERPREVIOUSBALANCE"
+        ],
+        "column_mapping": {
+            "SENDERACCOUNTID": "ACCOUNTNO",
+            "RECEIVERACCOUNTID": "BENACCOUNTNO",
+            "TRANSFERAMOUNT": "AMOUNTINBIRR",
+            "CREATEDDATE": "TRANSACTIONDATE",
+            "TRANSACTION_DATE": "TRANSACTIONDATE",
+            "TRANSFERID": "TRANSACTIONID",
+            "SENDER_FULL_NAME": "ACCOWNERNAME",
+            "RECEIVER_FULL_NAME": "BENFULLNAME"
+        }
+    },
+    "cdr": {
+        "date_column": "START_TIME",
+        "fetch_columns": [
+            "CALL_ID",
+            "CALLING_NO",
+            "CALLED_NO",
+            "START_TIME",
+            "DURATION",
+            "LOCATION_ID",
+            "CALL_TYPE",
+            "IMEI",
+            "IMSI",
+            "CALL_STATUS"
+        ],
+        "column_mapping": {
+            "CALLINGNUMBER": "CALLING_NO",
+            "CALLEDNUMBER": "CALLED_NO",
+            "STARTTIME": "START_TIME",
+            "CALLDURATION": "DURATION",
+            "CELLID": "LOCATION_ID",
+            "LOCATIONID": "LOCATION_ID",
+            "CALL_TIME": "START_TIME",
+            "TIMESTAMP": "START_TIME",
+            "SOURCE_PHONE": "CALLING_NO",
+            "DEST_PHONE": "CALLED_NO"
+        }
+    },
+    "banking": {
+        "date_column": "TRANSACTIONDATE",
+        "fetch_columns": [
+            "TRANSACTIONID",
+            "BRANCHNAME",
+            "TRANSACTIONDATE",
+            "TRANSACTIONTIME",
+            "TRANSACTIONTYPE",
+            "AMOUNTINBIRR",
+            "ACCOWNERNAME",
+            "BUSINESSMOBILENO",
+            "ACCOUNTNO",
+            "BALANCEHELD",
+            "BENFULLNAME",
+            "BENACCOUNTNO",
+            "BENTELNO"
+        ],
+        "column_mapping": {
+            "ACCOUNT_NO": "ACCOUNTNO",
+            "BENEFICIARY_ACCOUNT": "BENACCOUNTNO",
+            "AMOUNT": "AMOUNTINBIRR",
+            "AMOUNT_IN_BIRR": "AMOUNTINBIRR",
+            "TX_DATE": "TRANSACTIONDATE",
+            "TX_TIME": "TRANSACTIONTIME",
+            "TX_TYPE": "TRANSACTIONTYPE",
+            "BALANCE": "BALANCEHELD",
+            "OWNER_NAME": "ACCOWNERNAME",
+            "BEN_NAME": "BENFULLNAME"
+        }
+    }
+}
+
+
+def _resolve_domain_schema(domain, storage_config=None):
+    storage_config = storage_config or {}
+    domain_key = str(domain or "").strip().lower()
+    if domain_key in {"bank", "banking_transactions"}:
+        domain_key = "banking"
+    elif domain_key in {"telecom", "telecoms", "call_data_records"}:
+        domain_key = "cdr"
+
+    base = {}
+
+    profile_paths = [
+        Path(f"/var/www/linkx-backend/domains/{domain_key}/profile.json"),
+        Path(f"/opt/linkx-worker/domains/{domain_key}/profile.json"),
+        Path(f"domains/{domain_key}/profile.json")
+    ]
+    for p in profile_paths:
+        if p.exists():
+            try:
+                with open(p, "r") as f:
+                    prof = json.load(f)
+                    if isinstance(prof, dict):
+                        base["date_column"] = prof.get("date_column")
+                        base["fetch_columns"] = prof.get("fetch_columns")
+                        base["column_mapping"] = prof.get("column_mapping")
+                        break
+            except Exception:
+                pass
+
+    if not base.get("fetch_columns") and domain_key in DOMAIN_SCHEMAS:
+        base = dict(DOMAIN_SCHEMAS[domain_key])
+
+    result = {
+        "date_column": storage_config.get("date_column") or base.get("date_column"),
+        "fetch_columns": storage_config.get("fetch_columns") or base.get("fetch_columns"),
+        "column_mapping": dict(base.get("column_mapping") or {}),
+    }
+    if isinstance(storage_config.get("column_mapping"), dict):
+        result["column_mapping"].update(storage_config["column_mapping"])
+
+    return result
 
 
 def _kafka_brokers(session_id=""):
@@ -557,9 +686,17 @@ def execute_formal_link_analysis(event_data):
 
         domain = str(storage_config.get("domain") or "").lower()
         port_str = str(storage_config.get("storage_port") or "")
-        if domain == "microfinance" or port_str == "5007":
-            save_temp_config("date_column", "CREATEDDATE", session_id)
-            date_column = "CREATEDDATE"
+        if not domain and port_str == "5007":
+            domain = "microfinance"
+
+        schema = _resolve_domain_schema(domain, storage_config)
+        if schema.get("date_column"):
+            save_temp_config("date_column", schema["date_column"], session_id)
+            date_column = schema["date_column"]
+        if schema.get("fetch_columns"):
+            save_temp_config("fetch_columns", schema["fetch_columns"], session_id)
+        if schema.get("column_mapping"):
+            save_temp_config("column_mapping", schema["column_mapping"], session_id)
 
     storage_address = _config_value(session_id, "active_storage_host") or _config_value(session_id, "active_storage_address")
     if storage_address and ":" in storage_address:

@@ -203,7 +203,8 @@ def es_keyword_search(id, API_URL, keyword, search_column, strict_mood, date_col
                 normalized_fetch = set(c.lower() for c in fetch_columns)
                 if column_mapping:
                     for src_col, tgt_col in column_mapping.items():
-                        if src_col.lower() in normalized_fetch:
+                        if src_col.lower() in normalized_fetch or tgt_col.lower() in normalized_fetch:
+                            normalized_fetch.add(src_col.lower())
                             normalized_fetch.add(tgt_col.lower())
                 existing = [c for c in df.columns if c in normalized_fetch]
 

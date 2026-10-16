@@ -18,7 +18,9 @@ This document details the architecture, boundaries, and interaction protocols be
 - **Node 20 (`172.27.23.106`)**: Message Bus (Kafka on port `9092`) and Control Plane (PostgreSQL + Redis).
 - **Node 21 (`172.27.23.18`)**: Worker Processing Engine (`linkx-worker.service`) and xVigilance Consumer (`linkx-xvigilance-consumer.service`).
 - **Node 22 (`172.27.23.85`)**: Extraction Runner (`linkx-xvigilance.service`) and Graph Database Host (Neo4j Bolt port `7687`).
-- **Storage Node (`172.27.23.43`)**: Hosts Elasticsearch (`/api/search/uii` on port `5000`) and HDFS (`hdfs://172.27.23.43:9000`).
+- **Storage Node (`172.27.23.43`)**: Hosts dual Elasticsearch endpoints and HDFS (`hdfs://172.27.23.43:9000`):
+  - **Port `5000` (`bank_ctr_individual`)**: Casual Bank CTR transaction search (`/api/search/uii`). Uses exact `[term]` keyword matching on `accountno` and `benaccountno`. No native Elasticsearch range filtering (filtered in-memory).
+  - **Port `5007` (`mobile_banking_transactions`)**: Mobile Banking & Microfinance search (`/api/search/uii` via `mb_search_api.py`, 1.35B+ records). Supports native server-side time-window querying via `date_from` and `date_to` on `CREATEDDATE`, plus amount filtering (`min_amount`, `max_amount`). Key account columns are `SENDERACCOUNTID` and `RECEIVERACCOUNTID`.
 
 ### CDR Cluster Isolation (Call Data Records / Telecom — Subnet `172.21.13.0/24`)
 The CDR cluster (`172.21.13.66` - `172.21.13.70`) is physically and logically distinct from BDR. Previous telecom session configuration cleanups (`seed-cdr-session-config.sql`) occurred exclusively on the CDR cluster and have zero effect on BDR or the Risk Scoring service.
@@ -62,3 +64,57 @@ As part of the roadmap to transition external Risk Scoring to fully asynchronous
 - **IP Masking**: External reports and execution metadata mask internal server IPs, referencing logical data indices (e.g. `mobile_banking_transactions`).
 - **Mutex Concurrency**: Node 22 extraction is guarded by an enterprise dual-layer mutex (`fcntl.flock` + PostgreSQL advisory lock `97130282477900`).
 - **Auditability**: Complete request, response, and graph metrics are permanently archived in the PostgreSQL `link_analysis_evidence` table.
+
+---
+
+## 5. Multi-Tenant Service Account Storage & Dynamic Schema Routing
+
+### 5.1 Service Accounts Registry & Storage Binding
+Sibling services authenticate via Bearer JWT or static `X-API-Key`. Each service account in PostgreSQL `service_accounts` maintains an assigned storage target in its `config` JSONB column:
+
+```json
+{
+  "domain": "microfinance",
+  "storage_host": "172.27.23.43",
+  "storage_port": "5007",
+  "storage_endpoint": "api/search/uii",
+  "auth_token": "optional-bearer-token"
+}
+```
+
+Registered sibling accounts on Node 20:
+- **`ai` (ID: 1)**: AI Partner Service (`domain: bank`)
+- **`ml_service_account` (ID: 3)**: ML Service Account
+- **`risk_scoring_service` (ID: 6)**: Risk Scoring Service (`domain: microfinance`, port `5007`)
+- **`xvigilance` (ID: 999)**: xVigilance Daemon (`domain: bank`, port `5000`)
+
+### 5.2 Two-Tier Schema Resolution Architecture
+To eliminate hardcoded banking fallbacks for headless/service-account sessions, the worker resolves schemas using a two-tier hierarchy:
+
+1. **Custom Overrides (Tier 1 - Highest Priority)**:
+   If `service_accounts.config` defines explicit `"fetch_columns"` or `"column_mapping"`, these immediately override defaults.
+2. **Domain-Profile Driven (Tier 2 - Automatic)**:
+   When `domain` is specified (e.g. `"microfinance"`, `"banking"`, `"cdr"`), the worker automatically loads the matching domain profile:
+   - **Microfinance (`domains/microfinance/profile.json`)**:
+     - `date_column`: `"CREATEDDATE"`
+     - `fetch_columns`: `["TRANSFERID", "CREATEDDATE", "TRANSFERAMOUNT", "SENDERACCOUNTID", "RECEIVERACCOUNTID", "SENDER_FULL_NAME", "RECEIVER_FULL_NAME", "NAME"]`
+     - `column_mapping`:
+       - `SENDERACCOUNTID -> ACCOUNTNO`
+       - `RECEIVERACCOUNTID -> BENACCOUNTNO`
+       - `TRANSFERAMOUNT -> AMOUNTINBIRR`
+       - `CREATEDDATE -> TRANSACTIONDATE`
+       - `TRANSFERID -> TRANSACTIONID`
+   - **Banking (`domains/banking/profile.json`)**: Standard 13-column bank CTR schema.
+   - **CDR (`domains/cdr/profile.json`)**: Telecom call data records schema.
+
+### 5.3 Bidirectional Column Mapping in `elastic_utils.py`
+When raw Elasticsearch documents are converted to DataFrames, the worker filters against `fetch_columns` using a bidirectional mapping check:
+```python
+if column_mapping:
+    for src_col, tgt_col in column_mapping.items():
+        if src_col.lower() in normalized_fetch or tgt_col.lower() in normalized_fetch:
+            normalized_fetch.add(src_col.lower())
+            normalized_fetch.add(tgt_col.lower())
+```
+This ensures that raw source columns (e.g. `senderaccountid`) are preserved through the initial filter and subsequently renamed to standard canonical names (`accountno`) for Neo4j graph generation and rule evaluation.
+

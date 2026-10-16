@@ -1,0 +1,74 @@
+{
+  "domain_id": "microfinance",
+  "display_name": "Microfinance & Mobile Banking",
+  "description": "Mobile money, microfinance institutions and digital payments (MMT, transfers, wallet-to-wallet, cash-in/cash-out).",
+
+  "active_rule": ["bank transactions"],
+  "rule_names": ["bank transactions", "social media (tweeter)", "call data records"],
+  "rule_file_names": ["bank_transactions_rules", "social_media_(tweeter)_rules", "call_data_records_rules"],
+
+  "default_source_col": "SENDERACCOUNTID",
+  "default_target_col": "RECEIVERACCOUNTID",
+  "default_relationship": "TRANSFER_TO",
+  "date_column": "CREATEDDATE",
+
+  "storage_path": "user/microfinance/cleaned_partitioned",
+  "storage_databases": ["microfinance_db"],
+  "storage_tables": ["mobile_banking_transactions"],
+  "active_storage_database": "microfinance_db",
+  "active_storage_tables": ["mobile_banking_transactions"],
+
+  "search_columns_strict": [
+    "SENDERACCOUNTID",
+    "RECEIVERACCOUNTID",
+    "TRANSFERID",
+    "CREATEDDATE"
+  ],
+  "search_columns_fuzzy": [
+    "SENDER_FULL_NAME",
+    "RECEIVER_FULL_NAME",
+    "NAME"
+  ],
+  "fetch_columns": [
+    "TRANSFERID",
+    "CREATEDDATE",
+    "TRANSFERAMOUNT",
+    "SENDERACCOUNTID",
+    "RECEIVERACCOUNTID",
+    "SENDER_FULL_NAME",
+    "RECEIVER_FULL_NAME",
+    "NAME",
+    "SENDERPREVIOUSBALANCE",
+    "RECEIVERPREVIOUSBALANCE"
+  ],
+
+  "column_mapping": {
+    "SENDERACCOUNTID": "ACCOUNTNO",
+    "RECEIVERACCOUNTID": "BENACCOUNTNO",
+    "TRANSFERAMOUNT": "AMOUNTINBIRR",
+    "CREATEDDATE": "TRANSACTIONDATE",
+    "TRANSACTION_DATE": "TRANSACTIONDATE",
+    "TRANSFERID": "TRANSACTIONID",
+    "SENDER_FULL_NAME": "ACCOWNERNAME",
+    "RECEIVER_FULL_NAME": "BENFULLNAME"
+  },
+
+  "neo4j_node_label": "MicrofinanceTransaction",
+  "relationships": [
+    "EFFECTIVE_FLOW",
+    "SMURFING",
+    "CIRCULAR_FLOW",
+    "FUND_FLOW",
+    "DORMANT_TO_ACTIVE",
+    "HIGH_RISK_LINK",
+    "ABNORMAL_BALANCE_CHANGE",
+    "HUB_AND_SPOKE",
+    "SHARED_IDENTIFIER",
+    "PEP_INVOLVED",
+    "SANCTIONED_ENTITY_MATCH",
+    "LATE_NIGHT_TX",
+    "JUST_BELOW_THRESHOLD",
+    "RAPID_WITHDRAWAL",
+    "ACCOUNT_ACTIVITY_SPIKE"
+  ]
+}
