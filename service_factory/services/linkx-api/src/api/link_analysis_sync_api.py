@@ -213,11 +213,12 @@ def sync_analysis():
             result = job.get("result")
             if isinstance(result, dict) and result.get("status") == "failed":
                 error_code = result.get("error_code") or result.get("error")
-                http_status = 400 if error_code in {"WINDOW_SPAN_REQUIRED", "TOO_MANY_RESULTS_FOR_WINDOW"} else 500
+                error_code_upper = str(error_code or "").upper()
+                http_status = 400 if error_code_upper in {"WINDOW_SPAN_REQUIRED", "TOO_MANY_RESULTS_FOR_WINDOW"} else 500
                 resp = {
                     "success": False,
                     original_key: entity_id,
-                    "error": error_code,
+                    "error": error_code_upper if error_code_upper in {"WINDOW_SPAN_REQUIRED", "TOO_MANY_RESULTS_FOR_WINDOW"} else (error_code or "ANALYSIS_FAILED"),
                     "message": result.get("message") or "Analysis failed",
                     "processing": result.get("processing") or {"duration_ms": result.get("duration_ms", 0.0)},
                 }
@@ -241,12 +242,14 @@ def sync_analysis():
 
         if status == "failed":
             error_msg = job.get("error_message") or "Unknown error"
+            error_code_upper = str(error_msg or "").upper()
+            http_status = 400 if error_code_upper in {"WINDOW_SPAN_REQUIRED", "TOO_MANY_RESULTS_FOR_WINDOW"} else 500
             return jsonify({
                 "success": False,
                 original_key: entity_id,
                 "message": "Analysis failed",
-                "error": error_msg,
-            }), 500
+                "error": error_code_upper if http_status == 400 else error_msg,
+            }), http_status
 
     # --- Timeout ---
     return jsonify({

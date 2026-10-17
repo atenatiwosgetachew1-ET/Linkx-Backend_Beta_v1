@@ -76,6 +76,14 @@ def process_sync_job(payload):
 
         response_event, status = execute_formal_link_analysis(analysis_payload)
 
+        if isinstance(response_event, dict) and response_event.get("status") == "failed":
+            duration_ms = round((time.time() - start_time) * 1000, 2)
+            result = dict(response_event)
+            result.setdefault("entity_id", entity_id)
+            if "processing" not in result:
+                result["processing"] = {"duration_ms": result.get("duration_ms", duration_ms)}
+            return result
+
         if not response_event or not response_event.get("data"):
             duration_ms = round((time.time() - start_time) * 1000, 2)
             return {

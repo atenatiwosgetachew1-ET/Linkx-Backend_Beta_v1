@@ -104,6 +104,8 @@ def run_job_safely(job_type, payload):
         if result is False:
             return False, result, {"error": "job_failed", "result": result}
         if isinstance(result, dict) and str(result.get("status") or "").lower() in {"failed", "error"}:
+            if job_type in {"risk_scoring_sync", "link_analysis_sync"}:
+                return True, result, None
             return False, result, {"error": result.get("error") or result.get("message") or "job_failed", "result": redact_value(result)}
         return True, result, None
     except Exception as exc:
