@@ -487,6 +487,12 @@ def _iter_dataframe_row_batches(df, batch_size, transform=None):
 
 
 def neo4j_row_data_injector(payload, batch_size=500):
+    if payload.get("batch_size"):
+        try:
+            batch_size = int(payload.get("batch_size"))
+        except (ValueError, TypeError):
+            pass
+    is_headless = bool(payload.get("headless"))
     tool_credentials = payload.get("neo4j_conf")
     df = payload.get("dataframe")
     log_file = payload.get("log_file")
@@ -826,7 +832,7 @@ def neo4j_row_data_injector(payload, batch_size=500):
                         extra={"action": action, "rule": rule, "node_label": node_label, "batch_number": batch_number},
                     )
 
-                    if module:
+                    if module and not is_headless:
                         try:
                             live_counts = run_incremental_rule(module, driver, session_id, node_label, batch_id, log_file)
                             if live_counts is not None:

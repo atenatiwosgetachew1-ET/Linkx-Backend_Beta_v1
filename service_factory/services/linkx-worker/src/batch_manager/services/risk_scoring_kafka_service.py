@@ -339,6 +339,8 @@ def _base_analyzer_payload(session_id, credentials):
         "tool": "neo4j",
         "tool_credentials": credentials,
         "log_file": f"{session_id}.log",
+        "headless": True,
+        "batch_size": 3000,
     }
 
 
@@ -849,6 +851,61 @@ def execute_formal_link_analysis(event_data):
             session_id=session_id,
         ), "success"
 
+    # Step 2.1: Volume and Window Enforcements (Sync limit: 3000 results)
+    SYNC_MAX_RESULTS_THRESHOLD = int(os.getenv("LINKX_SYNC_MAX_RESULTS_THRESHOLD", 3000))
+    time_window = data_section.get("time_window")
+    has_time_window = bool(isinstance(time_window, dict) and time_window.get("start_date") and time_window.get("end_date"))
+
+    # Case A: Queried WITHOUT a time window and total exceeds threshold
+    if not has_time_window and result_size > SYNC_MAX_RESULTS_THRESHOLD:
+        duration_ms = (time.time() - t0) * 1000.0
+        print(f"[RiskScoring] Entity {keyword} has {result_size} records (> {SYNC_MAX_RESULTS_THRESHOLD}) without time_window. Rejecting immediately.")
+        return {
+            "status": "failed",
+            "error": "WINDOW_SPAN_REQUIRED",
+            "error_code": "WINDOW_SPAN_REQUIRED",
+            "message": f"Entity '{keyword}' returned {result_size} records, exceeding the limit of {SYNC_MAX_RESULTS_THRESHOLD}. A 'time_window' (start_date and end_date) is required.",
+            "total_records": result_size,
+            "max_allowed": SYNC_MAX_RESULTS_THRESHOLD,
+            "duration_ms": round(duration_ms, 2),
+        }, "window_span_required"
+
+    # Case B: Fast Server-Side Window Probe if total exceeds threshold
+    if has_time_window and result_size > SYNC_MAX_RESULTS_THRESHOLD:
+        try:
+            import requests as req
+            probe_payload = {
+                search_column: keyword,
+                "date_from": time_window["start_date"],
+                "date_to": time_window["end_date"],
+            }
+            auth_val = (
+                load_temp_config("elastic_api_authorization", session_id)
+                or _config_value(session_id, "elastic_api_authorization")
+                or os.getenv("LINKX_ELASTIC_API_AUTHORIZATION")
+            )
+            headers = {"Authorization": auth_val} if auth_val else {}
+            probe_resp = req.post(api_url, json=probe_payload, headers=headers, timeout=3)
+            if probe_resp.status_code == 200:
+                probe_data = probe_resp.json()
+                if isinstance(probe_data, dict) and "total" in probe_data:
+                    scoped_total = int(probe_data.get("total") or 0)
+                    if scoped_total > SYNC_MAX_RESULTS_THRESHOLD:
+                        duration_ms = (time.time() - t0) * 1000.0
+                        print(f"[RiskScoring] Entity {keyword} returned {scoped_total} records (> {SYNC_MAX_RESULTS_THRESHOLD}) for window {time_window}. Fast-rejecting.")
+                        return {
+                            "status": "failed",
+                            "error": "TOO_MANY_RESULTS_FOR_WINDOW",
+                            "error_code": "TOO_MANY_RESULTS_FOR_WINDOW",
+                            "message": f"Entity '{keyword}' returned {scoped_total} records for the given time window ({time_window['start_date']} to {time_window['end_date']}), exceeding the limit of {SYNC_MAX_RESULTS_THRESHOLD}. Please narrow the time window.",
+                            "window_records": scoped_total,
+                            "max_allowed": SYNC_MAX_RESULTS_THRESHOLD,
+                            "time_window": time_window,
+                            "duration_ms": round(duration_ms, 2),
+                        }, "too_many_results_for_window"
+        except Exception as probe_err:
+            print(f"[RiskScoring] Server-side window probe notice: {probe_err}")
+
     # Step 3: DataFrame Generation
     dataframe_payload = {
         "id": "create_DF",
@@ -908,6 +965,21 @@ def execute_formal_link_analysis(event_data):
 
             # Synchronize active_dataframe_rows so analyzer.py integrity checks succeed
             save_temp_config("active_dataframe_rows", total_filtered_rows, session_id)
+
+            # Secondary volume check: Reject if scoped rows still exceed threshold
+            if total_filtered_rows > SYNC_MAX_RESULTS_THRESHOLD:
+                print(f"[RiskScoring] Entity {account_no} has {total_filtered_rows} rows (> {SYNC_MAX_RESULTS_THRESHOLD}) after window filtering. Rejecting before Neo4j ingestion.")
+                duration_ms = (time.time() - t0) * 1000.0
+                return {
+                    "status": "failed",
+                    "error": "TOO_MANY_RESULTS_FOR_WINDOW",
+                    "error_code": "TOO_MANY_RESULTS_FOR_WINDOW",
+                    "message": f"Entity '{account_no}' returned {total_filtered_rows} records for the given time window ({time_window['start_date']} to {time_window['end_date']}), exceeding the limit of {SYNC_MAX_RESULTS_THRESHOLD}. Please narrow the time window.",
+                    "window_records": total_filtered_rows,
+                    "max_allowed": SYNC_MAX_RESULTS_THRESHOLD,
+                    "time_window": time_window,
+                    "duration_ms": round(duration_ms, 2),
+                }, "too_many_results_for_window"
 
             # Phase 3.2: Zero-Activity handling for date windows
             if total_filtered_rows == 0:
@@ -1262,6 +1334,9 @@ def process_risk_scoring_event(event_data, brokers=None, publish=True):
     response_event, status = execute_formal_link_analysis(event_data)
     if not response_event:
         return {"status": "failed", "detail": status}
+
+    if isinstance(response_event, dict) and response_event.get("status") == "failed":
+        return response_event
 
     # 3. Persist Evidence to PostgreSQL:
     sess_id = (response_event.get("meta") or {}).get("session_id") or ""

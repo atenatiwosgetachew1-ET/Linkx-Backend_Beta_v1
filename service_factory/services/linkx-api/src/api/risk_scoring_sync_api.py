@@ -211,13 +211,24 @@ def sync_analysis():
         if status == "succeeded":
             result = job.get("result")
             if isinstance(result, dict) and result.get("status") == "failed":
-                return jsonify({
+                error_code = result.get("error_code") or result.get("error")
+                http_status = 400 if error_code in {"WINDOW_SPAN_REQUIRED", "TOO_MANY_RESULTS_FOR_WINDOW"} else 500
+                resp = {
                     "success": False,
                     original_key: entity_id,
-                    "message": "Analysis failed",
-                    "error": result.get("error"),
-                    "processing": result.get("processing"),
-                }), 500
+                    "error": error_code,
+                    "message": result.get("message") or "Analysis failed",
+                    "processing": result.get("processing") or {"duration_ms": result.get("duration_ms", 0.0)},
+                }
+                if result.get("total_records") is not None:
+                    resp["total_records"] = result.get("total_records")
+                if result.get("window_records") is not None:
+                    resp["window_records"] = result.get("window_records")
+                if result.get("max_allowed") is not None:
+                    resp["max_allowed"] = result.get("max_allowed")
+                if result.get("time_window"):
+                    resp["time_window"] = result.get("time_window")
+                return jsonify(resp), http_status
 
             return jsonify({
                 "success": True,
