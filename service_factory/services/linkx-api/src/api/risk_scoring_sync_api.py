@@ -95,10 +95,15 @@ def sync_analysis():
     entity_id = data.get("entity_id")
     entity_type = data.get("entity_type")
     
-    # Fallback: Treat any remaining key as the dynamic entity_type (e.g. {"transactionID": "123"})
+    # Fallback: Treat any remaining key as the dynamic entity_type (e.g. {"claim_id": "123"})
+    # Exclude structural and configuration keys
+    reserved_keys = {
+        "entity_id", "entity_type", "response_type", "time_window",
+        "domain", "storage_config", "config", "fetch_columns", "column_mapping"
+    }
     if not entity_id:
         for k, v in data.items():
-            if k not in {"entity_id", "entity_type", "response_type", "time_window"}:
+            if k not in reserved_keys:
                 entity_type = k
                 entity_id = str(v)
                 break
@@ -166,6 +171,10 @@ def sync_analysis():
     if isinstance(payload_storage, dict):
         storage_config.update(payload_storage)
 
+    # Allow domain override from request payload
+    if data.get("domain"):
+        storage_config["domain"] = str(data["domain"]).strip().lower()
+
     # --- Enqueue job to the worker ---
     try:
         job_result = enqueue_worker_job(
@@ -177,6 +186,7 @@ def sync_analysis():
                 "response_type": response_type,
                 "time_window": time_window,
                 "storage_config": storage_config,
+                "domain": storage_config.get("domain") or data.get("domain"),
             },
         )
         internal_job_id = job_result["job_id"]

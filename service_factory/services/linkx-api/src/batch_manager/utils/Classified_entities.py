@@ -79,12 +79,25 @@ def load_session_trusted_entities(session_id):
     value = config.get('trusted_entities')
     if value in (None, '', []):
         value = config.get('trusted_catalog')
+    if value in (None, '', []):
+        try:
+            from batch_manager.config_defaults import get_default_session_config
+            value = get_default_session_config(session_id).get('trusted_entities')
+        except Exception:
+            value = []
     return normalize_trusted_entities(value)
 
 
 def load_session_risk_entities(session_id):
     config = load_session_config(session_id) or {}
-    return normalize_risk_entities(config.get('risk_entities'))
+    value = config.get('risk_entities')
+    if value in (None, '', []):
+        try:
+            from batch_manager.config_defaults import get_default_session_config
+            value = get_default_session_config(session_id).get('risk_entities')
+        except Exception:
+            value = []
+    return normalize_risk_entities(value)
 
 
 def entity_catalog_cypher_entries(value, field_name):

@@ -237,6 +237,10 @@ def _resolve_domain_schema(domain, storage_config=None):
         domain_key = "cdr"
     elif domain_key in {"insurance", "insurances"}:
         domain_key = "insurance"
+    elif domain_key in {"microfinance", "micro_finance", "mobile_banking"}:
+        domain_key = "microfinance"
+    elif domain_key in {"social_media", "social", "tweeter"}:
+        domain_key = "social_media"
 
     base = {}
 
@@ -254,6 +258,11 @@ def _resolve_domain_schema(domain, storage_config=None):
                         base["date_column"] = prof.get("date_column")
                         base["fetch_columns"] = prof.get("fetch_columns")
                         base["column_mapping"] = prof.get("column_mapping")
+                        base["default_source_col"] = prof.get("default_source_col")
+                        base["default_target_col"] = prof.get("default_target_col")
+                        base["default_relationship"] = prof.get("default_relationship")
+                        active_rule = prof.get("active_rule")
+                        base["active_rule"] = active_rule[0] if isinstance(active_rule, list) and active_rule else (active_rule or "bank transactions")
                         break
             except Exception:
                 pass
@@ -265,6 +274,10 @@ def _resolve_domain_schema(domain, storage_config=None):
         "date_column": storage_config.get("date_column") or base.get("date_column"),
         "fetch_columns": storage_config.get("fetch_columns") or base.get("fetch_columns"),
         "column_mapping": dict(base.get("column_mapping") or {}),
+        "default_source_col": storage_config.get("source_column") or base.get("default_source_col"),
+        "default_target_col": storage_config.get("target_column") or base.get("default_target_col"),
+        "default_relationship": storage_config.get("relationship") or base.get("default_relationship"),
+        "active_rule": storage_config.get("active_rule") or base.get("active_rule") or "bank transactions",
     }
     if isinstance(storage_config.get("column_mapping"), dict):
         result["column_mapping"].update(storage_config["column_mapping"])
@@ -341,8 +354,10 @@ def _run_analyzer(payload, step_name):
         return False
 
 
-def _ingest_dataframe_to_neo4j(session_id, custom_source=None, custom_target=None, custom_rel=None):
-    rule = "bank transactions"
+def _ingest_dataframe_to_neo4j(session_id, custom_source=None, custom_target=None, custom_rel=None, custom_rule=None):
+    rule = custom_rule or _config_value(session_id, "active_rule") or "bank transactions"
+    if isinstance(rule, list) and rule:
+        rule = rule[0]
     credentials = _neo4j_credentials(session_id)
     if not credentials:
         print("Risk Scoring link analysis missing neo4j credentials")
@@ -378,7 +393,10 @@ def _analysis_summary(session_id):
     if not credentials:
         return None
 
-    node_label = rule_to_node_label("bank transactions", session_id)
+    active_rule = _config_value(session_id, "active_rule") or "bank transactions"
+    if isinstance(active_rule, list) and active_rule:
+        active_rule = active_rule[0]
+    node_label = rule_to_node_label(active_rule, session_id)
     safe_label = f"`{str(node_label).replace('`', '')}`"
     driver = create_neo4j_driver(credentials)
     try:
@@ -576,7 +594,7 @@ def sanitize_risk_scoring_request(raw_event):
     agg_key = meta.get("aggregation_key") or {}
 
     # 1. Extract exact aggregation key as passed (type specifies storage search column directly)
-    raw_agg_type = str(agg_key.get("type") or "accountno").strip()
+    raw_agg_type = str(agg_key.get("type") or "").strip()
     entity_id = str(
         agg_key.get("value")
         or data.get("entity_id")
@@ -584,8 +602,24 @@ def sanitize_risk_scoring_request(raw_event):
         or ""
     ).strip()
 
+    # Dynamic domain entity ID inspection if not provided in standard fields
+    if not entity_id:
+        reserved_keys = {
+            "entity_id", "entity_type", "is_entity", "time_window", "storage_config",
+            "domain", "response_type", "source_column", "target_column", "relationship",
+            "max_linked_entities", "limit", "config", "fetch_columns", "column_mapping"
+        }
+        for k, v in data.items():
+            if k.lower() not in reserved_keys and v:
+                raw_agg_type = k
+                entity_id = str(v).strip()
+                break
+
     if not entity_id:
         raise ValueError("missing_required_entity_id")
+
+    if not raw_agg_type:
+        raw_agg_type = "accountno"
 
     # 2. Extract transaction ID (optional but preserved for provenance)
     transaction_id = str(data.get("transaction_id") or "").strip() or None
@@ -628,6 +662,10 @@ def sanitize_risk_scoring_request(raw_event):
     if isinstance(raw_storage_config, dict) and raw_storage_config:
         storage_config = raw_storage_config
 
+    # 9. Extract domain
+    raw_domain = data.get("domain") or raw_event.get("domain") or (storage_config.get("domain") if storage_config else None)
+    domain = str(raw_domain).strip().lower() if raw_domain else None
+
     sanitized = {
         "event_type": str(raw_event.get("event_type") or "score.calculated"),
         "data": {
@@ -661,6 +699,8 @@ def sanitize_risk_scoring_request(raw_event):
         sanitized["data"]["time_window"] = time_window
     if storage_config:
         sanitized["data"]["storage_config"] = storage_config
+    if domain:
+        sanitized["data"]["domain"] = domain
 
     return sanitized
 
@@ -733,7 +773,7 @@ def execute_formal_link_analysis(event_data):
         if storage_config.get("auth_token"):
             save_temp_config("elastic_api_authorization", storage_config["auth_token"], session_id)
 
-        domain = str(storage_config.get("domain") or "").lower()
+        domain = str(data_section.get("domain") or storage_config.get("domain") or "").lower()
         port_str = str(storage_config.get("storage_port") or "")
         if not domain and port_str == "5007":
             domain = "microfinance"
@@ -746,6 +786,14 @@ def execute_formal_link_analysis(event_data):
             save_temp_config("fetch_columns", schema["fetch_columns"], session_id)
         if schema.get("column_mapping"):
             save_temp_config("column_mapping", schema["column_mapping"], session_id)
+        if schema.get("default_source_col"):
+            save_temp_config("default_source_col", schema["default_source_col"], session_id)
+        if schema.get("default_target_col"):
+            save_temp_config("default_target_col", schema["default_target_col"], session_id)
+        if schema.get("default_relationship"):
+            save_temp_config("default_relationship", schema["default_relationship"], session_id)
+        if schema.get("active_rule"):
+            save_temp_config("active_rule", schema["active_rule"], session_id)
 
     storage_address = _config_value(session_id, "active_storage_host") or _config_value(session_id, "active_storage_address")
     if storage_address and ":" in storage_address:
@@ -891,6 +939,7 @@ def execute_formal_link_analysis(event_data):
         custom_source=custom_source,
         custom_target=custom_target,
         custom_rel=custom_rel,
+        custom_rule=data_section.get("active_rule") or data_section.get("rule"),
     ):
         duration_ms = (time.time() - t0) * 1000.0
         return None, "neo4j_ingestion_failed"

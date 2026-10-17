@@ -57,6 +57,14 @@ def _fetch_global_entities():
         from batch_manager.utils.postgres_utils import get_postgres_connection
         with get_postgres_connection() as conn:
             with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS global_entity_classification (
+                        version_id SERIAL PRIMARY KEY,
+                        config_data JSONB NOT NULL,
+                        updated_by VARCHAR(255) DEFAULT 'system',
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
                 cur.execute("SELECT config_data FROM global_entity_classification ORDER BY created_at DESC LIMIT 1")
                 row = cur.fetchone()
                 if row and row[0]:
