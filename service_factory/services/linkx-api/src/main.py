@@ -42,7 +42,8 @@ from logger import log_writer,log_stream_background
 from io_sockets import register_socket_handlers
 from api.STR_link_analysis import STR_link_analysis_api
 from api.risk_scoring_api import risk_scoring_api
-from api.link_analysis_sync_api import link_analysis_sync_api, risk_scoring_sync_api
+from api.link_analysis_sync_api import link_analysis_sync_api
+from api.risk_scoring_sync_api import risk_scoring_sync_api
 from api.unified_risk_scoring_api import unified_risk_scoring_api
 from api.ML_link_analysis import ML_link_analysis_api
 from api.rule_engine_analysis import RULE_link_analysis_api

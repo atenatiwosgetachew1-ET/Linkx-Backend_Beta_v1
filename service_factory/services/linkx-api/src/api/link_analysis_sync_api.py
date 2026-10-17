@@ -17,7 +17,6 @@ from auth.decorators import current_actor_from_request
 from service_orchestration import enqueue_worker_job, get_worker_job
 
 link_analysis_sync_api = Blueprint("link_analysis_sync_api", __name__)
-risk_scoring_sync_api = link_analysis_sync_api  # Backward compatibility alias
 
 # Maximum time (seconds) to wait for the worker to finish before timing out
 SYNC_TIMEOUT = int(os.getenv("LINKX_SYNC_SCORING_TIMEOUT", "120"))
