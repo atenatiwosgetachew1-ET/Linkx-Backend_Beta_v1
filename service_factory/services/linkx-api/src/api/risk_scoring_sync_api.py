@@ -68,6 +68,7 @@ def sync_analysis():
     api_key = request.headers.get("X-API-Key")
     valid_api_key = os.getenv("LINKX_RISK_SCORING_API_KEY")
     is_authenticated = False
+    actor = None
 
     if api_key and valid_api_key and api_key == valid_api_key:
         is_authenticated = True

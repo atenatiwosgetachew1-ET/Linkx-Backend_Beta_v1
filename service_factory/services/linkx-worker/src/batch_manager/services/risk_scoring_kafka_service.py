@@ -197,6 +197,33 @@ DOMAIN_SCHEMAS = {
             "OWNER_NAME": "ACCOWNERNAME",
             "BEN_NAME": "BENFULLNAME"
         }
+    },
+    "insurance": {
+        "date_column": "CLAIM_DATE",
+        "fetch_columns": [
+            "CLAIM_ID",
+            "POLICY_NUMBER",
+            "CLAIM_DATE",
+            "CLAIM_AMOUNT",
+            "CLAIMANT_ID",
+            "BENEFICIARY_ID",
+            "CLAIMANT_NAME",
+            "BENEFICIARY_NAME",
+            "INCIDENT_TYPE",
+            "PROVIDER_ID"
+        ],
+        "column_mapping": {
+            "CLAIMANT_ID": "ACCOUNTNO",
+            "BENEFICIARY_ID": "BENACCOUNTNO",
+            "CLAIM_AMOUNT": "AMOUNTINBIRR",
+            "SETTLEMENT_AMOUNT": "AMOUNTINBIRR",
+            "CLAIM_DATE": "TRANSACTIONDATE",
+            "INCIDENT_DATE": "TRANSACTIONDATE",
+            "CLAIM_ID": "TRANSACTIONID",
+            "POLICY_NUMBER": "BUSINESSMOBILENO",
+            "CLAIMANT_NAME": "ACCOWNERNAME",
+            "BENEFICIARY_NAME": "BENFULLNAME"
+        }
     }
 }
 
@@ -208,6 +235,8 @@ def _resolve_domain_schema(domain, storage_config=None):
         domain_key = "banking"
     elif domain_key in {"telecom", "telecoms", "call_data_records"}:
         domain_key = "cdr"
+    elif domain_key in {"insurance", "insurances"}:
+        domain_key = "insurance"
 
     base = {}
 

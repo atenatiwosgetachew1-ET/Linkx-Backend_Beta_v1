@@ -1,0 +1,73 @@
+{
+  "domain_id": "insurance",
+  "display_name": "Insurance & Claims",
+  "description": "Insurance fraud detection, ghost policies, staged accidents, duplicate claims, provider fraud, and syndicate ring detection.",
+
+  "active_rule": ["bank transactions"],
+  "rule_names": ["bank transactions", "social media (tweeter)", "call data records"],
+  "rule_file_names": ["bank_transactions_rules", "social_media_(tweeter)_rules", "call_data_records_rules"],
+
+  "default_source_col": "CLAIMANT_ID",
+  "default_target_col": "BENEFICIARY_ID",
+  "default_relationship": "CLAIMED_TO",
+  "date_column": "CLAIM_DATE",
+
+  "storage_path": "user/insurance/cleaned_partitioned",
+  "storage_databases": ["insurance_db"],
+  "storage_tables": ["claims", "policies"],
+  "active_storage_database": "insurance_db",
+  "active_storage_tables": ["claims", "policies"],
+
+  "search_columns_strict": [
+    "CLAIM_ID",
+    "POLICY_NUMBER",
+    "CLAIMANT_ID",
+    "BENEFICIARY_ID",
+    "CLAIM_DATE"
+  ],
+  "search_columns_fuzzy": [
+    "CLAIMANT_NAME",
+    "BENEFICIARY_NAME",
+    "INCIDENT_TYPE",
+    "PROVIDER_NAME"
+  ],
+  "fetch_columns": [
+    "CLAIM_ID",
+    "POLICY_NUMBER",
+    "CLAIM_DATE",
+    "CLAIM_AMOUNT",
+    "CLAIMANT_ID",
+    "BENEFICIARY_ID",
+    "CLAIMANT_NAME",
+    "BENEFICIARY_NAME",
+    "INCIDENT_TYPE",
+    "PROVIDER_ID"
+  ],
+
+  "column_mapping": {
+    "CLAIMANT_ID": "ACCOUNTNO",
+    "BENEFICIARY_ID": "BENACCOUNTNO",
+    "CLAIM_AMOUNT": "AMOUNTINBIRR",
+    "SETTLEMENT_AMOUNT": "AMOUNTINBIRR",
+    "CLAIM_DATE": "TRANSACTIONDATE",
+    "INCIDENT_DATE": "TRANSACTIONDATE",
+    "CLAIM_ID": "TRANSACTIONID",
+    "POLICY_NUMBER": "BUSINESSMOBILENO",
+    "CLAIMANT_NAME": "ACCOWNERNAME",
+    "BENEFICIARY_NAME": "BENFULLNAME"
+  },
+
+  "neo4j_node_label": "InsuranceClaim",
+  "relationships": [
+    "EFFECTIVE_FLOW",
+    "CIRCULAR_FLOW",
+    "FUND_FLOW",
+    "SHARED_IDENTIFIER",
+    "HIGH_RISK_LINK",
+    "HUB_AND_SPOKE",
+    "RAPID_WITHDRAWAL",
+    "ACCOUNT_ACTIVITY_SPIKE",
+    "DUPLICATE_CLAIM",
+    "PROVIDER_SYNDICATE"
+  ]
+}
