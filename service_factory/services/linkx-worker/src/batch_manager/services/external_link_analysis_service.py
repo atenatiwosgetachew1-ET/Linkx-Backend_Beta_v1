@@ -885,7 +885,7 @@ def execute_formal_link_analysis(event_data):
                 or os.getenv("LINKX_ELASTIC_API_AUTHORIZATION")
             )
             headers = {"Authorization": auth_val} if auth_val else {}
-            probe_resp = req.post(api_url, json=probe_payload, headers=headers, timeout=3)
+            probe_resp = req.post(api_url, json=probe_payload, headers=headers, timeout=10)
             if probe_resp.status_code == 200:
                 probe_data = probe_resp.json()
                 if isinstance(probe_data, dict) and "total" in probe_data:
