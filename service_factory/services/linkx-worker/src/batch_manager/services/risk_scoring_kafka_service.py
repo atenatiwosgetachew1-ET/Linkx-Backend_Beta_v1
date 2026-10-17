@@ -622,6 +622,12 @@ def sanitize_risk_scoring_request(raw_event):
         if start_date and end_date:
             time_window = {"start_date": str(start_date).strip(), "end_date": str(end_date).strip()}
 
+    # 8. Extract optional storage_config
+    raw_storage_config = data.get("storage_config") or raw_event.get("storage_config")
+    storage_config = None
+    if isinstance(raw_storage_config, dict) and raw_storage_config:
+        storage_config = raw_storage_config
+
     sanitized = {
         "event_type": str(raw_event.get("event_type") or "score.calculated"),
         "data": {
@@ -653,6 +659,8 @@ def sanitize_risk_scoring_request(raw_event):
         sanitized["data"]["max_linked_entities"] = max_linked_entities
     if time_window:
         sanitized["data"]["time_window"] = time_window
+    if storage_config:
+        sanitized["data"]["storage_config"] = storage_config
 
     return sanitized
 
@@ -702,6 +710,18 @@ def execute_formal_link_analysis(event_data):
 
     # Apply assigned service account storage target if provided
     storage_config = data_section.get("storage_config") or {}
+    if not storage_config:
+        try:
+            from batch_manager.utils.postgres_utils import get_postgres_connection
+            with get_postgres_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT config FROM service_accounts WHERE client_id = 'risk_scoring_service' LIMIT 1")
+                    row = cur.fetchone()
+                    if row and row[0] and isinstance(row[0], dict):
+                        storage_config = dict(row[0])
+        except Exception as sa_exc:
+            print(f"[RiskScoring] Service account storage fallback note: {sa_exc}")
+
     if isinstance(storage_config, dict) and storage_config:
         if storage_config.get("storage_host"):
             save_temp_config("active_storage_address", storage_config["storage_host"], session_id)
@@ -733,13 +753,17 @@ def execute_formal_link_analysis(event_data):
 
     api_port = _config_value(session_id, "api_port")
     api_search_endpoint = str(_config_value(session_id, "search_api_endpoint_es_strict")).strip("/")
-    api_url = os.getenv("LINKX_PUBLIC_ES_API_URL") or os.getenv("LINKX_STR_ELASTIC_API_URL")
-    if not api_url:
-        elastic_base_url = _config_value(session_id, "elastic_api_base_url")
-        if elastic_base_url:
-            api_url = f"{str(elastic_base_url).rstrip('/')}/{api_search_endpoint}"
-        else:
-            api_url = f"http://{storage_address}:{api_port}/{api_search_endpoint}"
+    
+    if storage_config and (storage_config.get("storage_host") or storage_config.get("storage_port")):
+        api_url = f"http://{storage_address}:{api_port}/{api_search_endpoint}"
+    else:
+        api_url = os.getenv("LINKX_PUBLIC_ES_API_URL") or os.getenv("LINKX_STR_ELASTIC_API_URL")
+        if not api_url:
+            elastic_base_url = _config_value(session_id, "elastic_api_base_url")
+            if elastic_base_url:
+                api_url = f"{str(elastic_base_url).rstrip('/')}/{api_search_endpoint}"
+            else:
+                api_url = f"http://{storage_address}:{api_port}/{api_search_endpoint}"
 
     print(f"[RiskScoring] Querying Elasticsearch for {search_column}={keyword} on {api_url}")
     response = es_keyword_search(

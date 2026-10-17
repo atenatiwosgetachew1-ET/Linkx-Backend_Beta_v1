@@ -116,5 +116,21 @@ if column_mapping:
             normalized_fetch.add(src_col.lower())
             normalized_fetch.add(tgt_col.lower())
 ```
-This ensures that raw source columns (e.g. `senderaccountid`) are preserved through the initial filter and subsequently renamed to standard canonical names (`accountno`) for Neo4j graph generation and rule evaluation.
+### 5.4 Insurance Domain Profile & Sibling Daemon Bridge
+- **Insurance Domain (`domains/insurance/profile.json`)**:
+  - `date_column`: `"CLAIM_DATE"`
+  - `fetch_columns`: `["CLAIM_ID", "POLICY_NUMBER", "CLAIM_DATE", "CLAIM_AMOUNT", "CLAIMANT_ID", "BENEFICIARY_ID", "CLAIMANT_NAME", "BENEFICIARY_NAME", "INCIDENT_TYPE", "PROVIDER_ID"]`
+  - `column_mapping`:
+    - `CLAIMANT_ID -> ACCOUNTNO`
+    - `BENEFICIARY_ID -> BENACCOUNTNO`
+    - `CLAIM_AMOUNT -> AMOUNTINBIRR`
+    - `SETTLEMENT_AMOUNT -> AMOUNTINBIRR`
+    - `CLAIM_DATE -> TRANSACTIONDATE`
+    - `INCIDENT_DATE -> TRANSACTIONDATE`
+    - `CLAIM_ID -> TRANSACTIONID`
+    - `POLICY_NUMBER -> BUSINESSMOBILENO`
+    - `CLAIMANT_NAME -> ACCOWNERNAME`
+    - `BENEFICIARY_NAME -> BENFULLNAME`
 
+- **xVigilance Service Account Bridge (`linkx_xvigilance/config.py`)**:
+  - `get_xvigilance_config()` checks `service_accounts WHERE client_id = 'xvigilance'` in PostgreSQL to dynamically inherit `storage_host`, `storage_port`, `storage_endpoint`, `domain`, `fetch_columns`, and `column_mapping`, enabling centralized configuration via the Frontend UI.

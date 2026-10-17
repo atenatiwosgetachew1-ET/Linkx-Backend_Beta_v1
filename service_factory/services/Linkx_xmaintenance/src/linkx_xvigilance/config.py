@@ -53,6 +53,26 @@ def get_xvigilance_config():
     try:
         with connect(application_name="xvigilance-config") as conn:
             with conn.cursor() as cur:
+                # Check service_accounts table for xvigilance service account config
+                cur.execute(
+                    "SELECT config FROM service_accounts WHERE client_id = %s LIMIT 1",
+                    ("xvigilance",)
+                )
+                sa_row = cur.fetchone()
+                if sa_row and sa_row[0] and isinstance(sa_row[0], dict):
+                    sa_config = sa_row[0]
+                    if sa_config.get("storage_host") and sa_config.get("storage_port"):
+                        base_config["elastic_base_url"] = f"http://{sa_config['storage_host']}:{sa_config['storage_port']}"
+                    if sa_config.get("storage_endpoint"):
+                        base_config["search_endpoint"] = str(sa_config["storage_endpoint"]).strip("/")
+                    if sa_config.get("date_column"):
+                        base_config["date_column"] = sa_config["date_column"]
+                    if sa_config.get("fetch_columns"):
+                        base_config["fetch_columns"] = sa_config["fetch_columns"]
+                    if sa_config.get("column_mapping"):
+                        base_config["column_mapping"] = sa_config["column_mapping"]
+
+                # Check session_configs for window/session overrides
                 cur.execute(
                     "SELECT config FROM session_configs WHERE session_id = %s AND window_id = ''",
                     ("xvigilance_system",)
@@ -60,7 +80,7 @@ def get_xvigilance_config():
                 row = cur.fetchone()
                 if row and row[0]:
                     db_config = row[0]
-                    # 2. Merge DB config over the base .env config (DB acts as source of truth)
+                    # Merge DB config over the base .env config (DB acts as source of truth)
                     for k, v in db_config.items():
                         base_config[k] = v
     except Exception as e:
