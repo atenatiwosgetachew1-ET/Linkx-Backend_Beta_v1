@@ -57,7 +57,7 @@ def process_webhook_job(payload):
             }
         }
         try:
-            from batch_manager.services.risk_scoring_kafka_service import execute_formal_link_analysis
+            from batch_manager.services.external_link_analysis_service import execute_formal_link_analysis
             response_event, status = execute_formal_link_analysis(analysis_payload)
             if response_event and response_event.get("data"):
                 findings = response_event.get("data")

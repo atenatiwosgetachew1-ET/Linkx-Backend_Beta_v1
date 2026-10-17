@@ -222,3 +222,31 @@ sudo /opt/linkx-backend-update/service_factory/scripts/sync-backups-offhost.sh
 # 2. Check the disaster server
 ssh backup-user@172.20.107.94 "ls -lh /srv/linkx-backups/*"
 ```
+
+---
+
+## 7. Generalized Service Architecture & Performance Hardening (October 2026)
+
+### 7.1 Architecture Generalization (Platform-Wide Service)
+To support all sibling service accounts (`risk_scoring_service`, `xvigilance`, `aml_monitoring`, `ctms`), LinkX has decoupled this pipeline from being strictly "risk scoring" specific:
+
+| Old / Specific Name | New Generalized Name | Backward Compatibility |
+| :--- | :--- | :--- |
+| `batch_manager/services/risk_scoring_kafka_service.py` | [`batch_manager/services/external_link_analysis_service.py`](file:///var/www/linkx-backend/service_factory/services/linkx-worker/src/batch_manager/services/external_link_analysis_service.py) | `risk_scoring_kafka_service.py` maintained as a 100% transparent re-export shim. |
+| `api/risk_scoring_sync_api.py` | [`api/link_analysis_sync_api.py`](file:///var/www/linkx-backend/service_factory/services/linkx-api/src/api/link_analysis_sync_api.py) | `risk_scoring_sync_api.py` re-exports the generalized blueprint. |
+| `POST /api/risk_scoring/sync_analysis` | `POST /api/link_analysis/sync_analysis`<br>`POST /api/link_analysis/sync` | `POST /api/risk_scoring/sync_analysis` is preserved as an active route alias. |
+
+### 7.2 Strict 3,000-Result Volume Cap & Window Enforcement
+To protect against query timeouts and high-volume accounts (aggregators, payroll, utilities):
+1. **Case A (No Time Window):**
+   * If total records for the entity in storage exceeds **3,000**, the worker immediately aborts in `< 100ms` before DataFrame creation or Neo4j ingestion.
+   * Returns **HTTP 400 Bad Request** with error code `WINDOW_SPAN_REQUIRED`.
+2. **Case B (With Time Window):**
+   * The query scopes by `start_date` and `end_date` (server-side via `date_from`/`date_to` where supported, and validated during DataFrame construction).
+   * If records under the time window still exceed **3,000**, the worker immediately aborts in `< 100ms` with **HTTP 400 Bad Request** and error code `TOO_MANY_RESULTS_FOR_WINDOW`.
+
+### 7.3 Performance Optimization & Rule Integrity
+* **Headless Optimization:** When invoked via automated machine-to-machine APIs (`headless=True`, `batch_size=3000`), intermediate batch incremental rule checks (`run_incremental_rule`) are skipped during chunk ingestion loops.
+* **Full Fraud Rule Suite Intact:** The final graph recomputation **always executes all 17 forensic queries** in full (`SMURFING`, `CIRCULAR_FLOW`, `FUND_FLOW`, `HUB_AND_SPOKE`, `DORMANT_TO_ACTIVE`, `ABNORMAL_BALANCE`, `HIGH_RISK_LINK`, `RAPID_WITHDRAWAL`, etc.). No fraud detection coverage is compromised.
+* **Manual UI Analysis Untouched:** Interactive analyst dashboard sessions remain on `headless=False` with 500-row batching and live UI progress bars.
+

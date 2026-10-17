@@ -29,21 +29,29 @@ The CDR cluster (`172.21.13.66` - `172.21.13.70`) is physically and logically di
 
 ## 3. Communication Protocols: Current Ingress vs. Future Kafka Roadmap
 
-### 3.1 Current Ingress Protocol: HTTP / Webhook (v2.0 Schema)
-The external Risk Scoring developer currently invokes LinkX via HTTP:
-1. **Endpoint**: `POST /api/v1/risk-score/analyze`
-2. **Dual Query Modes**:
-   - **Full-History Flow (Default when `time_window` is omitted)**:
-     - Directly queries Elasticsearch `/api/search/uii` on `172.27.23.43` across all historical transaction data.
-     - Bypasses artificial date filtering; all transactions retrieved are ingested into Neo4j without row mismatches.
-   - **Dynamic Scoped Flow (When `time_window` is provided)**:
-     - Scopes transactions to `[start_date, end_date]`.
-     - Intelligently handles both Unix millisecond epoch timestamps and formatted ISO strings.
-     - Dynamically synchronizes `active_dataframe_rows` to ensure Neo4j integrity checks pass.
-     - Gracefully returns a 0-score success payload when zero transactions fall within the requested window.
-3. **Caching & Asynchronous Delivery**:
-   - **Fast Lane (Cached Single Account)**: Instant HTTP 200 return if analyzed within the 2-hour cache window with matching time parameters.
-   - **Worker Async Flow**: Returns HTTP 202 (`ACCEPTED`) and enqueues background processing on Node 21. Upon completion, the worker dispatches the v2.0 payload via webhook to `https://risk-platform.local/api/v1/aggregate/callback`.
+### 3.1 Synchronous & Asynchronous Ingress Protocols
+External services invoke LinkX via two distinct HTTP channels:
+
+1. **Synchronous Direct Link Analysis API (v1.0 & v2.0 Platform Route)**:
+   - **Canonical Route**: `POST /api/link_analysis/sync_analysis` (alias: `POST /api/link_analysis/sync` or legacy `POST /api/risk_scoring/sync_analysis`).
+   - **Volume Protections (< 100ms Rejections)**:
+     - **No Window**: If total storage records > 3,000, rejects immediately with `WINDOW_SPAN_REQUIRED` (HTTP 400).
+     - **With Window**: If scoped window records > 3,000, rejects immediately with `TOO_MANY_RESULTS_FOR_WINDOW` (HTTP 400).
+   - **Performance Engine**: Uses single-pass batch ingestion (`batch_size=3000`) and headless execution in [`analyzer.py`](file:///var/www/linkx-backend/service_factory/services/linkx-worker/src/batch_manager/analyzing/analyzer.py) to skip redundant intermediate rule runs while executing the complete 17-rule forensic suite at final graph computation.
+
+2. **Asynchronous Webhook Ingress (v2.0 Schema)**:
+   - **Endpoint**: `POST /api/v1/risk-score/analyze`
+   - **Dual Query Modes**:
+     - **Full-History Flow (Default when `time_window` is omitted)**:
+       - Directly queries Elasticsearch `/api/search/uii` on `172.27.23.43` across historical transaction data.
+     - **Dynamic Scoped Flow (When `time_window` is provided)**:
+       - Scopes transactions to `[start_date, end_date]`.
+       - Intelligently handles both Unix millisecond epoch timestamps and formatted ISO strings.
+       - Dynamically synchronizes `active_dataframe_rows` to ensure Neo4j integrity checks pass.
+       - Gracefully returns a 0-score success payload when zero transactions fall within the requested window.
+   - **Caching & Asynchronous Delivery**:
+     - **Fast Lane (Cached Single Account)**: Instant HTTP 200 return if analyzed within the 2-hour cache window with matching time parameters.
+     - **Worker Async Flow**: Returns HTTP 202 (`ACCEPTED`) and enqueues background processing on Node 21. Upon completion, the worker dispatches the v2.0 payload via webhook to `https://risk-platform.local/api/v1/aggregate/callback`.
 
 ### 3.2 Autonomous Escalation Protocol (xVigilance -> Risk Scoring)
 When xVigilance independently detects AML typologies on Node 21:

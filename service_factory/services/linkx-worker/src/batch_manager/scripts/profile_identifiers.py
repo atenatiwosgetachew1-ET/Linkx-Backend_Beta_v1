@@ -1,7 +1,7 @@
 import sys
 
 sys.path.append("/opt/linkx-worker/src")
-from batch_manager.services.risk_scoring_kafka_service import create_neo4j_driver, _neo4j_credentials
+from batch_manager.services.external_link_analysis_service import create_neo4j_driver, _neo4j_credentials
 
 credentials = _neo4j_credentials('128778')
 if not credentials:

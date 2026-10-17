@@ -69,8 +69,8 @@ def run_job(job_type, payload):
     if job_type in {"rule_engine_analysis", "RULE_link_analysis", "rule_link_analysis"}:
         return run_rule_engine_analysis(payload)
 
-    if job_type in {"risk_scoring", "risk_scoring_analysis", "risk_scoring_event", "score.calculated"}:
-        from batch_manager.services.risk_scoring_kafka_service import process_risk_scoring_event
+    if job_type in {"risk_scoring", "risk_scoring_analysis", "risk_scoring_event", "score.calculated", "link_analysis", "link_analysis_event"}:
+        from batch_manager.services.external_link_analysis_service import process_risk_scoring_event
         return process_risk_scoring_event(payload, publish=bool(payload.get("publish", False)))
 
     if job_type == "risk_scoring_webhook":
@@ -85,7 +85,7 @@ def run_job(job_type, payload):
         from batch_manager.services.unified_risk_scoring_service import process_unified_webhook_only_job
         return process_unified_webhook_only_job(payload)
 
-    if job_type == "risk_scoring_sync":
+    if job_type in {"risk_scoring_sync", "link_analysis_sync"}:
         from batch_manager.services.risk_scoring_sync_service import process_sync_job
         return process_sync_job(payload)
 

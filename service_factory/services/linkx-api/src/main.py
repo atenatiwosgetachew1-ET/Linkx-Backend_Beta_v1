@@ -42,7 +42,7 @@ from logger import log_writer,log_stream_background
 from io_sockets import register_socket_handlers
 from api.STR_link_analysis import STR_link_analysis_api
 from api.risk_scoring_api import risk_scoring_api
-from api.risk_scoring_sync_api import risk_scoring_sync_api
+from api.link_analysis_sync_api import link_analysis_sync_api, risk_scoring_sync_api
 from api.unified_risk_scoring_api import unified_risk_scoring_api
 from api.ML_link_analysis import ML_link_analysis_api
 from api.rule_engine_analysis import RULE_link_analysis_api
@@ -109,6 +109,7 @@ app.add_url_rule("/api/auth/exchange", view_func=exchange_parent_oauth_code, met
 app.register_blueprint(STR_link_analysis_api, url_prefix="/api")
 app.register_blueprint(risk_scoring_api, url_prefix="/api/risk_scoring")
 app.register_blueprint(risk_scoring_sync_api, url_prefix="/api/risk_scoring")
+app.register_blueprint(link_analysis_sync_api, url_prefix="/api/link_analysis")
 app.register_blueprint(unified_risk_scoring_api, url_prefix="/api/v1/risk-score")
 app.register_blueprint(ML_link_analysis_api, url_prefix="/api")
 app.register_blueprint(RULE_link_analysis_api, url_prefix="/api")
@@ -315,7 +316,15 @@ _LOCK_PROTECTED_PATHS = {
 def _is_lock_exempt_request(path, method):
     if path == "/auth/session-policy":
         return method == "GET"
-    if path == "/api/risk_scoring/analysis_request" or path == "/api/risk_scoring/sync_analysis" or path.endswith("/risk_scoring/analysis_request") or path.endswith("/risk_scoring/sync_analysis") or path.startswith("/api/v1/risk-score"):
+    if (
+        path == "/api/risk_scoring/analysis_request"
+        or path in {"/api/risk_scoring/sync_analysis", "/api/link_analysis/sync_analysis", "/api/link_analysis/sync"}
+        or path.endswith("/risk_scoring/analysis_request")
+        or path.endswith("/risk_scoring/sync_analysis")
+        or path.endswith("/link_analysis/sync_analysis")
+        or path.endswith("/link_analysis/sync")
+        or path.startswith("/api/v1/risk-score")
+    ):
         return True
     return path in _LOCK_EXEMPT_PATHS
 

@@ -40,9 +40,9 @@ from batch_manager.utils.Classified_entities import (
 )
 
 
-from batch_manager.services.risk_scoring_kafka_service import DEFAULT_KAFKA_BROKERS, _neo4j_credentials, _base_analyzer_payload
+from batch_manager.services.external_link_analysis_service import DEFAULT_KAFKA_BROKERS, _neo4j_credentials, _base_analyzer_payload
 from batch_manager.analyzing.analyzer import realtime_neo4j_message_ingest, rule_to_node_label
-from batch_manager.services.risk_scoring_kafka_service import create_neo4j_driver
+from batch_manager.services.external_link_analysis_service import create_neo4j_driver
 import psycopg
 import uuid
 import json

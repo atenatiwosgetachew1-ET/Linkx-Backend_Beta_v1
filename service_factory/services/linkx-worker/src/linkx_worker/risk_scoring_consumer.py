@@ -7,7 +7,7 @@ import sys
 import time
 
 from batch_manager.config_defaults import get_default_session_config
-from batch_manager.services.risk_scoring_kafka_service import (
+from batch_manager.services.external_link_analysis_service import (
     DEFAULT_INPUT_TOPIC,
     DEFAULT_KAFKA_BROKERS,
     execute_formal_link_analysis,
